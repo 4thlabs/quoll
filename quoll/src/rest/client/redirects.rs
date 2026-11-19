@@ -9,17 +9,18 @@ use http::{Extensions, HeaderMap, HeaderName, Method, StatusCode};
 use reqwest::{Request, Response, Url};
 use reqwest_middleware::{Middleware, Next};
 
-use super::middleware;
+use super::{Failure, middleware};
 
 /// Follows up to `hops` redirects of each call, each hop sent through the middleware added after it, on a reqwest
 /// client that follows none, `redirect(Policy::none())`: reqwest's own policy follows them below every middleware,
 /// with the headers of the first request, which `key` and `on_request` may have added.
 ///
-/// So each hop is given its credential, or not, again: [`bearer`](super::bearer), [`bearer_from`](super::bearer_from),
-/// [`basic`](super::basic), [`key`](super::key) and [`on_request`](super::on_request) act on the api's own origin
-/// only, and a hop to another origin gets none of them. A hop to another origin also leaves out the headers that
-/// carry a credential, `Authorization`, `Cookie` and `Proxy-Authorization`, and every header marked sensitive, which
-/// a middleware added before it would have put in.
+/// It comes before every middleware that adds a credential, so that they run on each hop and send nothing to another
+/// origin: [`bearer`](super::bearer), [`bearer_from`](super::bearer_from), [`basic`](super::basic),
+/// [`key`](super::key) and [`on_request`](super::on_request) act on the api's own origin only. A hop is a copy of the
+/// request `redirects` got, with what the middleware before it added: to another origin, it leaves out the headers
+/// that carry a credential, `Authorization`, `Cookie` and `Proxy-Authorization`, and every header marked sensitive,
+/// but keeps any other, so that a header of a credential added before it is to be marked sensitive.
 ///
 /// - 301, 302 and 303 are followed with a `GET`, a `HEAD` staying one, and without the body, as browsers do;
 /// - 307 and 308 with the method and the body, when the body can be sent twice, which a route's always can; else the
@@ -55,41 +56,51 @@ async fn follow(
     let mut sent = vec![(request.method().clone(), request.url().clone())];
 
     loop {
-        // A copy for a 307 or a 308, taken before it is sent; `None` for a body that streams.
-        let again = request.try_clone();
-        let without_body = without_body(&request);
-        let from = request.url().clone();
+        // A copy of the request as it is sent, for its redirect; of all but its body, as a 303 sends it, when the body
+        // streams and cannot be copied.
+        let (copy, whole) = match request.try_clone() {
+            Some(copy) => (copy, true),
+            None => (without_body(&request), false),
+        };
 
         let response = next.clone().run(request, extensions).await?;
-        let Some(to) = location(&response, &from) else {
+        let Some(to) = location(&response, copy.url()) else {
             return Ok(response);
         };
 
-        let mut hop = match response.status() {
-            StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => {
-                let Some(again) = again else {
-                    return Ok(response);
-                };
+        let from = copy.url().origin();
+        let keeps_body = matches!(
+            response.status(),
+            StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT
+        );
 
-                again
-            }
-            _ => without_body,
+        if keeps_body && !whole {
+            return Ok(response);
+        }
+
+        let mut hop = if keeps_body || !whole {
+            copy
+        } else {
+            without_body(&copy)
         };
+
         *hop.url_mut() = to;
 
         let key = (hop.method().clone(), hop.url().clone());
+
         if sent.contains(&key) {
-            return Err(Unfollowed::fail(
+            return Err(Failure::fail(
                 "the call was redirected to a request it had sent already",
             ));
         }
+
         if sent.len() > hops {
-            return Err(Unfollowed::fail(format!(
+            return Err(Failure::fail(format!(
                 "the call was redirected more than {hops} times"
             )));
         }
 
-        if hop.url().origin() != from.origin() {
+        if hop.url().origin() != from {
             strip_credentials(hop.headers_mut());
         }
 
@@ -110,11 +121,13 @@ fn location(response: &Response, from: &Url) -> Option<Url> {
             | StatusCode::TEMPORARY_REDIRECT
             | StatusCode::PERMANENT_REDIRECT
     );
+
     if !redirect {
         return None;
     }
 
-    let location = response.headers().get(LOCATION)?.to_str().ok()?;
+    // As reqwest reads it: UTF-8, which the URL escapes, not only the ASCII of `to_str`.
+    let location = std::str::from_utf8(response.headers().get(LOCATION)?.as_bytes()).ok()?;
     let mut to = from.join(location).ok()?;
 
     to.set_fragment(None);
@@ -132,6 +145,7 @@ fn without_body(request: &Request) -> Request {
     let mut hop = Request::new(method, request.url().clone());
 
     let mut headers = request.headers().clone();
+
     for name in [
         CONTENT_TYPE,
         CONTENT_LENGTH,
@@ -162,24 +176,6 @@ fn strip_credentials(headers: &mut HeaderMap) {
     }
 }
 
-/// A redirect not followed, past the limit or to a request already sent.
-#[derive(Debug)]
-struct Unfollowed(String);
-
-impl Unfollowed {
-    fn fail(message: impl Into<String>) -> reqwest_middleware::Error {
-        reqwest_middleware::Error::middleware(Self(message.into()))
-    }
-}
-
-impl std::fmt::Display for Unfollowed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for Unfollowed {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +186,7 @@ mod tests {
     fn a_redirect_to_another_origin_leaves_out_every_credential() {
         let mut headers = HeaderMap::new();
         let mut key = HeaderValue::from_static("k-1");
+
         key.set_sensitive(true);
         headers.insert("x-api-key", key);
         headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer t"));
@@ -207,6 +204,7 @@ mod tests {
     fn a_post_redirected_by_a_303_is_a_get_without_its_body() {
         let url = Url::parse("http://localhost/api/notes").expect("a url");
         let mut request = Request::new(Method::POST, url);
+
         request
             .headers_mut()
             .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));

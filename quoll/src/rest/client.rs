@@ -5,7 +5,7 @@
 //! The helpers of authentication, [`bearer`], [`bearer_from`], [`basic`] and [`key`], and the closure of
 //! [`on_request`], act on the requests of a contract to its api's own origin only: a request that carries no
 //! [`Route`], as one sent to another host through the same `ClientWithMiddleware`, and a hop of [`redirects`] to
-//! another origin, go as they are.
+//! another origin, go as they are. [`redirects`] comes before all of them, so that they run on each hop.
 //!
 //! An order that works, from the first to the last:
 //!
@@ -26,8 +26,8 @@
 //!     .with(rest::client::user_agent("notes-cli/0.1"))
 //!     .with(rest::client::request_id()) // before `retry`: one id for every attempt
 //!     .with(rest::client::retry(3))
-//!     .with(rest::client::timeout(Duration::from_secs(10))) // after `retry`: a deadline per attempt
-//!     .with(rest::client::redirects(5)) // before the credential: each hop is given it, or not
+//!     .with(rest::client::timeout(Duration::from_secs(10))) // per attempt and per hop; after `retry`, a stream's head too
+//!     .with(rest::client::redirects(5)) // before every credential: each hop is given it, or not
 //!     .with(rest::client::bearer("mF_9.B5f-4.1JqM"))
 //!     .build();
 //! let api = Api::client_with(http, "http://localhost:8080")?;
@@ -35,6 +35,7 @@
 //! # }
 //! ```
 
+use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -200,7 +201,7 @@ pub fn key<K: Declared>(value: impl Into<String>) -> impl Middleware {
             let header = header_value(&value);
 
             send::<K>(Box::new(move |request| {
-                let value = header.clone().ok_or(Unsendable(
+                let value = header.clone().ok_or(Failure::new(
                     "the key cannot be sent in its header: it is empty, or holds a control character or a space at either end",
                 ))?;
 
@@ -219,7 +220,7 @@ pub fn key<K: Declared>(value: impl Into<String>) -> impl Middleware {
             let value = (!value.is_empty()).then_some(value);
 
             send::<K>(Box::new(move |request| {
-                let value = value.as_deref().ok_or(Unsendable(
+                let value = value.as_deref().ok_or(Failure::new(
                     "the key cannot be sent in the query: it is empty",
                 ))?;
 
@@ -254,8 +255,8 @@ fn set_query_pair(request: &mut Request, name: &str, value: &str) {
 
 /// Adds `pair`, `name=value`, to the request's cookies, in one `Cookie` header that holds every cookie the request had
 /// before, byte for byte, then the pair.
-fn add_cookie(request: &mut Request, pair: Option<&str>) -> Result<(), Unsendable> {
-    let pair = pair.ok_or(Unsendable(
+fn add_cookie(request: &mut Request, pair: Option<&str>) -> Result<(), Failure> {
+    let pair = pair.ok_or(Failure::new(
         "the key cannot be sent as a cookie: it is empty, or holds a character a cookie's value cannot",
     ))?;
 
@@ -333,7 +334,7 @@ fn sensitive(value: Option<HeaderValue>) -> Option<HeaderValue> {
 /// Puts `header` in `Authorization`, or fails the request with `unsendable` when there is no header to send.
 fn authorization(header: Option<HeaderValue>, unsendable: &'static str) -> Box<Add> {
     Box::new(move |request| {
-        let value = header.clone().ok_or(Unsendable(unsendable))?;
+        let value = header.clone().ok_or(Failure::new(unsendable))?;
 
         request.headers_mut().insert(AUTHORIZATION, value);
         Ok(())
@@ -349,8 +350,8 @@ fn send<S: Scheme>(add: Box<Add>) -> impl Middleware {
             return next.run(request, extensions);
         }
 
-        if let Err(unsendable) = add(&mut request) {
-            return Box::pin(async move { Err(reqwest_middleware::Error::middleware(unsendable)) });
+        if let Err(failure) = add(&mut request) {
+            return Box::pin(async move { Err(reqwest_middleware::Error::middleware(failure)) });
         }
 
         next.run(request, extensions)
@@ -370,7 +371,7 @@ fn own_route<'a>(request: &Request, extensions: &'a Extensions) -> Option<&'a Ro
 }
 
 /// What a middleware does to a request whose route takes its scheme: one type for every place a credential travels.
-type Add = dyn Fn(&mut Request) -> Result<(), Unsendable> + Send + Sync;
+type Add = dyn Fn(&mut Request) -> Result<(), Failure> + Send + Sync;
 
 /// What a middleware's call returns: the answer of the rest of the chain.
 type Handled<'a> = Pin<Box<dyn Future<Output = reqwest_middleware::Result<Response>> + Send + 'a>>;
@@ -383,17 +384,29 @@ where
     handle
 }
 
-/// A credential that cannot be sent as it is. Its message does not show the credential.
+/// Why a middleware fails a call: a credential that cannot be sent as it is, whose message does not show it, or a
+/// redirect not followed.
 #[derive(Debug)]
-struct Unsendable(&'static str);
+struct Failure(Cow<'static, str>);
 
-impl std::fmt::Display for Unsendable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
+impl Failure {
+    fn new(message: impl Into<Cow<'static, str>>) -> Self {
+        Self(message.into())
+    }
+
+    /// The error of reqwest-middleware that fails the call with `message`.
+    fn fail(message: impl Into<Cow<'static, str>>) -> reqwest_middleware::Error {
+        reqwest_middleware::Error::middleware(Self::new(message))
     }
 }
 
-impl std::error::Error for Unsendable {}
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Failure {}
 
 #[cfg(test)]
 mod tests {

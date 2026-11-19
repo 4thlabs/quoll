@@ -12,6 +12,7 @@ use reqwest_retry::{
 };
 
 use super::middleware;
+use super::request::HeadTimedOut;
 
 /// The bound of the wait before the first attempt again, which doubles after each, up to [`LONGEST`]. A wait is
 /// never shorter than half of it.
@@ -21,9 +22,9 @@ const SHORTEST: Duration = Duration::from_millis(100);
 const LONGEST: Duration = Duration::from_secs(10);
 
 /// Tries a call again, up to `times` more, after a failure that may pass: no response, the connection refused, reset
-/// or cut, or a deadline passed, or an answer 502, 503 or 504. The wait before each attempt is drawn at random between
-/// 50 ms and a bound that doubles after each, from 100 ms to 10 s at most, so that clients do not all come back at
-/// once.
+/// or cut, a deadline of [`timeout`](super::timeout) passed before the answer began, or an answer 502, 503 or 504. The
+/// wait before each attempt is drawn at random between 50 ms and a bound that doubles after each, from 100 ms to 10 s
+/// at most, so that clients do not all come back at once.
 ///
 /// It tries again the methods that may be sent twice with the effect of once, `GET`, `HEAD`, `PUT` and `DELETE`, and
 /// sends any other once: a `POST` may have been done before its connection was cut. A request whose body cannot be
@@ -65,7 +66,8 @@ fn may_retry(request: &Request) -> bool {
     idempotent && request.body().is_none_or(|body| body.as_bytes().is_some())
 }
 
-/// What is tried again: a failure with no response that may pass, as reqwest-retry tells it, and 502, 503 and 504.
+/// What is tried again: a failure with no response that may pass, as reqwest-retry tells it, the head of a stream's
+/// answer past the deadline of `timeout`, and 502, 503 and 504.
 struct Transient;
 
 impl RetryableStrategy for Transient {
@@ -78,6 +80,11 @@ impl RetryableStrategy for Transient {
                     | StatusCode::GATEWAY_TIMEOUT
             )
             .then_some(Retryable::Transient),
+            Err(reqwest_middleware::Error::Middleware(error))
+                if error.downcast_ref::<HeadTimedOut>().is_some() =>
+            {
+                Some(Retryable::Transient)
+            }
             Err(error) => default_on_request_failure(error),
         }
     }

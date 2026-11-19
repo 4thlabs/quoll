@@ -222,7 +222,7 @@ One mechanism a side: reqwest-middleware on the client, tower layers on the serv
 | `user_agent(name)` | `User-Agent`, on a request that has none |
 | `request_id()` | a new `X-Request-Id` per call, on a request that has none: added before `retry`, the attempts of a call share it |
 | `retry(times)` | backoff on a failure with no response, 502, 503 or 504; `GET`, `HEAD`, `PUT` and `DELETE` only (reqwest-retry) |
-| `timeout(duration)` | a deadline per call, to the end of its body; none on a route whose result is a stream, which it would cut |
+| `timeout(duration)` | a deadline per attempt and per hop, to the end of the body; on a route whose result is a stream, for the head of its answer alone, which `retry` tries again |
 | `trace()` | a tracing span per call, named by the operation id (reqwest-tracing) |
 | `redirects(n)` | follows up to `n` redirects, one hop at a time through the middleware after it, on a reqwest client built with `redirect(Policy::none())` |
 
@@ -252,7 +252,7 @@ pub trait TokenSource: Send + Sync + 'static {
 
 A call answered 401 is sent once more with the token `refresh` gives, and that second answer is the call's; it is not sent again when `refresh` gives back the token refused, or when its body cannot be sent twice. Two calls refused at once each call `refresh` with the token they sent: a source that keeps one token renews it once, under a lock, and gives the other call the new one. An error of the source fails the call.
 
-`redirects(n)` follows 301, 302 and 303 with a `GET` without the body, a `HEAD` staying one, and 307 and 308 with the method and the body, which a route's can always send twice; past `n` hops, or back to a request already sent, the call fails. A hop to another origin gets no credential from the helpers after it, and loses `Authorization`, `Cookie`, `Proxy-Authorization` and every header marked sensitive that a middleware before it added. Any other answer, or a redirect it does not follow, is the call's answer. An order that works, from the first added: `trace`, `user_agent`, `request_id`, `retry`, `timeout`, `redirects`, then the credentials.
+`redirects(n)` follows 301, 302 and 303 with a `GET` without the body, a `HEAD` staying one, and 307 and 308 with the method and the body, which a route's can always send twice; past `n` hops, or back to a request already sent, the call fails. It comes before every middleware that adds a credential, `on_request` included, so that they run on each hop and send nothing to another origin. A hop to another origin loses `Authorization`, `Cookie`, `Proxy-Authorization` and every header marked sensitive that a middleware before it added, and keeps any other: a credential's header added before it is marked sensitive. Any other answer, or a redirect it does not follow, is the call's answer. An order that works, from the first added: `trace`, `user_agent`, `request_id`, `retry`, `timeout`, `redirects`, then the credentials and `on_request`.
 
 ### Server, `rest::server::`
 

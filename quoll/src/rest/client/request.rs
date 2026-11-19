@@ -9,7 +9,7 @@ use reqwest::Request;
 use reqwest_middleware::Middleware;
 use uuid::Uuid;
 
-use super::{Unsendable, middleware, own_route};
+use super::{Failure, middleware, own_route};
 use crate::rest::Route;
 
 /// The header of [`request_id`].
@@ -20,7 +20,8 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 ///
 /// A request with no `Route`, one that did not come from the client of a contract, and a hop of
 /// [`redirects`](super::redirects) to another origin, go as they are: what `change` adds may be a credential, as the
-/// signature below.
+/// signature below. It is added after `redirects`, so that it runs on each hop; added before, what it puts in goes
+/// along to another origin, unless it is a header marked sensitive.
 ///
 /// ```no_run
 /// # use quoll::rest;
@@ -34,6 +35,7 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 ///     request.headers_mut().insert("X-Signature", signature);
 /// });
 /// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
+///     .with(rest::client::redirects(5))
 ///     .with(sign)
 ///     .build();
 /// ```
@@ -68,9 +70,9 @@ pub fn user_agent(name: impl Into<String>) -> impl Middleware {
         if !request.headers().contains_key(USER_AGENT) {
             let Some(value) = value.clone() else {
                 return Box::pin(async {
-                    Err(reqwest_middleware::Error::middleware(Unsendable(
+                    Err(Failure::fail(
                         "the user agent cannot be sent: it holds a control character or a line break",
-                    )))
+                    ))
                 });
             };
 
@@ -109,18 +111,25 @@ pub fn request_id() -> impl Middleware {
     })
 }
 
-/// Gives each request a deadline of `duration`, from when it is sent to the end of its answer's body, as reqwest's own
-/// `timeout` does: a call that has not ended by then fails with an error with no status, and
-/// [`retry`](super::retry) tries it again.
+/// Gives each attempt of a call, and each hop of its redirects, a deadline of `duration`, from when it is sent to the
+/// end of its answer's body, as reqwest's own `timeout` does, whatever the place of `timeout` among the middleware:
+/// it is a field of the request, which [`retry`](super::retry) and [`redirects`](super::redirects) copy. An attempt
+/// that misses it fails with an error with no status.
 ///
-/// A route whose result is a stream, `Events` or `JsonLines`, has none: its body lasts as long as the server sends
-/// it, which a deadline would cut. A request that did not come from the client of a contract has one, its body
+/// `retry` tries again an attempt whose answer has not begun by then, but not one whose body is too slow: the body is
+/// read once the middleware have returned the answer, past what they see.
+///
+/// A route whose result is a stream, `Events` or `JsonLines`, has a deadline for the head of its answer alone, its
+/// status and headers: its body lasts as long as the server sends it, which a deadline would cut. That deadline
+/// bounds the middleware after `timeout`, each attempt when it comes after `retry`, and is an error with no status
+/// that `retry` tries again. A request that did not come from the client of a contract has a deadline, its body
 /// included.
 ///
 /// ```no_run
 /// # use std::time::Duration;
 /// # use quoll::rest;
 /// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
+///     .with(rest::client::retry(3))
 ///     .with(rest::client::timeout(Duration::from_secs(10)))
 ///     .build();
 /// ```
@@ -128,8 +137,27 @@ pub fn timeout(duration: Duration) -> impl Middleware {
     middleware(move |mut request, extensions, next| {
         if !extensions.get::<Route>().is_some_and(|route| route.streams) {
             *request.timeout_mut() = Some(duration);
+
+            return next.run(request, extensions);
         }
 
-        next.run(request, extensions)
+        Box::pin(async move {
+            tokio::time::timeout(duration, next.run(request, extensions))
+                .await
+                .map_err(|_| reqwest_middleware::Error::middleware(HeadTimedOut))?
+        })
     })
 }
+
+/// The head of a stream's answer that did not come by the deadline of [`timeout`], which [`retry`](super::retry)
+/// tries again.
+#[derive(Debug)]
+pub(super) struct HeadTimedOut;
+
+impl std::fmt::Display for HeadTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the answer did not begin by the deadline of the call")
+    }
+}
+
+impl std::error::Error for HeadTimedOut {}
