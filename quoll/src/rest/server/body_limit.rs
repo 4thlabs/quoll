@@ -1,0 +1,113 @@
+//! `body_limit(bytes)`: the largest body a route reads, answered 413 past it.
+
+use std::convert::Infallible;
+use std::task::{Context, Poll};
+
+use axum::extract::{DefaultBodyLimit, Request};
+use axum::response::{IntoResponse, Response};
+use http::{Extensions, HeaderMap, StatusCode, header};
+use tower_layer::Layer;
+use tower_service::Service;
+
+use super::layer::ResponseFuture;
+use crate::rest::Error;
+
+/// The limit [`BodyLimitService`] set on a request, which the router says in its 413.
+#[derive(Debug, Clone, Copy)]
+struct Limit(usize);
+
+/// The limit `body_limit` set on the request whose `extensions` these are.
+pub(crate) fn of(extensions: &Extensions) -> Option<usize> {
+    extensions.get::<Limit>().map(|Limit(limit)| *limit)
+}
+
+/// The 413 of a body larger than `limit`, or than axum's own limit when no layer set one.
+pub(crate) fn too_large(limit: Option<usize>) -> Error {
+    let detail = match limit {
+        Some(limit) => format!("the body is larger than the {limit} bytes this server reads"),
+        None => "the body is larger than this server reads".to_owned(),
+    };
+
+    Error::new(StatusCode::PAYLOAD_TOO_LARGE, detail)
+}
+
+/// The largest body a route reads, in bytes: a larger one answers 413, with a problem that says the limit.
+///
+/// A request whose `Content-Length` is larger is answered at once, before its body is read. One with no length, a
+/// chunked body, is read up to the limit, then answered so, whatever the route reads: JSON, a `Form`, `Text` or
+/// `Bytes`. It replaces axum's own limit, 2 MiB, which a router without this layer keeps, answered 413 too.
+///
+/// ```
+/// use quoll::rest;
+///
+/// # fn api_router() -> axum::Router { axum::Router::new() }
+/// let router = api_router().layer(rest::server::body_limit(1 << 20));
+/// ```
+pub fn body_limit(bytes: usize) -> BodyLimitLayer {
+    BodyLimitLayer { limit: bytes }
+}
+
+/// The layer [`body_limit`] gives.
+#[derive(Debug, Clone, Copy)]
+pub struct BodyLimitLayer {
+    limit: usize,
+}
+
+impl<S> Layer<S> for BodyLimitLayer {
+    type Service = BodyLimitService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        BodyLimitService {
+            inner,
+            limit: self.limit,
+        }
+    }
+}
+
+/// The service of [`BodyLimitLayer`].
+#[derive(Debug, Clone)]
+pub struct BodyLimitService<S> {
+    inner: S,
+    limit: usize,
+}
+
+impl<S> Service<Request> for BodyLimitService<S>
+where
+    S: Service<Request, Error = Infallible> + Send + 'static,
+    S::Response: IntoResponse,
+    S::Future: Send + 'static,
+{
+    type Response = Response;
+    type Error = Infallible;
+    type Future = ResponseFuture;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut request: Request) -> ResponseFuture {
+        if content_length(request.headers()).is_some_and(|length| length > self.limit as u64) {
+            let response = too_large(Some(self.limit)).into_response();
+
+            return Box::pin(async move { Ok(response) });
+        }
+
+        // axum's extractors, through which the router reads every body, stop at this limit.
+        DefaultBodyLimit::max(self.limit).apply(&mut request);
+        request.extensions_mut().insert(Limit(self.limit));
+
+        let answer = self.inner.call(request);
+
+        Box::pin(async move { Ok(answer.await?.into_response()) })
+    }
+}
+
+/// The request's `Content-Length`, when it gives one that reads; hyper has refused a request whose length does not.
+fn content_length(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get(header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .parse()
+        .ok()
+}

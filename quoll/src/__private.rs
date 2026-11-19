@@ -4,6 +4,12 @@
 //! features of the user's crate. So the code of each side goes through a macro defined here, which writes it out when
 //! `quoll` has the feature and drops it when it does not.
 
+use std::any::TypeId;
+
+use http::Method;
+
+use crate::rest::Route;
+
 pub use http;
 
 #[cfg(feature = "server")]
@@ -24,6 +30,26 @@ pub mod server;
 
 #[cfg(feature = "client")]
 pub mod client;
+
+/// The route a request calls, which the macro writes as a `static` per route: the client puts it in the extensions of
+/// each request, the server in those of each answer.
+pub const fn route(
+    operation_id: &'static str,
+    group: &'static str,
+    method: Method,
+    path: &'static str,
+    schemes: &'static [&'static str],
+    scheme_types: &'static [TypeId],
+) -> Route {
+    Route {
+        operation_id,
+        group,
+        method,
+        path,
+        schemes,
+        scheme_types,
+    }
+}
 
 /// Writes out its input: `quoll` has the feature `server`.
 #[cfg(feature = "server")]

@@ -17,7 +17,7 @@ use syn::ext::IdentExt;
 use syn::spanned::Spanned;
 
 use crate::known::Known;
-use crate::model::{Api, Route};
+use crate::model::{Api, Group, Route};
 use crate::syntax::Contract;
 
 /// Reads a REST contract and checks it.
@@ -158,6 +158,39 @@ pub(crate) fn route_docs(api: &Api, route: &Route) -> proc_macro2::TokenStream {
     doc_attrs(&lines)
 }
 
+/// `static NAME: rest::Route = ...;`, the route a request calls: the client puts it in the extensions of each request
+/// it sends, and the server in those of each answer, where middleware and layers read it.
+pub(crate) fn route_static_item(
+    api: &Api,
+    group: &Group,
+    route: &Route,
+    name: &Ident,
+) -> proc_macro2::TokenStream {
+    let operation_id = route.operation_id(group);
+    let group_name = group.name.unraw().to_string();
+    let method = Ident::new(route.method.as_str(), Span::call_site());
+    let path = route.full_path(&api.prefix);
+    // The name and the type of each scheme come from the scheme itself, which writes its name once.
+    let schemes: Vec<_> = route.schemes().map(scheme::scheme_type).collect();
+    let names = schemes
+        .iter()
+        .map(|scheme| quote! { <#scheme as ::quoll::rest::Scheme>::NAME });
+    let types = schemes
+        .iter()
+        .map(|scheme| quote! { ::core::any::TypeId::of::<#scheme>() });
+
+    quote! {
+        static #name: ::quoll::rest::Route = ::quoll::__private::route(
+            #operation_id,
+            #group_name,
+            ::quoll::__private::http::Method::#method,
+            #path,
+            &[#(#names),*],
+            &[#(#types),*],
+        );
+    }
+}
+
 /// The path with its query, as the docs show it: `/api/notes?page={page}`.
 fn shown_path(api: &Api, route: &Route) -> String {
     let mut path = route.full_path(&api.prefix);
@@ -284,10 +317,10 @@ mod tests {
             }
         });
 
-        assert!(
-            tokens.contains(r#""admin_tools_match" , "AdminTools" , :: quoll :: __private :: client :: Method :: GET , "/api/admin/{service}""#),
-            "{tokens}"
-        );
+        // Once for the server, once for the client.
+        let route = r#""admin_tools_match" , "AdminTools" , :: quoll :: __private :: http :: Method :: GET , "/api/admin/{service}""#;
+
+        assert_eq!(tokens.matches(route).count(), 2, "{tokens}");
     }
 
     #[test]

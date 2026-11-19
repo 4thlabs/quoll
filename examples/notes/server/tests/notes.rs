@@ -199,3 +199,18 @@ fn the_sessions_debug_shows_no_token() {
     assert_eq!(shown, "Sessions { open: 1 }");
     assert!(!shown.contains(&token));
 }
+
+#[tokio::test]
+async fn an_answer_carries_the_request_id_its_caller_gave() -> anyhow::Result<()> {
+    let served = Served::start().await;
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/notes/1", served.url))
+        .header("x-request-id", "call-1")
+        .send()
+        .await?;
+
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(response.headers()["x-request-id"], "call-1");
+    Ok(())
+}

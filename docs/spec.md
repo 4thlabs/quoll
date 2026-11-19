@@ -244,14 +244,23 @@ A full `Middleware`, which wraps the call with `next.run(request)`, is for what 
 
 | Helper | What it does |
 |---|---|
-| `request_id()` | keeps the caller's `X-Request-Id` or makes one, and sends it back |
-| `trace()` | a tracing span per request, with the operation id and the request id (tower-http) |
+| `request_id()` | keeps the caller's `X-Request-Id` or makes one, a UUID v4, and sends it back; a handler reads it with `rest::server::RequestId::current()` |
+| `trace()` | a tracing span per request, with the operation id and the request id, and a line per answer (tower-http) |
 | `timeout(duration)` | a handler that takes longer answers 503 |
 | `body_limit(bytes)` | a larger body answers 413 |
-| `cors(origins)` | CORS for the given origins (tower-http) |
-| `compression()` | gzip, brotli and zstd responses (tower-http) |
+| `cors(origins)?` | CORS for the given origins (tower-http) |
+| `compression()` | gzip, brotli and zstd responses, streams aside (tower-http) |
 
-They answer RFC 9457 problems, as handlers do, where tower-http's answer plain text. Any other tower layer applies as is, as a rate limit from tower_governor.
+They answer RFC 9457 problems, as handlers do, where tower-http's answer plain text. Any other tower layer applies as is, as a rate limit from tower_governor. Each helper returns a layer type of quoll's, under `rest::server::layer`, which no application names, and no tower-http type.
+
+- **The order.** axum runs the last layer added first: the example adds `body_limit`, `timeout`, `trace`, then `request_id`, so that a request gets its id, then its span, and that a 503 of the deadline and a 413 of the limit are traced and carry the id. Each works in any order.
+- **The route.** The router puts the `rest::Route` of a request in the extensions of its answer, where a layer reads it, and names its operation in the span of `trace`.
+- **`request_id()`**: the caller's id is kept when it is 1 to 128 bytes of printable ASCII with no space, and replaced otherwise, or when given twice; the request is served. The id is set on the request and its answer, and given to the span. `RequestId::current()` gives it while the handler's future runs, a task-local: not in a task it spawns, nor in the stream it returns.
+- **`trace()`**: the span `request` has the `method`, the `path` without the query, which may hold a credential, the `operation` and the `request_id`. Each answer is logged once, `answered` with its status and latency: at `INFO`, and at `ERROR` for a 5xx the crate has not logged with its cause already, as it logs an `Error::internal`, an error of another API and a deadline.
+- **`timeout(duration)`**: it bounds the route's future, which reads the body and ends with the head of the answer, and not the body: an `Events` or a `JsonLines` stream goes on past it. The 503 says the deadline, and is logged once.
+- **`body_limit(bytes)`**: a `Content-Length` past it is answered at once; a chunked body is read up to it. It sets axum's own limit, through which JSON, `Form`, `Text` and `Bytes` are read, and replaces its default of 2 MiB.
+- **`cors(origins)`** takes origins as text, `https://app.example.com`, and returns an error, `rest::server::InvalidOrigin`, for one that is not an origin: `*`, `null`, a path. It allows the methods a contract serves, any header a page asks for, and exposes `Location`, `WWW-Authenticate` and `X-Request-Id`. It allows no credentials: a page of another origin sends a token or a key in a header. A cookie scheme's CSRF check still trusts the server's own origin alone, so that a listed origin's call with the cookie, on a method other than `GET`, `HEAD` and `OPTIONS`, is answered 403.
+- **`compression()`** leaves out what tower-http's default does, small answers, images and server-sent events, and JSON Lines too, whose lines would wait in the encoder.
 
 ## Errors
 
@@ -401,6 +410,8 @@ fn main() {
 `server/src/lib.rs`
 
 ```rust
+use std::time::Duration;
+
 use notes_api::*;
 use quoll::rest::{self, Authenticate, Bearer, Created, Error, Events, Form, Result};
 
@@ -506,10 +517,11 @@ pub fn router(app: App) -> axum::Router {
         notes: app.clone(),
         admin: app,
     })
-    .layer(rest::server::request_id())
-    .layer(rest::server::trace())
-    .layer(rest::server::timeout(Duration::from_secs(10)))
+    // The last layer added runs first: a request gets its id, then its span, then its deadline and its body's limit.
     .layer(rest::server::body_limit(1 << 20))
+    .layer(rest::server::timeout(Duration::from_secs(10)))
+    .layer(rest::server::trace())
+    .layer(rest::server::request_id())
 }
 ```
 

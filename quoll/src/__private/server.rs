@@ -23,7 +23,8 @@ use crate::__private::content_type::{
 };
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
 use crate::rest::error::Repr;
-use crate::rest::{Authenticate, Error, Result, Scheme, Scoped};
+use crate::rest::server::{body_limit, trace};
+use crate::rest::{Authenticate, Error, Result, Route, Scheme, Scoped};
 
 mod stream;
 mod text;
@@ -46,32 +47,40 @@ impl<S: Send + Sync + 'static> Group<S> {
         }
     }
 
-    /// Serves `method` on `path` with `handler`, given the service and the request. An error it returns is answered as
-    /// a problem; a 401 carries a `WWW-Authenticate` challenge for each scheme of `C`, the schemes the route takes,
-    /// as RFC 9110 asks, and none on a route that takes no scheme, `()`.
+    /// Serves `route` with `handler`, given the service and the request. An error it returns is answered as a
+    /// problem; a 401 carries a `WWW-Authenticate` challenge for each scheme of `C`, the schemes the route takes, as
+    /// RFC 9110 asks, and none on a route that takes no scheme, `()`. Every answer carries the route in its
+    /// extensions, where a layer reads it, and the span of `rest::server::trace` names its operation.
     ///
     /// # Panics
     ///
-    /// When axum refuses the path, which the macro has checked it would not.
-    pub fn route<C, F, Fut>(self, method: MethodFilter, path: &str, handler: F) -> Self
+    /// When axum refuses the route's method or its path, which the macro has checked it would not.
+    pub fn route<C, F, Fut>(self, route: &'static Route, handler: F) -> Self
     where
         C: Challenges,
         F: Fn(Arc<S>, Request) -> Fut + Clone + Send + Sync + 'static,
         Fut: Future<Output = Result<Response>> + Send + 'static,
     {
+        let method = MethodFilter::try_from(route.method().clone())
+            .expect("the macro writes a method axum serves");
         let service = Arc::clone(&self.service);
         let endpoint = on(method, move |request: axum::extract::Request| {
+            trace::record_route(request.extensions(), route);
+
             let answer = handler(Arc::clone(&service), Request::new(request));
 
             async move {
-                answer
+                let mut response = answer
                     .await
-                    .unwrap_or_else(|error| challenged::<C>(error.into_response()))
+                    .unwrap_or_else(|error| challenged::<C>(error.into_response()));
+
+                response.extensions_mut().insert(route.clone());
+                response
             }
         });
 
         Self {
-            router: self.router.route(path, endpoint),
+            router: self.router.route(route.path(), endpoint),
             service: self.service,
         }
     }
@@ -348,6 +357,7 @@ impl Request {
             )));
         }
 
+        let limit = body_limit::of(&self.parts.extensions);
         let request = http::Request::from_parts(self.parts, self.body);
 
         match axum::Json::<T>::from_request(request, &()).await {
@@ -356,7 +366,7 @@ impl Request {
             Err(JsonRejection::JsonSyntaxError(error)) => {
                 Err(Error::bad_request(error.body_text()))
             }
-            Err(error) => Err(rejected(error.status(), error.body_text())),
+            Err(error) => Err(body_rejected(error.status(), error.body_text(), limit)),
         }
     }
 
@@ -445,11 +455,12 @@ impl Request {
 
     /// The whole body, within the limit axum sets.
     async fn read(self) -> Result<axum::body::Bytes> {
+        let limit = body_limit::of(&self.parts.extensions);
         let request = http::Request::from_parts(self.parts, self.body);
 
         axum::body::Bytes::from_request(request, &())
             .await
-            .map_err(|error| rejected(error.status(), error.body_text()))
+            .map_err(|error| body_rejected(error.status(), error.body_text(), limit))
     }
 }
 
@@ -473,6 +484,16 @@ fn from_form<T: DeserializeOwned>(form: &[u8], what: &str) -> Result<T> {
 
     serde_html_form::from_bytes(form)
         .map_err(|error| Error::bad_request(format!("{what} is not valid: {error}")))
+}
+
+/// What axum refused in a body: a 413 for one larger than `limit`, which `rest::server::body_limit` sets, said as that
+/// layer says it, or else as [`rejected`] says it.
+fn body_rejected(status: StatusCode, text: String, limit: Option<usize>) -> Error {
+    if status == StatusCode::PAYLOAD_TOO_LARGE {
+        return body_limit::too_large(limit);
+    }
+
+    rejected(status, text)
 }
 
 /// What axum refused in a request: sent when the request is at fault, logged when it is not.
@@ -684,15 +705,25 @@ struct Problem<'a> {
 /// another API are logged through `tracing`, and their status alone is sent: 500 and 502.
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        // Logs what is not sent.
-        answer(&self);
+        // Logs what is not sent, which is all `answer` logs.
+        let logged = answer(&self).1.is_none();
 
         let (status, body) = problem_json(&self);
         let content_type = [(header::CONTENT_TYPE, HeaderValue::from_static(PROBLEM))];
+        let mut response = (status, content_type, body).into_response();
 
-        (status, content_type, body).into_response()
+        if logged {
+            response.extensions_mut().insert(Logged);
+        }
+
+        response
     }
 }
+
+/// Marks an answer whose error the crate has logged already, so that `rest::server::trace` does not log it as an error
+/// a second time.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Logged;
 
 /// What `f` logs, and what it gives.
 #[cfg(test)]
@@ -857,8 +888,17 @@ mod tests {
 
     #[tokio::test]
     async fn an_error_received_from_another_api_answers_502_without_its_body() {
+        static UPSTREAM: Route = crate::__private::route(
+            "upstream",
+            "Upstream",
+            http::Method::GET,
+            "/upstream",
+            &[],
+            &[],
+        );
+
         let router = Group::new(Router::new(), ())
-            .route::<(), _, _>(MethodFilter::GET, "/upstream", |_, _| async {
+            .route::<(), _, _>(&UPSTREAM, |_, _| async {
                 Err(Error::upstream(
                     StatusCode::NOT_FOUND,
                     None,

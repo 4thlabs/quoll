@@ -11,8 +11,7 @@ use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::model::{Api, Group, Param, Route};
 use crate::path::Segment;
-use crate::scheme::scheme_type;
-use crate::{doc_attrs, route_docs};
+use crate::{doc_attrs, route_docs, route_static_item};
 
 /// The client's code of the api, behind the feature `client` of `quoll`.
 pub(crate) fn expand(api: &Api) -> TokenStream {
@@ -117,18 +116,7 @@ fn group_client(api: &Api, group: &Group) -> TokenStream {
 fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
     let signature = signature(route);
     let route_static = Ident::new("__QUOLL_ROUTE", Span::mixed_site());
-    let operation_id = route.operation_id(group);
-    let group_name = group.name.unraw().to_string();
-    let method = Ident::new(route.method.as_str(), Span::call_site());
-    let path = route.full_path(&api.prefix);
-    // The name and the type of each scheme come from the scheme itself, which writes its name once.
-    let schemes: Vec<_> = route.schemes().map(scheme_type).collect();
-    let names = schemes
-        .iter()
-        .map(|scheme| quote! { <#scheme as ::quoll::rest::Scheme>::NAME });
-    let types = schemes
-        .iter()
-        .map(|scheme| quote! { ::core::any::TypeId::of::<#scheme>() });
+    let route_item = route_static_item(api, group, route, &route_static);
 
     let path_calls = path_calls(api, route);
     let (query_type, query_call) = query(route).unzip();
@@ -173,14 +161,7 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
 
     quote! {
         #signature {
-            static #route_static: ::quoll::rest::Route = ::quoll::__private::client::route(
-                #operation_id,
-                #group_name,
-                ::quoll::__private::client::Method::#method,
-                #path,
-                &[#(#names),*],
-                &[#(#types),*],
-            );
+            #route_item
 
             #query_type
 

@@ -8,7 +8,8 @@ use crate::rest::Scheme;
 
 /// The route of the contract a request calls. The client puts it in the extensions of each request it sends, where a
 /// reqwest-middleware middleware reads it, to name a span after the operation or to send a credential to the routes
-/// that take it.
+/// that take it. The server puts it in the extensions of each answer of a route, where a tower layer reads it, to
+/// count the answers of each operation.
 ///
 /// ```
 /// use quoll::rest::Route;

@@ -8,9 +8,9 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Bounds, Group, Method, Param, Route, is_vec};
+use crate::model::{Api, Bounds, Group, Param, Route, is_vec};
 use crate::scheme::{scheme_type, schemes_type};
-use crate::{doc_attrs, route_docs};
+use crate::{doc_attrs, route_docs, route_static_item};
 
 /// The server's code of the api, behind the feature `server` of `quoll`.
 pub(crate) fn expand(api: &Api) -> TokenStream {
@@ -183,7 +183,10 @@ fn router_fn(api: &Api) -> TokenStream {
         .collect();
     let fields = api.groups.iter().map(Group::field);
     let groups = api.groups.iter().zip(&locals).map(|(group, local)| {
-        let routes = group.routes.iter().map(|route| route_call(api, route));
+        let routes = group
+            .routes
+            .iter()
+            .map(|route| route_call(api, group, route));
 
         quote! {
             let #router = ::quoll::__private::server::Group::new(#router, #local)
@@ -206,15 +209,15 @@ fn router_fn(api: &Api) -> TokenStream {
     }
 }
 
-/// `.route::<Schemes, _, _>(method, path, handler)`: the handler authenticates the request, reads the path, the query
-/// and the body, calls the service and answers; a 401 carries the challenges of `Schemes`.
-fn route_call(api: &Api, route: &Route) -> TokenStream {
+/// `.route::<Schemes, _, _>(&ROUTE, handler)`: the handler authenticates the request, reads the path, the query and
+/// the body, calls the service and answers; a 401 carries the challenges of `Schemes`, and every answer the route.
+fn route_call(api: &Api, group: &Group, route: &Route) -> TokenStream {
     let service = Ident::new("service", Span::mixed_site());
     let request = Ident::new("request", Span::mixed_site());
     let caller = Ident::new("caller", Span::mixed_site());
 
-    let method = method_filter(route.method);
-    let path = route.full_path(&api.prefix);
+    let route_static = Ident::new("__QUOLL_ROUTE", Span::mixed_site());
+    let route_item = route_static_item(api, group, route, &route_static);
     let challenges = schemes_type(route.auth.as_ref().map_or(&[], |auth| &auth.schemes));
     let mut reads = Vec::new();
 
@@ -350,15 +353,16 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
     };
 
     quote! {
-        .route::<#challenges, _, _>(#method, #path, |#service, #request_pattern| async move {
-            #(#reads)*
-            #answer
-        })
+        .route::<#challenges, _, _>(
+            {
+                #route_item
+
+                &#route_static
+            },
+            |#service, #request_pattern| async move {
+                #(#reads)*
+                #answer
+            },
+        )
     }
-}
-
-fn method_filter(method: Method) -> TokenStream {
-    let name = Ident::new(method.as_str(), Span::call_site());
-
-    quote! { ::quoll::__private::server::MethodFilter::#name }
 }
