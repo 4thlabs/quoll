@@ -42,6 +42,31 @@ pub(crate) struct Group {
     pub(crate) routes: Vec<Route>,
 }
 
+/// A scheme a route is authenticated with: how the server reads the credential, and how the client sends it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Scheme {
+    /// `Bearer`: a token in `Authorization: Bearer`, the crate's `rest::Bearer`.
+    Bearer,
+}
+
+impl Scheme {
+    /// The scheme's name, as the contract writes it and `rest::Route::schemes` gives it.
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Bearer => "Bearer",
+        }
+    }
+}
+
+/// The authentication a group or a route says it takes, as written in its attribute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Auth {
+    /// `#[auth(none)]`: no credential, whatever the group takes.
+    None,
+    /// `#[auth(Bearer)]`: a credential of this scheme.
+    Scheme(Scheme),
+}
+
 /// An HTTP method of a route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Method {
@@ -114,6 +139,9 @@ pub(crate) struct Route {
     pub(crate) path_order: Vec<usize>,
     /// What the route answers.
     pub(crate) reply: Reply,
+    /// The scheme the route is authenticated with: its own attribute's, else its group's; `None` when it takes no
+    /// credential.
+    pub(crate) auth: Option<Scheme>,
     /// The span of the route's string, where a mistake about the route as a whole is pointed.
     pub(crate) span: Span,
 }
@@ -214,18 +242,21 @@ pub(crate) struct RouteDecl {
     pub(crate) args: Vec<(Ident, Type)>,
     /// The type after `->`, if there is one.
     pub(crate) reply: Option<Type>,
+    /// The route's own `#[auth(...)]`, if it has one.
+    pub(crate) auth: Option<Auth>,
 }
 
 impl Route {
     /// Matches the arguments of a route to its string, by name: a `{name}` of the path, a `key={name}` of the query,
-    /// and the one argument left is the body.
+    /// and the one argument left is the body. The route takes its own authentication, or else `group_auth`, its
+    /// group's.
     ///
     /// # Errors
     ///
     /// An error spanned on the argument or the string at fault: an argument twice, a `{name}` with no argument, a path
     /// argument that is not read from text, an argument that is nowhere, a second body or a body the method does not
     /// take, a result or a body that is not supported.
-    pub(crate) fn resolve(decl: RouteDecl) -> Result<Self> {
+    pub(crate) fn resolve(decl: RouteDecl, group_auth: Option<Auth>) -> Result<Self> {
         let RouteDecl {
             docs,
             method,
@@ -233,6 +264,7 @@ impl Route {
             name,
             args,
             reply,
+            auth,
         } = decl;
         let template = Template::parse(&path)?;
 
@@ -248,6 +280,11 @@ impl Route {
             })
             .collect();
         let reply = Reply::read(method, reply)?;
+        // A route's attribute replaces its group's.
+        let auth = match auth.or(group_auth) {
+            Some(Auth::Scheme(scheme)) => Some(scheme),
+            Some(Auth::None) | None => None,
+        };
 
         Ok(Self {
             docs,
@@ -257,6 +294,7 @@ impl Route {
             params,
             path_order,
             reply,
+            auth,
             span: path.span(),
         })
     }
@@ -786,6 +824,20 @@ impl Group {
     /// `NotesClient` for the group `Notes`: the client implementing the group's trait.
     pub(crate) fn client(&self) -> Ident {
         quote::format_ident!("{}Client", self.name.unraw(), span = self.name.span())
+    }
+
+    /// The schemes its routes take, each once, in the order they first appear: the service implements
+    /// `Authenticate` for each.
+    pub(crate) fn schemes(&self) -> Vec<Scheme> {
+        let mut schemes = Vec::new();
+
+        for scheme in self.routes.iter().filter_map(|route| route.auth) {
+            if !schemes.contains(&scheme) {
+                schemes.push(scheme);
+            }
+        }
+
+        schemes
     }
 
     /// The group's name in snake case, as an identifier: raw when it is a keyword, `Type` giving `r#type`.

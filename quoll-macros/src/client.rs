@@ -116,6 +116,7 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
     let group_name = group.name.unraw().to_string();
     let method = Ident::new(route.method.as_str(), Span::call_site());
     let path = route.full_path(&api.prefix);
+    let schemes = route.auth.iter().map(|scheme| scheme.name());
 
     let path_calls = path_calls(api, route);
     let (query_type, query_call) = query(route).unzip();
@@ -136,7 +137,7 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
                 #group_name,
                 ::quoll::__private::client::Method::#method,
                 #path,
-                &[],
+                &[#(#schemes),*],
             );
 
             #query_type

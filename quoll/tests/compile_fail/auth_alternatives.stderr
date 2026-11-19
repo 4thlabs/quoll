@@ -1,0 +1,5 @@
+error: alternatives of schemes are not supported yet: a route takes one scheme, write `#[auth(Bearer)]`, or `#[auth(none)]` on a route that takes no credential
+ --> tests/compile_fail/auth_alternatives.rs:6:19
+  |
+6 |     #[auth(Bearer | Key)]
+  |                   ^

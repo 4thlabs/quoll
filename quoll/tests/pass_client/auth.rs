@@ -1,0 +1,35 @@
+use quoll::rest::{self, Result};
+
+rest::api! {
+    pub api Api = "/api";
+
+    #[auth(Bearer)]
+    pub group Notes {
+        GET "/notes/{id}" => get(id: i64) -> String;
+        #[auth(none)]
+        GET "/public" => public() -> String;
+    }
+}
+
+// The client's trait has no caller: its middleware sends the credential.
+struct Fake;
+
+impl Notes for Fake {
+    async fn get(&self, id: i64) -> Result<String> {
+        Ok(id.to_string())
+    }
+
+    async fn public(&self) -> Result<String> {
+        Ok("open".into())
+    }
+}
+
+fn main() -> Result<()> {
+    let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
+        .with(rest::client::bearer("a-token"))
+        .build();
+    let _api: ApiClient = Api::client_with(http, "http://localhost:8080")?;
+    let _fake = Fake;
+
+    Ok(())
+}

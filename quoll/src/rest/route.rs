@@ -47,7 +47,9 @@ impl Route {
         self.path
     }
 
-    /// The schemes the contract gives the route.
+    /// The names of the schemes the route takes, as its `#[auth(...)]` or its group's writes them: `["Bearer"]`, or
+    /// none for a route that takes no credential. A middleware that sends a credential reads them, so that the routes
+    /// that do not take it never get it.
     pub fn schemes(&self) -> &'static [&'static str] {
         self.schemes
     }

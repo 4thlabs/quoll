@@ -1,5 +1,5 @@
-//! The server side of what `rest::api!` writes: the routes of a group on an axum router, the arguments read from a
-//! request, and the answers, an error answered as an RFC 9457 problem.
+//! The server side of what `rest::api!` writes: the routes of a group on an axum router, the caller authenticated and
+//! the arguments read from a request, and the answers, an error answered as an RFC 9457 problem.
 
 use std::error::Error as StdError;
 use std::future::Future;
@@ -17,7 +17,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::rest::error::Repr;
-use crate::rest::{Created, Error, Result};
+use crate::rest::{Authenticate, Created, Error, Result, Scheme};
 
 pub use axum::routing::MethodFilter;
 
@@ -37,12 +37,20 @@ impl<S: Send + Sync + 'static> Group<S> {
     }
 
     /// Serves `method` on `path` with `handler`, given the service and the request. An error it returns is answered as
-    /// a problem.
+    /// a problem; a 401 on a route that takes `schemes`, the names of their challenges, carries a `WWW-Authenticate`
+    /// for each, as RFC 9110 asks.
     ///
     /// # Panics
     ///
-    /// When axum refuses the path, which the macro has checked it would not.
-    pub fn route<F, Fut>(self, method: MethodFilter, path: &str, handler: F) -> Self
+    /// When axum refuses the path, which the macro has checked it would not, or a scheme's name is not a header's
+    /// value, which the macro only writes for the crate's schemes.
+    pub fn route<F, Fut>(
+        self,
+        method: MethodFilter,
+        path: &str,
+        schemes: &'static [&'static str],
+        handler: F,
+    ) -> Self
     where
         F: Fn(Arc<S>, Request) -> Fut + Clone + Send + Sync + 'static,
         Fut: Future<Output = Result<Response>> + Send + 'static,
@@ -51,7 +59,11 @@ impl<S: Send + Sync + 'static> Group<S> {
         let endpoint = on(method, move |request: axum::extract::Request| {
             let answer = handler(Arc::clone(&service), Request::new(request));
 
-            async move { answer.await.unwrap_or_else(IntoResponse::into_response) }
+            async move {
+                answer
+                    .await
+                    .unwrap_or_else(|error| challenged(error.into_response(), schemes))
+            }
         });
 
         Self {
@@ -66,7 +78,20 @@ impl<S: Send + Sync + 'static> Group<S> {
     }
 }
 
-/// A request, from which a handler reads its arguments: the path, then the query, then the body.
+/// A 401 with a `WWW-Authenticate` challenge per scheme of its route: a client knows so which credential to send.
+fn challenged(mut response: Response, schemes: &'static [&'static str]) -> Response {
+    if response.status() == StatusCode::UNAUTHORIZED {
+        for scheme in schemes {
+            response
+                .headers_mut()
+                .append(header::WWW_AUTHENTICATE, HeaderValue::from_static(scheme));
+        }
+    }
+
+    response
+}
+
+/// A request, from which a handler reads its caller, then its arguments: the path, the query, then the body.
 pub struct Request {
     parts: Parts,
     body: Body,
@@ -77,6 +102,36 @@ impl Request {
         let (parts, body) = request.into_parts();
 
         Self { parts, body }
+    }
+
+    /// The caller `service` makes of the credential of the scheme `S` the request carries. Only the headers are read:
+    /// a request refused never has its body read.
+    ///
+    /// # Errors
+    ///
+    /// A 401 when the request carries no credential of `S`, or one that is not well formed; the error of `service`'s
+    /// `authenticate` as it is, a 401 for a credential it does not know or a 500 for its own failure.
+    pub fn authenticate<'a, S, A>(
+        &self,
+        service: &'a A,
+    ) -> impl Future<Output = Result<A::Caller>> + Send + use<'a, S, A>
+    where
+        S: Scheme,
+        S::Credential: Send,
+        A: Authenticate<S>,
+    {
+        // Read now, so that the future does not borrow the request, whose body is not `Sync`.
+        let credential = S::read(&self.parts);
+
+        async move {
+            let Some(credential) = credential? else {
+                return Err(Error::unauthorized(
+                    "the request carries no credential, which this route takes",
+                ));
+            };
+
+            service.authenticate(credential).await
+        }
     }
 
     /// The path's parameters, as axum reads them into `T`: the struct the macro writes for the route, a field per
@@ -427,7 +482,7 @@ mod tests {
     #[tokio::test]
     async fn an_error_received_from_another_api_answers_502_without_its_body() {
         let router = Group::new(Router::new(), ())
-            .route(MethodFilter::GET, "/upstream", |_, _| async {
+            .route(MethodFilter::GET, "/upstream", &[], |_, _| async {
                 Err(Error::upstream(
                     StatusCode::NOT_FOUND,
                     None,
