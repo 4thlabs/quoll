@@ -14,11 +14,7 @@ macro_rules! contract {
     };
 }
 
-contract!(rest_reply::Created<String>, u64);
-
-mod rest_reply {
-    pub struct Created<T>(pub T);
-}
+contract!(rest::Created<String>, u64);
 
 fn main() {
     let _api = Api;

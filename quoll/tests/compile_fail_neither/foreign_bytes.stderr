@@ -1,0 +1,22 @@
+error[E0277]: `other::Bytes` is not quoll's `Bytes`, which a body named `Bytes` is read as
+  --> tests/compile_fail_neither/foreign_bytes.rs:12:52
+   |
+12 |         PUT "/files/{id}" => upload(id: i64, file: other::Bytes);
+   |                                                    ^^^^^^^^^^^^ not `quoll::rest::Bytes`
+   |
+help: the trait `quoll::__private::known::IsBytes` is not implemented for `other::Bytes`
+  --> tests/compile_fail_neither/foreign_bytes.rs:5:5
+   |
+ 5 |     pub struct Bytes(pub Vec<u8>);
+   |     ^^^^^^^^^^^^^^^^
+   = note: bring quoll's into scope, `use quoll::rest::Bytes;`, or name a type of your own otherwise
+help: the trait `quoll::__private::known::IsBytes` is implemented for `quoll::rest::Bytes`
+  --> src/__private/known.rs
+   |
+   | impl IsBytes for Bytes {
+   | ^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `quoll::__private::known::bytes`
+  --> src/__private/known.rs
+   |
+   | pub const fn bytes<T: IsBytes>() {}
+   |                       ^^^^^^^ required by this bound in `bytes`

@@ -14,6 +14,7 @@ pub use reqwest_middleware;
 pub use serde;
 
 mod auth;
+pub mod known;
 
 pub use auth::Given;
 

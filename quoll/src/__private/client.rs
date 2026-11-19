@@ -5,7 +5,7 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
 
-use http::{HeaderMap, HeaderValue, StatusCode, header};
+use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::Url;
 use reqwest_middleware::ClientWithMiddleware;
@@ -13,6 +13,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::__private::known::{IsBytes, IsForm, IsText};
 use crate::rest::{Error, Problem, Result, Route};
 
 mod text;
@@ -125,14 +126,22 @@ fn redacted(url: &Url) -> String {
     format!("{}{}", url.origin().ascii_serialization(), url.path())
 }
 
-/// One call of a route: its path, its query and its body, written from the route's arguments, then sent.
+/// One call of a route: its path, its query, its headers and its body, written from the route's arguments, then sent.
 #[derive(Debug)]
 pub struct Call<'a> {
     client: &'a Client,
     route: &'static Route,
     path: String,
     query: Option<String>,
-    body: Option<Vec<u8>>,
+    headers: HeaderMap,
+    body: Option<Body>,
+}
+
+/// A body, with its content type.
+#[derive(Debug)]
+struct Body {
+    content_type: &'static str,
+    bytes: Vec<u8>,
 }
 
 impl<'a> Call<'a> {
@@ -143,6 +152,7 @@ impl<'a> Call<'a> {
             route,
             path: String::new(),
             query: None,
+            headers: HeaderMap::new(),
             body: None,
         }
     }
@@ -220,7 +230,106 @@ impl<'a> Call<'a> {
             )
         })?;
 
-        self.body = Some(body);
+        self.body = Some(Body {
+            content_type: "application/json",
+            bytes: body,
+        });
+        Ok(self)
+    }
+
+    /// Sets the body to the `T` of `Form<T>`, written as a form, `application/x-www-form-urlencoded`, as the query
+    /// is.
+    ///
+    /// # Errors
+    ///
+    /// When serde_html_form cannot write the form.
+    pub fn form<F>(mut self, body: &F) -> Result<Self>
+    where
+        F: IsForm,
+        F::Value: Serialize,
+    {
+        let body = serde_html_form::to_string(body.value()).map_err(|error| {
+            Error::misuse(
+                format!(
+                    "the body of `{}` cannot be written as a form",
+                    self.route.operation_id
+                ),
+                Some(Box::new(error)),
+            )
+        })?;
+
+        self.body = Some(Body {
+            content_type: "application/x-www-form-urlencoded",
+            bytes: body.into_bytes(),
+        });
+        Ok(self)
+    }
+
+    /// Sets the body to `body`, `text/plain` in UTF-8.
+    #[must_use]
+    pub fn text<T: IsText>(mut self, body: T) -> Self {
+        self.body = Some(Body {
+            content_type: "text/plain; charset=utf-8",
+            bytes: body.into_string().into_bytes(),
+        });
+        self
+    }
+
+    /// Sets the body to `body`, `application/octet-stream`.
+    #[must_use]
+    pub fn bytes<B: IsBytes>(mut self, body: B) -> Self {
+        self.body = Some(Body {
+            content_type: "application/octet-stream",
+            bytes: body.into_vec(),
+        });
+        self
+    }
+
+    /// Adds the header `name` with the text serde writes for `value`, as a path parameter's; a `None` leaves it out.
+    ///
+    /// # Errors
+    ///
+    /// When `value` is not written as one piece of text, or its text cannot be a header's value as it is: a control
+    /// character, a line break, or a space or a tab at either end, which HTTP drops. The message does not show the
+    /// value.
+    pub fn header<T: Serialize + ?Sized>(mut self, name: &'static str, value: &T) -> Result<Self> {
+        let operation_id = self.route.operation_id;
+        let Some(text) = text::to_header_text(value) else {
+            return Err(Error::misuse(
+                format!("the header `{name}` of `{operation_id}` is not written as text"),
+                None,
+            ));
+        };
+        let Some(text) = text else {
+            return Ok(self);
+        };
+
+        let blank = |c: char| c == ' ' || c == '\t';
+        if text.starts_with(blank) || text.ends_with(blank) {
+            return Err(Error::misuse(
+                format!(
+                    "the header `{name}` of `{operation_id}` starts or ends with a space or a tab, which HTTP drops: it would not read back as it was written"
+                ),
+                None,
+            ));
+        }
+
+        let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+            Error::misuse(
+                format!("`{name}`, a header of `{operation_id}`, is not a header's name"),
+                Some(Box::new(error)),
+            )
+        })?;
+        let value = HeaderValue::try_from(text).map_err(|_| {
+            Error::misuse(
+                format!(
+                    "the header `{name}` of `{operation_id}` holds a character a header cannot, a control character or a line break"
+                ),
+                None,
+            )
+        })?;
+
+        self.headers.append(header_name, value);
         Ok(self)
     }
 
@@ -236,6 +345,7 @@ impl<'a> Call<'a> {
             route,
             path,
             query,
+            headers,
             body,
         } = self;
         let Inner { http, base } = &*client.0;
@@ -245,14 +355,16 @@ impl<'a> Call<'a> {
 
         let mut request = http
             .request(route.method.clone(), url)
+            .headers(headers)
             .with_extension(route.clone());
-        if let Some(body) = body {
+        if let Some(Body {
+            content_type,
+            bytes,
+        }) = body
+        {
             request = request
-                .header(
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_static("application/json"),
-                )
-                .body(body);
+                .header(header::CONTENT_TYPE, HeaderValue::from_static(content_type))
+                .body(bytes);
         }
 
         let response = request

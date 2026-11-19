@@ -2,7 +2,9 @@
 //!
 //! What only the server's code checks, a route left out of a service or a handler of the wrong signature, is in
 //! `tests/compile_fail_server/`, which builds with the feature `server`; what only the client's checks, a fake of the
-//! wrong signature, in `tests/compile_fail_client/`, which builds with the feature `client`.
+//! wrong signature, in `tests/compile_fail_client/`, which builds with the feature `client`. A type the contract names
+//! `Created`, `Form`, `Text` or `Bytes` that is not quoll's is in `tests/compile_fail_neither/`, built with neither
+//! feature: the server's code and the client's each repeat its message.
 
 #[test]
 fn a_mistake_is_an_error_on_the_token_at_fault() {
@@ -66,4 +68,12 @@ fn with_neither_feature_only_the_api_type_is_written() {
     let cases = trybuild::TestCases::new();
 
     cases.pass("tests/pass_neither/*.rs");
+}
+
+#[cfg(not(any(feature = "server", feature = "client")))]
+#[test]
+fn a_type_named_as_one_of_quolls_is_quolls_with_neither_feature() {
+    let cases = trybuild::TestCases::new();
+
+    cases.compile_fail("tests/compile_fail_neither/*.rs");
 }

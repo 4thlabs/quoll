@@ -7,10 +7,11 @@ mod server;
 mod syntax;
 
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::ext::IdentExt;
+use syn::spanned::Spanned;
 
-use crate::model::{Api, Route, Scheme};
+use crate::model::{Api, BodyKind, Reply, Route, Scheme};
 use crate::syntax::Contract;
 
 /// Reads a REST contract and checks it.
@@ -27,8 +28,10 @@ use crate::syntax::Contract;
 /// }
 /// ```
 ///
-/// A group or a route takes a credential with `#[auth(Bearer)]`, and a route takes none with `#[auth(none)]`, which
-/// replaces its group's.
+/// An argument is a `{name}` of the path or a `key={name}` of the query by its name, a query struct as `query filter:
+/// NoteFilter`, a header as `header("Last-Event-ID") last: Option<String>`, or else the body: JSON, or `Form<T>`,
+/// `Text` or `Bytes`. A group or a route takes a credential with `#[auth(Bearer)]`, and a route takes none with
+/// `#[auth(none)]`, which replaces its group's.
 ///
 /// A mistake in the contract is a compile error on the token at fault. The api becomes its type, with its comments;
 /// with the feature `server` of `quoll`, a server trait per group, `ApiServices` and `Api::router` come too; with the
@@ -42,17 +45,54 @@ pub fn api(input: TokenStream) -> TokenStream {
     }
 }
 
-/// What a contract becomes: the api's type, the server's code behind the feature `server` of `quoll`, and the
-/// client's behind its feature `client`.
+/// What a contract becomes: the api's type, the check of the types it names by their name, the server's code behind
+/// the feature `server` of `quoll`, and the client's behind its feature `client`.
 fn expand(api: &Api) -> proc_macro2::TokenStream {
     let api_type = api_type(api);
+    let known = known_types(api);
     let server = server::expand(api);
     let client = client::expand(api);
 
     quote! {
         #api_type
+        #known
         #server
         #client
+    }
+}
+
+/// Checks that each type the contract names `Created`, `Form`, `Text` or `Bytes`, which the macro reads by its name,
+/// is the crate's. The types are the contract's tokens, so that the user's import names them; and the check is written
+/// whatever the features of `quoll`, so that the import is used, and the type checked, with neither of them.
+fn known_types(api: &Api) -> proc_macro2::TokenStream {
+    let mut checks = Vec::new();
+
+    for route in api.groups.iter().flat_map(|group| &group.routes) {
+        if let Reply::Created(ty) = &route.reply {
+            checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::created::<#ty>(); });
+        }
+
+        let Some((param, kind)) = route.body() else {
+            continue;
+        };
+        let ty = &param.ty;
+        let check = match kind {
+            BodyKind::Json => continue,
+            BodyKind::Form => quote! { form },
+            BodyKind::Text => quote! { text },
+            BodyKind::Bytes => quote! { bytes },
+        };
+        checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::#check::<#ty>(); });
+    }
+
+    if checks.is_empty() {
+        return proc_macro2::TokenStream::new();
+    }
+
+    quote! {
+        const _: () = {
+            #(#checks)*
+        };
     }
 }
 

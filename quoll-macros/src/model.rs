@@ -180,15 +180,31 @@ impl Route {
     pub(crate) fn query_params(&self) -> impl Iterator<Item = (&Param, &str)> {
         self.params.iter().filter_map(|param| match &param.kind {
             ParamKind::Query { key } => Some((param, key.as_str())),
-            ParamKind::Path | ParamKind::Body => None,
+            _ => None,
         })
     }
 
-    /// The argument read from the body, if the route has one.
-    pub(crate) fn body(&self) -> Option<&Param> {
+    /// The query struct, if the route has one.
+    pub(crate) fn query_struct(&self) -> Option<&Param> {
         self.params
             .iter()
-            .find(|param| matches!(param.kind, ParamKind::Body))
+            .find(|param| param.kind == ParamKind::QueryStruct)
+    }
+
+    /// The headers, each with its name as the contract writes it, in the order they are written.
+    pub(crate) fn headers(&self) -> impl Iterator<Item = (&Param, &str)> {
+        self.params.iter().filter_map(|param| match &param.kind {
+            ParamKind::Header { name } => Some((param, name.as_str())),
+            _ => None,
+        })
+    }
+
+    /// The argument read from the body, with what the body is, if the route has one.
+    pub(crate) fn body(&self) -> Option<(&Param, BodyKind)> {
+        self.params.iter().find_map(|param| match param.kind {
+            ParamKind::Body(kind) => Some((param, kind)),
+            _ => None,
+        })
     }
 }
 
@@ -213,8 +229,40 @@ pub(crate) enum ParamKind {
         /// The key on the wire.
         key: String,
     },
-    /// The body, as JSON.
-    Body,
+    /// `query name: Type`: the whole query, a field per key.
+    QueryStruct,
+    /// `header("Name") name: Type`: a header, missing when its type is an `Option`.
+    Header {
+        /// The header's name, as the contract writes it.
+        name: String,
+    },
+    /// The body.
+    Body(BodyKind),
+}
+
+/// What a body is on the wire, which its type says: `Form<T>`, `Text`, `Bytes`, or any other type for JSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BodyKind {
+    /// Any type but the three below: its JSON, `application/json`.
+    Json,
+    /// `Form<T>`: `application/x-www-form-urlencoded`.
+    Form,
+    /// `Text`: `text/plain`, UTF-8.
+    Text,
+    /// `Bytes`: `application/octet-stream`.
+    Bytes,
+}
+
+impl BodyKind {
+    /// What a body of type `ty` is: the last segment of its path names it.
+    fn of(ty: &Type) -> Self {
+        match reserved_name(ty, &["Form", "Text", "Bytes"]) {
+            Some("Form") => Self::Form,
+            Some("Text") => Self::Text,
+            Some("Bytes") => Self::Bytes,
+            _ => Self::Json,
+        }
+    }
 }
 
 /// What a route answers, and so its status and its body.
@@ -224,8 +272,47 @@ pub(crate) enum Reply {
     None,
     /// `T`: 200, JSON.
     Json(Type),
-    /// `Created<T>`: 201, JSON; the type is the `T`.
+    /// `Created<T>`: 201, JSON. The type is the whole `Created<T>`, as the contract writes it, which the server's trait
+    /// returns; [`Reply::value`] gives the `T`, which the client returns.
     Created(Type),
+}
+
+impl Reply {
+    /// The type of the value the route answers, which the client returns: the `T` of a `Created<T>`.
+    pub(crate) fn value(&self) -> Option<&Type> {
+        match self {
+            Self::None => None,
+            Self::Json(ty) => Some(ty),
+            Self::Created(ty) => Some(
+                created_inner(ty)
+                    .ok()
+                    .flatten()
+                    .expect("`Reply::read` checked that the type is a `Created<T>`"),
+            ),
+        }
+    }
+}
+
+/// An argument as a spelling writes it.
+#[derive(Debug)]
+pub(crate) struct ArgDecl {
+    /// Where it says its value comes from.
+    pub(crate) source: Source,
+    /// Its name.
+    pub(crate) name: Ident,
+    /// Its type.
+    pub(crate) ty: Type,
+}
+
+/// Where an argument says its value comes from.
+#[derive(Debug)]
+pub(crate) enum Source {
+    /// Nowhere: its name places it, in the path, in the query, or else in the body.
+    Named,
+    /// `query name: Type`, a query struct; the span is the `query`'s.
+    Query(Span),
+    /// `header("Name") name: Type`, with the header's name.
+    Header(LitStr),
 }
 
 /// A route as a spelling writes it, before its arguments are matched to its string.
@@ -239,8 +326,8 @@ pub(crate) struct RouteDecl {
     pub(crate) path: LitStr,
     /// The name of the function.
     pub(crate) name: Ident,
-    /// The arguments, `(name, type)`, in the order they are written.
-    pub(crate) args: Vec<(Ident, Type)>,
+    /// The arguments, in the order they are written.
+    pub(crate) args: Vec<ArgDecl>,
     /// The type after `->`, if there is one.
     pub(crate) reply: Option<Type>,
     /// The route's own `#[auth(...)]`, if it has one.
@@ -254,9 +341,11 @@ impl Route {
     ///
     /// # Errors
     ///
-    /// An error spanned on the argument or the string at fault: an argument twice, a `{name}` with no argument, a path
-    /// argument that is not read from text, an argument that is nowhere, a second body or a body the method does not
-    /// take, a result or a body that is not supported.
+    /// An error spanned on the argument or the string at fault: an argument twice, a `{name}` with no argument or
+    /// whose argument says it comes from elsewhere, a path argument or a header that is not read from text, a query
+    /// struct beside a query in the string or another query struct, a header name that is not one or that is read
+    /// twice, an argument that is nowhere, a second body or a body the method does not take, a result that is not
+    /// supported.
     pub(crate) fn resolve(decl: RouteDecl, group_auth: Option<Auth>) -> Result<Self> {
         let RouteDecl {
             docs,
@@ -301,11 +390,12 @@ impl Route {
     }
 }
 
-fn check_names_unique(args: &[(Ident, Type)]) -> Result<()> {
-    for (index, (name, _)) in args.iter().enumerate() {
+fn check_names_unique(args: &[ArgDecl]) -> Result<()> {
+    for (index, arg) in args.iter().enumerate() {
+        let name = &arg.name;
         let twice = args[..index]
             .iter()
-            .any(|(earlier, _)| earlier.unraw() == name.unraw());
+            .any(|earlier| earlier.name.unraw() == name.unraw());
         if twice {
             return Err(Error::new(
                 name.span(),
@@ -321,42 +411,191 @@ fn match_args(
     method: Method,
     path: &LitStr,
     template: &Template,
-    args: Vec<(Ident, Type)>,
+    args: Vec<ArgDecl>,
 ) -> Result<Vec<Param>> {
-    let find = |name: &str| args.iter().position(|(arg, _)| arg.unraw() == name);
+    let find = |name: &str| args.iter().find(|arg| arg.name.unraw() == name);
 
     for name in template.path_names() {
-        let Some(index) = find(name) else {
+        let Some(arg) = find(name) else {
             return Err(missing_argument(path, name, &Place::Path));
         };
-        check_read_from_text(&args[index].0, &args[index].1)?;
+        check_named(arg, &format!("the path's `{{{name}}}`"))?;
+        check_read_from_text(&arg.ty, &format!("the path parameter `{name}`"))?;
     }
     for item in &template.query {
-        if find(&item.name).is_none() {
+        let Some(arg) = find(&item.name) else {
             return Err(missing_argument(path, &item.name, &Place::Query(&item.key)));
-        }
+        };
+        check_named(
+            arg,
+            &format!("the query's `{}={{{}}}`", item.key, item.name),
+        )?;
     }
 
     let mut params = Vec::with_capacity(args.len());
+    let mut query: Option<Ident> = None;
+    let mut headers: Vec<LitStr> = Vec::new();
     let mut body: Option<Ident> = None;
 
-    for (name, ty) in args {
+    for ArgDecl { source, name, ty } in args {
         let key = name.unraw().to_string();
-        let kind = if template.path_names().any(|path_name| path_name == key) {
-            ParamKind::Path
-        } else if let Some(item) = template.query.iter().find(|item| item.name == key) {
-            ParamKind::Query {
-                key: item.key.clone(),
+        let kind = match source {
+            Source::Query(span) => {
+                check_query_struct(span, template, &name, &ty, query.as_ref())?;
+                query = Some(name.clone());
+                ParamKind::QueryStruct
             }
-        } else {
-            check_body(method, &name, &ty, body.as_ref())?;
-            body = Some(name.clone());
-            ParamKind::Body
+            Source::Header(header) => {
+                check_header(&header, &headers)?;
+                check_header_type(&ty, &header.value())?;
+                let kind = ParamKind::Header {
+                    name: header.value(),
+                };
+                headers.push(header);
+                kind
+            }
+            Source::Named if template.path_names().any(|path_name| path_name == key) => {
+                ParamKind::Path
+            }
+            Source::Named => match template.query.iter().find(|item| item.name == key) {
+                Some(item) => ParamKind::Query {
+                    key: item.key.clone(),
+                },
+                None => {
+                    check_body(method, &name, body.as_ref())?;
+                    body = Some(name.clone());
+                    ParamKind::Body(BodyKind::of(&ty))
+                }
+            },
         };
         params.push(Param { name, ty, kind });
     }
 
     Ok(params)
+}
+
+/// A `{name}` of the path or the query is the argument of that name, which says nowhere else it comes from.
+fn check_named(arg: &ArgDecl, place: &str) -> Result<()> {
+    let what = match &arg.source {
+        Source::Named => return Ok(()),
+        Source::Query(_) => "the query struct",
+        Source::Header(_) => "a header",
+    };
+    let name = &arg.name;
+
+    Err(Error::new(
+        name.span(),
+        format!(
+            "`{name}` is {what}, and {place} names it too: an argument comes from one place, so rename one of them"
+        ),
+    ))
+}
+
+/// A query struct is the whole query: the string has none, and the route no other query struct.
+fn check_query_struct(
+    span: Span,
+    template: &Template,
+    name: &Ident,
+    ty: &Type,
+    earlier: Option<&Ident>,
+) -> Result<()> {
+    if !template.query.is_empty() {
+        return Err(Error::new(
+            span,
+            format!(
+                "`{name}` is the whole query, and the route's string has a query too: remove the `?...` from the string and make its keys fields of the struct, or write `{name}` as an argument of the string's query"
+            ),
+        ));
+    }
+    if let Some(earlier) = earlier {
+        return Err(Error::new(
+            span,
+            format!(
+                "a route has one query struct, and `{earlier}` is already it: put the fields of `{name}` in it"
+            ),
+        ));
+    }
+
+    let is_struct = match peel(ty) {
+        Type::Path(path) => path.qself.is_none(),
+        _ => false,
+    };
+    let reserved = reserved_name(ty, NOT_TEXT).is_some();
+    if is_struct && !reserved {
+        return Ok(());
+    }
+
+    Err(Error::new_spanned(
+        ty,
+        format!(
+            "the query struct `{name}` is read with a field per key, which this type is not: write a struct of your own, as `query {name}: NoteFilter`"
+        ),
+    ))
+}
+
+/// A header's name is one HTTP takes, and the route reads each header once.
+fn check_header(header: &LitStr, earlier: &[LitStr]) -> Result<()> {
+    let name = header.value();
+    // The `token` of RFC 9110: letters, digits and these signs.
+    let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+
+    if name.is_empty() || !name.chars().all(tchar) {
+        return Err(Error::new(
+            header.span(),
+            format!(
+                "`{name}` is not the name of a header: a name is ASCII letters, digits and `-`, as in \"Last-Event-ID\""
+            ),
+        ));
+    }
+    if let Some(first) = earlier
+        .iter()
+        .find(|first| first.value().eq_ignore_ascii_case(&name))
+    {
+        return Err(Error::new(
+            header.span(),
+            format!(
+                "the header `{}` is already read by another argument: a route reads a header once",
+                first.value()
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+/// A header's type is read from text, as a path parameter's is, or is an `Option` of one for a header that may be
+/// missing.
+fn check_header_type(ty: &Type, header: &str) -> Result<()> {
+    let inner = option_inner(ty).unwrap_or(ty);
+
+    check_read_from_text(inner, &format!("the header `{header}`")).map_err(|_| {
+        Error::new_spanned(
+            ty,
+            format!(
+                "the header `{header}` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants, or an `Option` of one for a header that may be missing"
+            ),
+        )
+    })
+}
+
+/// The `T` of an `Option<T>`.
+fn option_inner(ty: &Type) -> Option<&Type> {
+    let Type::Path(path) = peel(ty) else {
+        return None;
+    };
+    let last = path
+        .path
+        .segments
+        .last()
+        .filter(|last| last.ident == "Option")?;
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+
+    match args.args.first() {
+        Some(syn::GenericArgument::Type(inner)) if args.args.len() == 1 => Some(inner),
+        _ => None,
+    }
 }
 
 /// Where a name is written in the route's string.
@@ -389,16 +628,29 @@ fn peel(mut ty: &Type) -> &Type {
     }
 }
 
-fn check_read_from_text(name: &Ident, ty: &Type) -> Result<()> {
+/// The types a path parameter or a header is not read from: the collections of the standard library, `Option`, and
+/// the types the contract reads otherwise.
+const NOT_TEXT: &[&str] = &[
+    "Vec",
+    "VecDeque",
+    "LinkedList",
+    "HashMap",
+    "BTreeMap",
+    "HashSet",
+    "BTreeSet",
+    "BinaryHeap",
+    "Option",
+    "Created",
+    "Form",
+    "Text",
+    "Bytes",
+];
+
+/// Checks what the macro can see of a type read from text, `what`: a path, with none of the names of [`NOT_TEXT`]. A
+/// struct of the user's cannot be told from an enum of unit variants here: axum refuses it as the request is read.
+fn check_read_from_text(ty: &Type, what: &str) -> Result<()> {
     let readable = match peel(ty) {
-        Type::Path(path) => {
-            path.qself.is_none()
-                && !path
-                    .path
-                    .segments
-                    .last()
-                    .is_some_and(|last| last.ident == "Vec" || last.ident == "Option")
-        }
+        Type::Path(path) => path.qself.is_none() && reserved_name(ty, NOT_TEXT).is_none(),
         _ => false,
     };
     if readable {
@@ -408,17 +660,17 @@ fn check_read_from_text(name: &Ident, ty: &Type) -> Result<()> {
     Err(Error::new_spanned(
         ty,
         format!(
-            "the path parameter `{name}` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants"
+            "{what} is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants"
         ),
     ))
 }
 
-fn check_body(method: Method, name: &Ident, ty: &Type, earlier: Option<&Ident>) -> Result<()> {
+fn check_body(method: Method, name: &Ident, earlier: Option<&Ident>) -> Result<()> {
     if !method.takes_body() {
         return Err(Error::new(
             name.span(),
             format!(
-                "`{name}` is neither a `{{{name}}}` of the path nor a `key={{{name}}}` of the query, and {} takes no body: write it in the path or the query",
+                "`{name}` is neither a `{{{name}}}` of the path nor a `key={{{name}}}` of the query, and {} takes no body: write it in the path or the query, or as `header(\"Name\") {name}: Type`",
                 method.as_str(),
             ),
         ));
@@ -428,15 +680,6 @@ fn check_body(method: Method, name: &Ident, ty: &Type, earlier: Option<&Ident>) 
             name.span(),
             format!(
                 "a route has one body, and `{earlier}` is already it: write `{name}` as a `{{{name}}}` of the path or a `key={{{name}}}` of the query, or put both in one type"
-            ),
-        ));
-    }
-
-    if let Some(wrapper) = reserved_name(ty, &["Form", "Text", "Bytes"]) {
-        return Err(Error::new_spanned(
-            ty,
-            format!(
-                "`{wrapper}` is not supported as a body: a body is the JSON of its type, written as `{name}: Type`"
             ),
         ));
     }
@@ -473,8 +716,8 @@ impl Reply {
                 ),
             ));
         }
-        if let Some(inner) = created_inner(&ty)? {
-            return Ok(Self::Created(inner));
+        if created_inner(&ty)?.is_some() {
+            return Ok(Self::Created(ty));
         }
 
         Ok(Self::Json(ty))
@@ -497,7 +740,7 @@ fn reserved_name<'a>(ty: &Type, names: &[&'a str]) -> Option<&'a str> {
 }
 
 /// The `T` of a `Created<T>`; `None` when the type is something else, an error when `Created` has no single `T`.
-fn created_inner(ty: &Type) -> Result<Option<Type>> {
+fn created_inner(ty: &Type) -> Result<Option<&Type>> {
     let Type::Path(path) = peel(ty) else {
         return Ok(None);
     };
@@ -521,7 +764,7 @@ fn created_inner(ty: &Type) -> Result<Option<Type>> {
         _ => None,
     });
     match (types.next(), types.next(), args.args.len()) {
-        (Some(inner), None, 1) => Ok(Some(inner.clone())),
+        (Some(inner), None, 1) => Ok(Some(inner)),
         _ => Err(Error::new_spanned(
             ty,
             "`Created` wraps one type, the body: write `Created<Note>`",

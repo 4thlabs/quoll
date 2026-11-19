@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap, btree_map};
 use std::convert::Infallible;
 use std::fmt::{self, Write};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use notes_api::{NewNote, Note};
 
@@ -144,8 +144,10 @@ impl fmt::Debug for Sessions {
     }
 }
 
-/// Locks `mutex`, even when a thread panicked while holding it: nothing that runs under a lock of the store panics, so
-/// what it holds is whole.
+/// Locks `mutex`. No code panics while holding a lock of the store, so a poisoned one is a bug: it stops the
+/// request, rather than serve what a panic left half written.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+    mutex
+        .lock()
+        .expect("no code panics while holding a lock of the store")
 }

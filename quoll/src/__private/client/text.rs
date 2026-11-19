@@ -1,5 +1,5 @@
-//! A value written as the text of one path parameter: what axum's `Path` reads back, for every integer, a float, a
-//! `bool`, a `char`, a string or a unit variant, and a newtype around one of them.
+//! A value written as the text of one path parameter or one header: what axum's `Path` reads back, for every integer,
+//! a float, a `bool`, a `char`, a string or a unit variant, and a newtype or an `Option` around one of them.
 
 use std::fmt;
 
@@ -7,7 +7,26 @@ use serde::ser::{self, Impossible, Serialize};
 
 /// The text of `value`, or `None` when it is not written as one piece of text: a sequence, a map, a struct, `None`.
 pub(crate) fn to_text<T: Serialize + ?Sized>(value: &T) -> Option<String> {
-    value.serialize(Text).ok()
+    match value.serialize(Text) {
+        Ok(Written::Text(text)) => Some(text),
+        Ok(Written::Nothing) | Err(NotText) => None,
+    }
+}
+
+/// The text of a header's `value`, `Some(None)` for a `None`, which leaves the header out; `None` when it is not
+/// written as one piece of text.
+pub(crate) fn to_header_text<T: Serialize + ?Sized>(value: &T) -> Option<Option<String>> {
+    match value.serialize(Text) {
+        Ok(Written::Text(text)) => Some(Some(text)),
+        Ok(Written::Nothing) => Some(None),
+        Err(NotText) => None,
+    }
+}
+
+/// What `Text` writes: a value's text, or nothing for a `None`.
+enum Written {
+    Text(String),
+    Nothing,
 }
 
 /// A serializer that writes a scalar as its text and refuses anything else.
@@ -35,23 +54,23 @@ impl ser::Error for NotText {
 macro_rules! display {
     ($($method:ident: $ty:ty),* $(,)?) => {
         $(
-            fn $method(self, value: $ty) -> Result<String, NotText> {
-                Ok(value.to_string())
+            fn $method(self, value: $ty) -> Result<Written, NotText> {
+                Ok(Written::Text(value.to_string()))
             }
         )*
     };
 }
 
 impl ser::Serializer for Text {
-    type Ok = String;
+    type Ok = Written;
     type Error = NotText;
-    type SerializeSeq = Impossible<String, NotText>;
-    type SerializeTuple = Impossible<String, NotText>;
-    type SerializeTupleStruct = Impossible<String, NotText>;
-    type SerializeTupleVariant = Impossible<String, NotText>;
-    type SerializeMap = Impossible<String, NotText>;
-    type SerializeStruct = Impossible<String, NotText>;
-    type SerializeStructVariant = Impossible<String, NotText>;
+    type SerializeSeq = Impossible<Written, NotText>;
+    type SerializeTuple = Impossible<Written, NotText>;
+    type SerializeTupleStruct = Impossible<Written, NotText>;
+    type SerializeTupleVariant = Impossible<Written, NotText>;
+    type SerializeMap = Impossible<Written, NotText>;
+    type SerializeStruct = Impossible<Written, NotText>;
+    type SerializeStructVariant = Impossible<Written, NotText>;
 
     display! {
         serialize_bool: bool,
@@ -71,23 +90,23 @@ impl ser::Serializer for Text {
         serialize_str: &str,
     }
 
-    fn serialize_bytes(self, _value: &[u8]) -> Result<String, NotText> {
+    fn serialize_bytes(self, _value: &[u8]) -> Result<Written, NotText> {
         Err(NotText)
     }
 
-    fn serialize_none(self) -> Result<String, NotText> {
+    fn serialize_none(self) -> Result<Written, NotText> {
+        Ok(Written::Nothing)
+    }
+
+    fn serialize_some<T: Serialize + ?Sized>(self, value: &T) -> Result<Written, NotText> {
+        value.serialize(self)
+    }
+
+    fn serialize_unit(self) -> Result<Written, NotText> {
         Err(NotText)
     }
 
-    fn serialize_some<T: Serialize + ?Sized>(self, _value: &T) -> Result<String, NotText> {
-        Err(NotText)
-    }
-
-    fn serialize_unit(self) -> Result<String, NotText> {
-        Err(NotText)
-    }
-
-    fn serialize_unit_struct(self, _name: &'static str) -> Result<String, NotText> {
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<Written, NotText> {
         Err(NotText)
     }
 
@@ -96,15 +115,15 @@ impl ser::Serializer for Text {
         _name: &'static str,
         _index: u32,
         variant: &'static str,
-    ) -> Result<String, NotText> {
-        Ok(variant.to_owned())
+    ) -> Result<Written, NotText> {
+        Ok(Written::Text(variant.to_owned()))
     }
 
     fn serialize_newtype_struct<T: Serialize + ?Sized>(
         self,
         _name: &'static str,
         value: &T,
-    ) -> Result<String, NotText> {
+    ) -> Result<Written, NotText> {
         value.serialize(self)
     }
 
@@ -114,7 +133,7 @@ impl ser::Serializer for Text {
         _index: u32,
         _variant: &'static str,
         _value: &T,
-    ) -> Result<String, NotText> {
+    ) -> Result<Written, NotText> {
         Err(NotText)
     }
 

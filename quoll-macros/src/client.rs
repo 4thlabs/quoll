@@ -9,7 +9,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Param, Reply, Route, snake_case};
+use crate::model::{Api, BodyKind, Group, Param, Route, snake_case};
 use crate::path::Segment;
 use crate::{doc_attrs, route_docs, scheme_type};
 
@@ -71,9 +71,9 @@ fn signature(route: &Route) -> TokenStream {
         .params
         .iter()
         .map(|Param { name, ty, .. }| quote! { #name: #ty });
-    let output = match &route.reply {
-        Reply::None => quote! { () },
-        Reply::Json(ty) | Reply::Created(ty) => quote! { #ty },
+    let output = match route.reply.value() {
+        None => quote! { () },
+        Some(ty) => quote! { #ty },
     };
 
     quote_spanned! {route.name.span()=>
@@ -125,14 +125,29 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
 
     let path_calls = path_calls(api, route);
     let (query_type, query_call) = query(route).unzip();
-    let body = route.body().map(|body| {
-        let (name, ty) = (&body.name, &body.ty);
+    let query_struct = route.query_struct().map(|param| {
+        let (name, ty) = (&param.name, &param.ty);
 
-        quote_spanned! {ty.span()=> .json(&#name)? }
+        quote_spanned! {ty.span()=> .query(&#name)? }
     });
-    let answer = match &route.reply {
-        Reply::None => quote_spanned! {route.span=> .none().await },
-        Reply::Json(ty) | Reply::Created(ty) => quote_spanned! {ty.span()=> .json::<#ty>().await },
+    let headers = route.headers().map(|(param, header)| {
+        let (name, ty) = (&param.name, &param.ty);
+
+        quote_spanned! {ty.span()=> .header(#header, &#name)? }
+    });
+    let body = route.body().map(|(param, kind)| {
+        let (name, ty) = (&param.name, &param.ty);
+
+        match kind {
+            BodyKind::Json => quote_spanned! {ty.span()=> .json(&#name)? },
+            BodyKind::Form => quote_spanned! {ty.span()=> .form(&#name)? },
+            BodyKind::Text => quote_spanned! {ty.span()=> .text(#name) },
+            BodyKind::Bytes => quote_spanned! {ty.span()=> .bytes(#name) },
+        }
+    });
+    let answer = match route.reply.value() {
+        None => quote_spanned! {route.span=> .none().await },
+        Some(ty) => quote_spanned! {ty.span()=> .json::<#ty>().await },
     };
 
     quote! {
@@ -151,6 +166,8 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
                 ::quoll::__private::client::Call::new(&self.client, &#route_static)
                     #(#path_calls)*
                     #query_call
+                    #query_struct
+                    #(#headers)*
                     #body
                     .send()
                     .await?

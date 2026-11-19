@@ -1,5 +1,0 @@
-error: expected `:` after `header`: an argument is written `name: Type`
- --> tests/compile_fail/arg_not_a_name.rs:7:36
-  |
-7 |         GET "/notes" => list(header("X-Page") page: u32);
-  |                                    ^

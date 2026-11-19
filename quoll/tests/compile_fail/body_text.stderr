@@ -1,5 +1,0 @@
-error: `Text` is not supported as a body: a body is the JSON of its type, written as `text: Type`
- --> tests/compile_fail/body_text.rs:7:39
-  |
-7 |         POST "/notes" => create(text: Text);
-  |                                       ^^^^

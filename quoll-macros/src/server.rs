@@ -8,7 +8,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Method, Param, Reply, Route, is_vec};
+use crate::model::{Api, BodyKind, Group, Method, Param, Reply, Route, is_vec};
 use crate::{doc_attrs, route_docs, scheme_type};
 
 /// The server's code of the api, behind the feature `server` of `quoll`.
@@ -79,8 +79,7 @@ fn method(api: &Api, route: &Route) -> TokenStream {
         .map(|Param { name, ty, .. }| quote! { #name: #ty });
     let output = match &route.reply {
         Reply::None => quote! { () },
-        Reply::Json(ty) => quote! { #ty },
-        Reply::Created(ty) => quote! { ::quoll::rest::Created<#ty> },
+        Reply::Json(ty) | Reply::Created(ty) => quote! { #ty },
     };
     let caller = route.auth.map(|scheme| {
         let scheme = scheme_type(scheme);
@@ -258,10 +257,33 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
         });
     }
 
-    if let Some(body) = route.body() {
-        let (name, ty) = (&body.name, &body.ty);
+    if let Some(param) = route.query_struct() {
+        let (name, ty) = (&param.name, &param.ty);
+
         reads.push(quote_spanned! {ty.span()=>
-            let #name = #request.json::<#ty>().await?;
+            let #name = #request.query::<#ty>()?;
+        });
+    }
+
+    for (param, header) in route.headers() {
+        let (name, ty) = (&param.name, &param.ty);
+
+        reads.push(quote_spanned! {ty.span()=>
+            let #name = #request.header::<#ty>(#header)?;
+        });
+    }
+
+    if let Some((param, kind)) = route.body() {
+        let (name, ty) = (&param.name, &param.ty);
+        let read = match kind {
+            BodyKind::Json => quote! { json },
+            BodyKind::Form => quote! { form },
+            BodyKind::Text => quote! { text },
+            BodyKind::Bytes => quote! { bytes },
+        };
+
+        reads.push(quote_spanned! {ty.span()=>
+            let #name = #request.#read::<#ty>().await?;
         });
     }
 
