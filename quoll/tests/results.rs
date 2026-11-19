@@ -30,6 +30,7 @@ rest::api! {
         POST "/exports"           => export(export: Export) -> Accepted<Job>;
         GET  "/text?value={value}" => text(value: String) -> Text;
         GET  "/bytes?len={len}"    => bytes(len: usize) -> Bytes;
+        GET  "/image?type={content_type}" => image(content_type: Option<String>) -> Bytes;
         GET  "/missing"            => missing() -> rest::Text;
     }
 
@@ -56,7 +57,16 @@ impl FilesServer for App {
     }
 
     async fn bytes(&self, len: usize) -> Result<Bytes> {
-        Ok(Bytes(pattern(len)))
+        Ok(Bytes::new(pattern(len)))
+    }
+
+    async fn image(&self, content_type: Option<String>) -> Result<Bytes> {
+        let png = Bytes::new(PNG);
+
+        Ok(match content_type {
+            Some(content_type) => png.with_content_type(content_type),
+            None => png,
+        })
     }
 
     async fn missing(&self) -> Result<Text> {
@@ -77,6 +87,9 @@ impl AcceptsServer for App {
         Ok(Text(accept.unwrap_or_default()))
     }
 }
+
+/// The first bytes of a PNG.
+const PNG: [u8; 8] = *b"\x89PNG\r\n\x1a\n";
 
 /// `len` bytes going through every value of a byte, so that none is lost or changed on the way.
 fn pattern(len: usize) -> Vec<u8> {
@@ -171,7 +184,58 @@ async fn bytes_answer_200_as_an_octet_stream_and_read_back_whole() {
 
         assert_eq!(bytes.len(), len);
         assert!(bytes.0 == pattern(len), "{len}");
+        assert_eq!(bytes.content_type(), "application/octet-stream");
     }
+}
+
+#[tokio::test]
+async fn bytes_answer_their_content_type_and_read_back_with_it() {
+    let (url, api) = served().await;
+
+    let (status, content_type, body) =
+        raw(reqwest::Client::new().get(format!("{url}/api/image?type=image%2Fpng"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type, "image/png");
+    assert_eq!(body, PNG);
+
+    for content_type in ["image/png", "text/csv; charset=utf-8", "Image/SVG+XML"] {
+        let image = api
+            .files()
+            .image(Some(content_type.into()))
+            .await
+            .expect("bytes");
+
+        assert_eq!(image.content_type(), content_type);
+        assert_eq!(image.as_ref(), PNG);
+    }
+
+    let image = api.files().image(None).await.expect("bytes");
+    assert_eq!(image.content_type(), "application/octet-stream");
+    assert_eq!(image, Bytes::new(PNG));
+}
+
+#[tokio::test]
+async fn bytes_of_a_content_type_that_is_not_a_media_type_answer_500() {
+    let (url, api) = served().await;
+
+    for content_type in ["png", "image/png%0D%0Ax-y:%20z", "image/png;%20name=a%20b"] {
+        let response = reqwest::get(format!("{url}/api/image?type={content_type}"))
+            .await
+            .expect("the server answers");
+        let status = response.status();
+        let problem: serde_json::Value = response.json().await.expect("the body is JSON");
+
+        // Logged, with no detail sent.
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{content_type}");
+        assert_eq!(problem.get("detail"), None);
+    }
+
+    let error = api
+        .files()
+        .image(Some("png".into()))
+        .await
+        .expect_err("a 500");
+    assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
 }
 
 #[tokio::test]
@@ -230,6 +294,7 @@ fn third_party() -> axum::Router {
                     "len=1" => answer(Some("application/json"), b"[1]"),
                     "len=2" => answer(Some("image/png"), b"\x89PNG"),
                     "len=3" => answer(None, b"\x00\x01\x02"),
+                    "len=4" => answer(Some("png"), b"\x89PNG"),
                     _ => answer(Some("Application/Octet-Stream; x=y"), b"\x00\xff"),
                 }
             }),
@@ -297,21 +362,22 @@ async fn text_that_is_not_utf8_is_an_error_with_no_status() {
 }
 
 #[tokio::test]
-async fn bytes_are_read_from_an_octet_stream_only() {
+async fn bytes_are_read_of_any_content_type_which_they_keep() {
     let url = rest::test::spawn(third_party()).await;
     let api = Api::client(&url).expect("the url is the api's");
 
-    let bytes = api.files().bytes(0).await.expect("an octet stream");
-    assert_eq!(bytes, Bytes::from(vec![0x00, 0xff]));
+    for (len, content_type, body) in [
+        (0, "Application/Octet-Stream; x=y", &b"\x00\xff"[..]),
+        (1, "application/json", b"[1]"),
+        (2, "image/png", b"\x89PNG"),
+        // No content type, or one that is not a media type: bytes of no known type.
+        (3, "application/octet-stream", b"\x00\x01\x02"),
+        (4, "application/octet-stream", b"\x89PNG"),
+    ] {
+        let bytes = api.files().bytes(len).await.expect("bytes");
 
-    for len in [1, 2, 3] {
-        let error = api.files().bytes(len).await.expect_err("not bytes");
-
-        not_its_result(
-            &error,
-            "files_bytes",
-            "its content type is not `application/octet-stream`",
-        );
+        assert_eq!(bytes.content_type(), content_type, "{len}");
+        assert_eq!(bytes.as_ref(), body, "{len}");
     }
 }
 
@@ -423,7 +489,7 @@ async fn each_call_asks_for_its_result_and_a_route_s_own_accept_wins() {
         [
             ("POST /api/exports", Some("application/json")),
             ("GET /api/text", Some("text/plain")),
-            ("GET /api/bytes", Some("application/octet-stream")),
+            ("GET /api/bytes", Some("*/*")),
             ("GET /api/accept", Some("application/json")),
         ]
     );

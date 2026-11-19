@@ -52,6 +52,13 @@ struct Point {
     x: i32,
 }
 
+/// What the handler of a `Bytes` body got: the bytes and their content type.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct Upload {
+    content_type: String,
+    bytes: Vec<u8>,
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct Mixed {
     id: i64,
@@ -84,7 +91,7 @@ rest::api! {
     group Bodies {
         POST "/token" => token(login: Form<Login>) -> Login;
         PUT  "/text"  => text(text: Text) -> String;
-        PUT  "/bytes" => bytes(file: Bytes) -> Vec<u8>;
+        PUT  "/bytes" => bytes(file: Bytes) -> Upload;
         POST "/mixed/{id}"
             => mixed(text: Text, query filter: NoteFilter, header("X-Tag") tag: String, id: i64) -> Mixed;
     }
@@ -126,8 +133,11 @@ impl BodiesServer for App {
         Ok(text.0)
     }
 
-    async fn bytes(&self, file: Bytes) -> Result<Vec<u8>> {
-        Ok(file.0)
+    async fn bytes(&self, file: Bytes) -> Result<Upload> {
+        Ok(Upload {
+            content_type: file.content_type().to_owned(),
+            bytes: file.0,
+        })
     }
 
     async fn mixed(&self, text: Text, filter: NoteFilter, tag: String, id: i64) -> Result<Mixed> {
@@ -524,31 +534,70 @@ async fn text_is_read_only_as_utf8_text() {
 }
 
 #[tokio::test]
-async fn bytes_round_trip() {
+async fn bytes_round_trip_with_their_content_type() {
     let (_, api) = served().await;
     let every: Vec<u8> = (0..=255).collect();
 
+    let upload = api.bodies().bytes(Bytes::new(every.clone())).await;
     assert_eq!(
-        api.bodies().bytes(Bytes(every.clone())).await.unwrap(),
-        every
+        upload.unwrap(),
+        Upload {
+            content_type: "application/octet-stream".into(),
+            bytes: every,
+        }
     );
+
+    let upload = api.bodies().bytes(Bytes::default()).await;
     assert_eq!(
-        api.bodies().bytes(Bytes::default()).await.unwrap(),
-        Vec::<u8>::new()
+        upload.unwrap(),
+        Upload {
+            content_type: "application/octet-stream".into(),
+            bytes: Vec::new(),
+        }
+    );
+
+    let png = Bytes::new(*b"\x89PNG").with_content_type("image/png");
+    let upload = api.bodies().bytes(png).await;
+    assert_eq!(
+        upload.unwrap(),
+        Upload {
+            content_type: "image/png".into(),
+            bytes: b"\x89PNG".to_vec(),
+        }
     );
 }
 
 #[tokio::test]
-async fn bytes_are_read_only_as_an_octet_stream() {
+async fn a_bytes_body_reaches_the_handler_with_its_content_type_as_sent() {
+    let (url, _) = served().await;
+
+    let response = reqwest::Client::new()
+        .put(format!("{url}/api/bytes"))
+        .header(CONTENT_TYPE, "Image/PNG; name=\"a b.png\"")
+        .body("x")
+        .send()
+        .await
+        .expect("the server answers");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let upload: Upload = response.json().await.expect("the body is JSON");
+    assert_eq!(upload.content_type, "Image/PNG; name=\"a b.png\"");
+}
+
+#[tokio::test]
+async fn bytes_are_not_read_from_what_a_page_of_another_site_posts() {
     let (url, _) = served().await;
     let http = reqwest::Client::new();
     let put = || http.put(format!("{url}/api/bytes"));
 
-    // A form, or text, that another site's page posts without asking never reaches the route.
+    // A form, a form with files, or text, which another site's page posts without asking, never reaches the route.
     for content_type in [
         "text/plain",
         "application/x-www-form-urlencoded",
         "multipart/form-data",
+        "Text/Plain; charset=utf-8",
+        "application/X-WWW-Form-Urlencoded;charset=utf-8",
+        "MULTIPART/FORM-DATA ; boundary=x",
     ] {
         let refused = problem(put().header(CONTENT_TYPE, content_type).body("x")).await;
 
@@ -557,10 +606,46 @@ async fn bytes_are_read_only_as_an_octet_stream() {
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "{content_type}"
         );
+        assert!(refused.1.contains("`multipart/form-data`"), "{}", refused.1);
     }
 
+    // Nor bytes with no content type, which a page sends without asking too.
     let none = problem(put().body("x")).await;
     assert_eq!(none.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    // Nor a content type that is not a media type, or two.
+    let not_one = problem(put().header(CONTENT_TYPE, "png").body("x")).await;
+    assert_eq!(not_one.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    let twice = problem(
+        put()
+            .header(CONTENT_TYPE, "image/png")
+            .header(CONTENT_TYPE, "image/gif")
+            .body("x"),
+    )
+    .await;
+    assert_eq!(twice.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn bytes_of_a_content_type_that_is_not_a_media_type_are_refused_by_the_client() {
+    let (_, api) = served().await;
+
+    for content_type in ["png", "image/png\r\nx-y: z", "image/png; name=a b"] {
+        let error = api
+            .bodies()
+            .bytes(Bytes::new(*b"x").with_content_type(content_type))
+            .await
+            .expect_err("not a media type");
+
+        assert_eq!(error.status(), None, "{content_type:?}");
+        assert!(
+            error
+                .to_string()
+                .contains("the body of `bodies_bytes` has a content type that is not a media type"),
+            "{error}"
+        );
+    }
 }
 
 #[tokio::test]
