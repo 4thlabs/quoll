@@ -52,7 +52,9 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
 - CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`: `cargo fmt --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` and
   `cargo doc --workspace --no-deps`, the last three once per feature combination of `quoll`: none, `server`, `client`
-  and both. Warnings are errors, in rustc and in rustdoc.
+  and both. Those leave the example out, `--exclude 'notes-*'`: its crates turn `quoll`'s features on, and cargo would
+  unify them into the whole build, so a local `cargo test --workspace` builds `quoll` with both. The example has its
+  own run of the three, `--package 'notes-*'`. Warnings are errors, in rustc and in rustdoc.
 - The `ci` job gathers all of them and is the one check `main` requires: a new job goes in its `needs`. The branch must
   be up to date with `main`, and every review thread resolved, before the merge.
 - A pull request is merged with a rebase, and its branch deleted. Closing its issue is done in its description with

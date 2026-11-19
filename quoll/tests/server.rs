@@ -192,14 +192,9 @@ fn router() -> axum::Router {
 
 /// Serves a router on a free port, and gives the URL of the api in it.
 async fn serve_router(router: axum::Router) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("a port is free");
-    let address = listener.local_addr().expect("the listener has an address");
+    let url = rest::test::spawn(router).await;
 
-    tokio::spawn(async move { axum::serve(listener, router).await });
-
-    format!("http://{address}/api")
+    format!("{url}/api")
 }
 
 /// The status, the content type and the body of an answer.

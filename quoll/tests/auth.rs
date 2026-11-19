@@ -144,15 +144,7 @@ async fn serve() -> Served {
         notes: app.clone(),
         open: app,
     });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("a port is free");
-    let url = format!(
-        "http://{}",
-        listener.local_addr().expect("the listener has an address")
-    );
-
-    tokio::spawn(async move { axum::serve(listener, router).await });
+    let url = rest::test::spawn(router).await;
 
     Served { url, handled }
 }

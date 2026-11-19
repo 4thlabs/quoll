@@ -28,7 +28,9 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
-  # Every job below runs once per combination of the quoll features: none, each alone, both.
+  # Every job below runs once per combination of the quoll features, none, each alone and both, with the example left
+  # out: its crates turn quoll's features on, which cargo would unify into the whole build. The example runs on its
+  # own, with the features its crates choose.
   clippy:
     name: clippy (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -36,17 +38,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, features: "" }
-          - { name: server, features: server }
-          - { name: client, features: client }
-          - { name: all, features: "server,client" }
+          - { name: none, packages: "--workspace --exclude 'notes-*'", features: "" }
+          - { name: server, packages: "--workspace --exclude 'notes-*'", features: server }
+          - { name: client, packages: "--workspace --exclude 'notes-*'", features: client }
+          - { name: all, packages: "--workspace --exclude 'notes-*'", features: "server,client" }
+          - { name: example, packages: "--package 'notes-*'", features: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets --features "${{ matrix.features }}" -- -D warnings
+      - run: cargo clippy ${{ matrix.packages }} --all-targets --features "${{ matrix.features }}" -- -D warnings
 
   test:
     name: test (${{ matrix.name }})
@@ -55,15 +58,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, features: "" }
-          - { name: server, features: server }
-          - { name: client, features: client }
-          - { name: all, features: "server,client" }
+          - { name: none, packages: "--workspace --exclude 'notes-*'", features: "" }
+          - { name: server, packages: "--workspace --exclude 'notes-*'", features: server }
+          - { name: client, packages: "--workspace --exclude 'notes-*'", features: client }
+          - { name: all, packages: "--workspace --exclude 'notes-*'", features: "server,client" }
+          - { name: example, packages: "--package 'notes-*'", features: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --features "${{ matrix.features }}"
+      - run: cargo test ${{ matrix.packages }} --features "${{ matrix.features }}"
 
   doc:
     name: doc (${{ matrix.name }})
@@ -72,15 +76,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, features: "" }
-          - { name: server, features: server }
-          - { name: client, features: client }
-          - { name: all, features: "server,client" }
+          - { name: none, packages: "--workspace --exclude 'notes-*'", features: "" }
+          - { name: server, packages: "--workspace --exclude 'notes-*'", features: server }
+          - { name: client, packages: "--workspace --exclude 'notes-*'", features: client }
+          - { name: all, packages: "--workspace --exclude 'notes-*'", features: "server,client" }
+          - { name: example, packages: "--package 'notes-*'", features: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --workspace --no-deps --features "${{ matrix.features }}"
+      - run: cargo doc ${{ matrix.packages }} --no-deps --features "${{ matrix.features }}"
 
   # The one check branch protection requires: it fails when any job above failed or was skipped.
   ci:

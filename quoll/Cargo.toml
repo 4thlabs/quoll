@@ -15,6 +15,7 @@ server = [
     "dep:serde",
     "dep:serde_html_form",
     "dep:serde_json",
+    "dep:tokio",
     "dep:tracing",
 ]
 client = [
@@ -27,7 +28,8 @@ client = [
 ]
 
 [dependencies]
-axum = { version = "0.8", default-features = false, features = ["json"], optional = true }
+# `http1` and `tokio` serve a router, as `rest::test::spawn` does.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"], optional = true }
 http = "1"
 percent-encoding = { version = "2", optional = true }
 quoll-macros = { version = "0.1.0", path = "../quoll-macros" }
@@ -37,6 +39,7 @@ reqwest-middleware = { version = "0.5", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_html_form = { version = "0.4", optional = true }
 serde_json = { version = "1", optional = true }
+tokio = { version = "1", features = ["net", "rt"], optional = true }
 tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]

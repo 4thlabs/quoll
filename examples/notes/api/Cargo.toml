@@ -1,0 +1,18 @@
+[package]
+name = "notes-api"
+description = "The contract of the notes example: its models and its routes"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+server = ["quoll/server"]
+client = ["quoll/client"]
+
+[dependencies]
+quoll = { path = "../../../quoll" }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

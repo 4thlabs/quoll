@@ -1,0 +1,22 @@
+[package]
+name = "notes-server"
+description = "The server of the notes example, in memory"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+axum = { version = "0.8", default-features = false }
+getrandom = "0.3"
+notes-api = { path = "../api", features = ["server"] }
+quoll = { path = "../../../quoll" }
+
+[dev-dependencies]
+anyhow = "1"
+notes-api = { path = "../api", features = ["client"] }
+reqwest = { version = "0.13", default-features = false }
+reqwest-middleware = "0.5"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

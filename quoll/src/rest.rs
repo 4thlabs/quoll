@@ -16,6 +16,8 @@ mod created;
 pub(crate) mod error;
 mod problem;
 mod route;
+#[cfg(feature = "server")]
+pub mod test;
 
 pub use auth::{Authenticate, Bearer, Scheme};
 pub use created::Created;
