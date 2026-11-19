@@ -4,6 +4,8 @@
 #![cfg(all(feature = "server", feature = "client"))]
 
 use std::error::Error as _;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use quoll::rest::{self, Accepted, Bytes, Error, Result, Text};
 use reqwest::StatusCode;
@@ -30,6 +32,13 @@ rest::api! {
         GET  "/bytes?len={len}"    => bytes(len: usize) -> Bytes;
         GET  "/missing"            => missing() -> rest::Text;
     }
+
+    /// Routes of each kind of result, to see the `Accept` each sends.
+    group Accepts {
+        GET    "/accept"    => json() -> String;
+        DELETE "/accept"    => none();
+        GET    "/preferred" => preferred(header("Accept") accept: Option<String>) -> Text;
+    }
 }
 
 struct App;
@@ -55,6 +64,20 @@ impl FilesServer for App {
     }
 }
 
+impl AcceptsServer for App {
+    async fn json(&self) -> Result<String> {
+        Ok(String::new())
+    }
+
+    async fn none(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn preferred(&self, accept: Option<String>) -> Result<Text> {
+        Ok(Text(accept.unwrap_or_default()))
+    }
+}
+
 /// `len` bytes going through every value of a byte, so that none is lost or changed on the way.
 fn pattern(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
@@ -62,7 +85,11 @@ fn pattern(len: usize) -> Vec<u8> {
 
 /// The api served on a port, its URL and its client.
 async fn served() -> (String, ApiClient) {
-    let url = rest::test::spawn(Api::router(ApiServices { files: App })).await;
+    let url = rest::test::spawn(Api::router(ApiServices {
+        files: App,
+        accepts: App,
+    }))
+    .await;
     let api = Api::client(&url).expect("the url is the api's");
 
     (url, api)
@@ -164,10 +191,10 @@ async fn an_error_of_a_text_route_is_a_problem_with_its_status() {
 /// the query names, `?value=html` or `?len=0`.
 fn third_party() -> axum::Router {
     use axum::http::{HeaderValue, Uri};
-    use axum::response::IntoResponse;
+    use axum::response::{IntoResponse, Response};
     use axum::routing::get;
 
-    let answer = |content_type: Option<&'static str>, body: &'static [u8]| {
+    fn answer(content_type: Option<&'static str>, body: impl IntoResponse) -> Response {
         let mut response = body.into_response();
         let headers = response.headers_mut();
 
@@ -177,7 +204,7 @@ fn third_party() -> axum::Router {
         }
 
         response
-    };
+    }
 
     axum::Router::new()
         .route(
@@ -190,6 +217,8 @@ fn third_party() -> axum::Router {
                     "value=json" => answer(Some("application/json"), b"\"json\""),
                     "value=latin1" => answer(Some("text/plain; charset=iso-8859-1"), b"caf\xe9"),
                     "value=none" => answer(None, b"no content type"),
+                    // More than a first read of the connection gives, less than the client reads to drop it.
+                    "value=page" => answer(Some("text/html"), "<p>".repeat(16 * 1024)),
                     _ => answer(Some("text/plain; charset=utf-8"), b"caf\xff!"),
                 }
             }),
@@ -261,6 +290,10 @@ async fn text_that_is_not_utf8_is_an_error_with_no_status() {
         .expect_err("not UTF-8");
 
     not_its_result(&error, "files_text", "invalid utf-8");
+
+    // The `Utf8Error` alone, not a `FromUtf8Error`, which would keep the whole body.
+    let source = error.source().expect("the error says why");
+    assert!(source.is::<std::str::Utf8Error>(), "{source:?}");
 }
 
 #[tokio::test]
@@ -280,4 +313,128 @@ async fn bytes_are_read_from_an_octet_stream_only() {
             "its content type is not `application/octet-stream`",
         );
     }
+}
+
+#[tokio::test]
+async fn an_answer_of_another_content_type_is_read_so_that_its_connection_serves_again() {
+    use axum::serve::ListenerExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port is free");
+    let url = format!(
+        "http://{}",
+        listener.local_addr().expect("the listener has an address")
+    );
+    let connections = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&connections);
+    let listener = listener.tap_io(move |_| {
+        counted.fetch_add(1, Ordering::SeqCst);
+    });
+    tokio::spawn(async move { axum::serve(listener, third_party()).await });
+    let api = Api::client(&url).expect("the url is the api's");
+
+    for _ in 0..3 {
+        let error = api.files().text("page".into()).await.expect_err("not text");
+
+        not_its_result(
+            &error,
+            "files_text",
+            "its content type is not `text/plain` in UTF-8",
+        );
+    }
+
+    assert_eq!(connections.load(Ordering::SeqCst), 1);
+}
+
+/// The `Accept` header of each request, by its method and its path.
+type SeenAccepts = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
+/// A server that keeps the `Accept` header of each request, and answers it as the route's result.
+fn accept_recorder(accepts: SeenAccepts) -> axum::Router {
+    use axum::http::{HeaderMap, HeaderValue, Method, Uri, header::ACCEPT};
+    use axum::response::IntoResponse;
+
+    axum::Router::new().fallback(move |method: Method, uri: Uri, headers: HeaderMap| {
+        let accepts = Arc::clone(&accepts);
+
+        async move {
+            let values: Vec<&str> = headers
+                .get_all(ACCEPT)
+                .iter()
+                .map(|value| value.to_str().expect("an Accept is text"))
+                .collect();
+            let accept = (!values.is_empty()).then(|| values.join(", "));
+            accepts
+                .lock()
+                .expect("no test panics holding the lock")
+                .push((format!("{method} {}", uri.path()), accept));
+
+            let (status, content_type, body): (_, _, &'static [u8]) = match (method, uri.path()) {
+                (Method::POST, "/api/exports") => (
+                    StatusCode::ACCEPTED,
+                    "application/json",
+                    br#"{"id":1,"name":"a"}"#,
+                ),
+                (_, "/api/text" | "/api/preferred") => (StatusCode::OK, "text/plain", b"text"),
+                (_, "/api/bytes") => (StatusCode::OK, "application/octet-stream", b"\x00"),
+                (Method::GET, "/api/accept") => (StatusCode::OK, "application/json", b"\"\""),
+                _ => (StatusCode::NO_CONTENT, "application/json", b""),
+            };
+
+            (
+                status,
+                [(CONTENT_TYPE, HeaderValue::from_static(content_type))],
+                body,
+            )
+                .into_response()
+        }
+    })
+}
+
+#[tokio::test]
+async fn each_call_asks_for_its_result_and_a_route_s_own_accept_wins() {
+    let accepts = SeenAccepts::default();
+    let url = rest::test::spawn(accept_recorder(Arc::clone(&accepts))).await;
+    let api = Api::client(&url).expect("the url is the api's");
+
+    api.files()
+        .export(Export { name: "a".into() })
+        .await
+        .expect("accepted");
+    api.files().text("a".into()).await.expect("text");
+    api.files().bytes(1).await.expect("bytes");
+    api.accepts().json().await.expect("JSON");
+    api.accepts().none().await.expect("nothing");
+    api.accepts().preferred(None).await.expect("text");
+    api.accepts()
+        .preferred(Some("text/*".into()))
+        .await
+        .expect("text");
+
+    let accepts = accepts.lock().expect("no test panics holding the lock");
+    let seen: Vec<(&str, Option<&str>)> = accepts
+        .iter()
+        .map(|(route, accept)| (route.as_str(), accept.as_deref()))
+        .collect();
+
+    assert_eq!(
+        seen[..4],
+        [
+            ("POST /api/exports", Some("application/json")),
+            ("GET /api/text", Some("text/plain")),
+            ("GET /api/bytes", Some("application/octet-stream")),
+            ("GET /api/accept", Some("application/json")),
+        ]
+    );
+    // A route with no result asks for nothing of its own: what reqwest sends, if anything.
+    assert_eq!(seen[4].0, "DELETE /api/accept");
+    assert!(matches!(seen[4].1, None | Some("*/*")), "{seen:?}");
+    assert_eq!(
+        seen[5..],
+        [
+            ("GET /api/preferred", Some("text/plain")),
+            ("GET /api/preferred", Some("text/*")),
+        ]
+    );
 }

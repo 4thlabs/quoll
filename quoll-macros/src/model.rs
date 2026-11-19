@@ -492,7 +492,7 @@ fn match_args(
                     key: item.key.clone(),
                 },
                 None => {
-                    check_body(method, &name, body.as_ref())?;
+                    check_body(method, &name, &ty, body.as_ref())?;
                     body = Some(name.clone());
                     ParamKind::Body(BodyKind::of(&ty))
                 }
@@ -741,7 +741,7 @@ fn check_read_from_text(ty: &Type, what: &str) -> Result<()> {
     ))
 }
 
-fn check_body(method: Method, name: &Ident, earlier: Option<&Ident>) -> Result<()> {
+fn check_body(method: Method, name: &Ident, ty: &Type, earlier: Option<&Ident>) -> Result<()> {
     if !method.takes_body() {
         return Err(Error::new(
             name.span(),
@@ -756,6 +756,14 @@ fn check_body(method: Method, name: &Ident, earlier: Option<&Ident>) -> Result<(
             name.span(),
             format!(
                 "a route has one body, and `{earlier}` is already it: write `{name}` as a `{{{name}}}` of the path or a `key={{{name}}}` of the query, or put both in one type"
+            ),
+        ));
+    }
+    if let Some(result) = reserved_name(ty, &["Created", "Accepted"]) {
+        return Err(Error::new_spanned(
+            ty,
+            format!(
+                "`{result}` is what a route answers, not a body it reads: take the type it wraps as the body, without `{result}`"
             ),
         ));
     }

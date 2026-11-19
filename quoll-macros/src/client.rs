@@ -150,6 +150,13 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
             BodyKind::Bytes => quote_spanned! {ty.span()=> .bytes(#name) },
         }
     });
+    let accept = match &route.reply {
+        Reply::None => None,
+        Reply::Json(_) | Reply::Created { .. } | Reply::Accepted { .. } => Some(quote! { JSON }),
+        Reply::Text(_) => Some(quote! { TEXT }),
+        Reply::Bytes(_) => Some(quote! { BYTES }),
+    }
+    .map(|media_type| quote! { .accept(::quoll::__private::client::#media_type) });
     let answer = match &route.reply {
         Reply::None => quote_spanned! {route.span=> .none().await },
         Reply::Json(ty) | Reply::Created { inner: ty, .. } | Reply::Accepted { inner: ty, .. } => {
@@ -178,6 +185,7 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
                     #query_struct
                     #(#headers)*
                     #body
+                    #accept
                     .send()
                     .await?
                     #answer

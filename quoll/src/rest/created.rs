@@ -37,4 +37,40 @@ impl<T> Created<T> {
             value,
         }
     }
+
+    /// Where the created value is read from, sent as `Location`, if it was given: what a test of a handler checks.
+    ///
+    /// ```
+    /// use quoll::rest::Created;
+    ///
+    /// let created = Created::at("/api/notes/3", 3);
+    ///
+    /// assert_eq!(created.location(), Some("/api/notes/3"));
+    /// assert_eq!(Created::new(3).location(), None);
+    /// ```
+    pub fn location(&self) -> Option<&str> {
+        self.location.as_deref()
+    }
+
+    /// The created value, the body.
+    ///
+    /// ```
+    /// use quoll::rest::Created;
+    ///
+    /// assert_eq!(*Created::new(3).value(), 3);
+    /// ```
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+
+    /// The created value, the body, leaving the location.
+    ///
+    /// ```
+    /// use quoll::rest::Created;
+    ///
+    /// assert_eq!(Created::at("/api/notes/3", 3).into_inner(), 3);
+    /// ```
+    pub fn into_inner(self) -> T {
+        self.value
+    }
 }

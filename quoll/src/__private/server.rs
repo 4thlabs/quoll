@@ -16,8 +16,9 @@ use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::__private::Given;
+use crate::__private::content_type::{self, BYTES, FORM, JSON, PROBLEM, TEXT, TEXT_UTF8};
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
-use crate::__private::{Given, content_type};
 use crate::rest::error::Repr;
 use crate::rest::{Authenticate, Error, Result, Scheme};
 
@@ -302,18 +303,6 @@ impl Request {
     }
 }
 
-/// The content type of a form.
-const FORM: &str = "application/x-www-form-urlencoded";
-
-/// The content type of text.
-const TEXT: &str = "text/plain";
-
-/// The content type of bytes.
-const BYTES: &str = "application/octet-stream";
-
-/// The content type of a text result, which says its charset.
-const TEXT_ANSWER: &str = "text/plain; charset=utf-8";
-
 /// `form`, the query or a body, read as serde_html_form reads a form into `T`; `what` names it in the errors.
 fn from_form<T: DeserializeOwned>(form: &[u8], what: &str) -> Result<T> {
     // serde_html_form decodes a value that is not UTF-8 with U+FFFD in it, which would reach the handler as text the
@@ -393,7 +382,7 @@ where
 ///
 /// The handler's error.
 pub fn ok_text<T: IsText>(result: Result<T>) -> Result<Response> {
-    Ok(answer_body(TEXT_ANSWER, result?.into_string().into_bytes()))
+    Ok(answer_body(TEXT_UTF8, result?.into_string().into_bytes()))
 }
 
 /// A 200 with the bytes the handler returned, `application/octet-stream`.
@@ -418,10 +407,7 @@ pub fn no_content(result: Result<()>) -> Result<Response> {
 
 fn json<T: Serialize>(status: StatusCode, value: &T) -> Result<Response> {
     let body = serde_json::to_vec(value).map_err(Error::internal)?;
-    let content_type = [(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    )];
+    let content_type = [(header::CONTENT_TYPE, HeaderValue::from_static(JSON))];
 
     Ok((status, content_type, body).into_response())
 }
@@ -504,10 +490,7 @@ impl IntoResponse for Error {
         };
         let body = serde_json::to_vec(&problem)
             .expect("a problem holds strings and a number, which JSON always writes");
-        let content_type = [(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/problem+json"),
-        )];
+        let content_type = [(header::CONTENT_TYPE, HeaderValue::from_static(PROBLEM))];
 
         (status, content_type, body).into_response()
     }
