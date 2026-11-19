@@ -26,4 +26,26 @@ impl<T> Accepted<T> {
     pub fn new(value: T) -> Self {
         Self { value }
     }
+
+    /// What was accepted, the body: what a test of a handler checks.
+    ///
+    /// ```
+    /// use quoll::rest::Accepted;
+    ///
+    /// assert_eq!(*Accepted::new(7).value(), 7);
+    /// ```
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+
+    /// What was accepted, the body.
+    ///
+    /// ```
+    /// use quoll::rest::Accepted;
+    ///
+    /// assert_eq!(Accepted::new(7).into_inner(), 7);
+    /// ```
+    pub fn into_inner(self) -> T {
+        self.value
+    }
 }

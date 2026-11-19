@@ -22,7 +22,8 @@
 //! [`Created`] answers 201 and an [`Accepted`] 202, each with the JSON of its `T`, which is what the client returns. A
 //! [`Text`] answers `text/plain; charset=utf-8` and a [`Bytes`] `application/octet-stream`, both 200. The client reads
 //! each from an answer of its own content type only, and text only in UTF-8: any other answer is an error with no
-//! status, as JSON that is not the result's is.
+//! status, as JSON that is not the result's is. It asks for that content type with `Accept`, unless the route sends an
+//! `Accept` header of its own.
 //!
 //! The contract names `Created`, `Accepted`, `Form`, `Text` and `Bytes` as it names any type, so that the module that
 //! writes it imports them: `use quoll::rest::{self, Created, Form};`. A type of another crate with one of these names

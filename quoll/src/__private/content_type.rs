@@ -2,6 +2,24 @@
 
 use http::{HeaderMap, header};
 
+/// A JSON body.
+pub const JSON: &str = "application/json";
+
+/// A problem, RFC 9457, in JSON.
+pub const PROBLEM: &str = "application/problem+json";
+
+/// A form.
+pub const FORM: &str = "application/x-www-form-urlencoded";
+
+/// Text, read in UTF-8 when no charset is named.
+pub const TEXT: &str = "text/plain";
+
+/// Text as quoll sends it, which names its charset.
+pub const TEXT_UTF8: &str = "text/plain; charset=utf-8";
+
+/// Bytes.
+pub const BYTES: &str = "application/octet-stream";
+
 /// Whether `headers` say the body is `expected`, whatever the case and the parameters, but a charset other than UTF-8
 /// when `utf8` is set. A body without a content type, or with one that is not text, is not `expected`.
 pub(crate) fn is(headers: &HeaderMap, expected: &str, utf8: bool) -> bool {

@@ -19,6 +19,7 @@ server = [
     "dep:tracing",
 ]
 client = [
+    "dep:bytes",
     "dep:percent-encoding",
     "dep:reqwest",
     "dep:reqwest-middleware",
@@ -30,6 +31,8 @@ client = [
 [dependencies]
 # `http1` and `tokio` serve a router, as `rest::test::spawn` does.
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"], optional = true }
+# The body of an answer as reqwest reads it, which the client parses without a copy.
+bytes = { version = "1", optional = true }
 http = "1"
 percent-encoding = { version = "2", optional = true }
 quoll-macros = { version = "0.1.0", path = "../quoll-macros" }

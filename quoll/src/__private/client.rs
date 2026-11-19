@@ -13,12 +13,13 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::__private::content_type;
+use crate::__private::content_type::{self, FORM, PROBLEM, TEXT_UTF8};
 use crate::__private::known::{IsBytes, IsForm, IsText};
 use crate::rest::{Error, Problem, Result, Route};
 
 mod text;
 
+pub use crate::__private::content_type::{BYTES, JSON, TEXT};
 pub use http::{HeaderName, Method};
 
 /// What a path parameter keeps as it is: the unreserved characters of RFC 3986. Every other byte is escaped, `/`, `?`
@@ -245,7 +246,7 @@ impl<'a> Call<'a> {
         })?;
 
         self.body = Some(Body {
-            content_type: "application/json",
+            content_type: JSON,
             bytes: body,
         });
         Ok(self)
@@ -273,7 +274,7 @@ impl<'a> Call<'a> {
         })?;
 
         self.body = Some(Body {
-            content_type: "application/x-www-form-urlencoded",
+            content_type: FORM,
             bytes: body.into_bytes(),
         });
         Ok(self)
@@ -283,7 +284,7 @@ impl<'a> Call<'a> {
     #[must_use]
     pub fn text<T: IsText>(mut self, body: T) -> Self {
         self.body = Some(Body {
-            content_type: "text/plain; charset=utf-8",
+            content_type: TEXT_UTF8,
             bytes: body.into_string().into_bytes(),
         });
         self
@@ -293,7 +294,7 @@ impl<'a> Call<'a> {
     #[must_use]
     pub fn bytes<B: IsBytes>(mut self, body: B) -> Self {
         self.body = Some(Body {
-            content_type: "application/octet-stream",
+            content_type: BYTES,
             bytes: body.into_vec(),
         });
         self
@@ -339,6 +340,17 @@ impl<'a> Call<'a> {
 
         self.headers.append(name, value);
         Ok(self)
+    }
+
+    /// Asks for an answer of `media_type`, the route's result: what the `Accept` header says, unless the route sends
+    /// one of its own.
+    #[must_use]
+    pub fn accept(mut self, media_type: &'static str) -> Self {
+        if !self.headers.contains_key(header::ACCEPT) {
+            self.headers
+                .insert(header::ACCEPT, HeaderValue::from_static(media_type));
+        }
+        self
     }
 
     /// Sends the request, with the route in its extensions, and keeps an answer with a success status.
@@ -441,8 +453,9 @@ impl Answer {
     pub async fn text<T: IsText>(self) -> Result<T> {
         let route = self.route;
         let body = self.read_as(TEXT, true).await?;
-        let text =
-            String::from_utf8(body).map_err(|error| no_answer(route, NOT_ITS_RESULT, error))?;
+        // The source is the `Utf8Error` alone: a `FromUtf8Error` would keep the whole body in the error.
+        let text = String::from_utf8(body.into())
+            .map_err(|error| no_answer(route, NOT_ITS_RESULT, error.utf8_error()))?;
 
         Ok(T::from_string(text))
     }
@@ -455,35 +468,37 @@ impl Answer {
     pub async fn bytes<B: IsBytes>(self) -> Result<B> {
         let body = self.read_as(BYTES, false).await?;
 
-        Ok(B::from_vec(body))
+        Ok(B::from_vec(body.into()))
     }
 
     /// The whole body, when the answer's content type is `expected`, with no charset but UTF-8 when `utf8` is set: a
     /// body of another type is not the route's result, even when it would read as one, as a page of HTML would as
-    /// text.
-    async fn read_as(self, expected: &str, utf8: bool) -> Result<Vec<u8>> {
-        if !content_type::is(self.response.headers(), expected, utf8) {
-            let charset = if utf8 { " in UTF-8" } else { "" };
-
-            return Err(no_answer(
-                self.route,
-                NOT_ITS_RESULT,
-                format!("its content type is not `{expected}`{charset}"),
-            ));
+    /// text. Such a body is read and dropped up to 64 KiB, as [`Answer::none`] does, so that the connection serves
+    /// again.
+    async fn read_as(self, expected: &str, utf8: bool) -> Result<bytes::Bytes> {
+        if content_type::is(self.response.headers(), expected, utf8) {
+            return self.read().await;
         }
 
-        self.read().await
+        // The call has failed already: a body that does not read only costs the connection.
+        let _ = read_up_to_limit(self.response).await;
+        let charset = if utf8 { " in UTF-8" } else { "" };
+
+        Err(no_answer(
+            self.route,
+            NOT_ITS_RESULT,
+            format!("its content type is not `{expected}`{charset}"),
+        ))
     }
 
     /// The whole body.
-    async fn read(self) -> Result<Vec<u8>> {
+    async fn read(self) -> Result<bytes::Bytes> {
         let Self { response, route } = self;
-        let body = response
+
+        response
             .bytes()
             .await
-            .map_err(|error| no_answer(route, "got an answer whose body cannot be read", error))?;
-
-        Ok(body.into())
+            .map_err(|error| no_answer(route, "got an answer whose body cannot be read", error))
     }
 
     /// Nothing: what a route with no result gives, whatever the body. A body is read and dropped, up to 64 KiB, so
@@ -503,12 +518,6 @@ impl Answer {
 /// What the error of an answer that is not the route's result says.
 const NOT_ITS_RESULT: &str = "got an answer that is not its result";
 
-/// The content type of a text result.
-const TEXT: &str = "text/plain";
-
-/// The content type of a bytes result.
-const BYTES: &str = "application/octet-stream";
-
 /// The body of `response`, read up to [`BODY_LIMIT`] bytes: past them, the rest is not read.
 async fn read_up_to_limit(mut response: reqwest::Response) -> reqwest::Result<Vec<u8>> {
     let mut body = Vec::new();
@@ -526,7 +535,7 @@ async fn read_up_to_limit(mut response: reqwest::Response) -> reqwest::Result<Ve
 
 /// Whether the content type of an answer is `application/problem+json`, whatever its parameters.
 fn is_problem(headers: &HeaderMap) -> bool {
-    content_type::is(headers, "application/problem+json", false)
+    content_type::is(headers, PROBLEM, false)
 }
 
 /// The RFC 9457 problem in a body: a JSON object, whose members of the wrong type are left out.

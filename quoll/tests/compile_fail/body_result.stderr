@@ -1,0 +1,11 @@
+error: `Created` is what a route answers, not a body it reads: take the type it wraps as the body, without `Created`
+ --> tests/compile_fail/body_result.rs:7:39
+  |
+7 |         POST "/notes" => create(note: Created<Note>) -> Note;
+  |                                       ^^^^^^^^^^^^^
+
+error: `Accepted` is what a route answers, not a body it reads: take the type it wraps as the body, without `Accepted`
+ --> tests/compile_fail/body_result.rs:8:35
+  |
+8 |         PUT  "/jobs"  => run(job: rest::Accepted<Job>);
+  |                                   ^^^^^^^^^^^^^^^^^^^
