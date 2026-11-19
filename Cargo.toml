@@ -1,5 +1,5 @@
 [workspace]
-members = ["quoll", "quoll-macros"]
+members = ["quoll", "quoll-macros", "examples/notes/api", "examples/notes/server"]
 resolver = "3"
 
 [workspace.package]

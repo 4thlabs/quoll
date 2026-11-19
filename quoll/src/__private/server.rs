@@ -497,13 +497,9 @@ mod tests {
                 ))
             })
             .finish();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("a port is free");
-        let address = listener.local_addr().expect("the listener has an address");
-        let server = tokio::spawn(async move { axum::serve(listener, router).await });
+        let url = crate::rest::test::spawn(router).await;
 
-        let response = reqwest::get(format!("http://{address}/upstream"))
+        let response = reqwest::get(format!("{url}/upstream"))
             .await
             .expect("the server answers");
         let content_type = response.headers()[header::CONTENT_TYPE].clone();
@@ -516,6 +512,5 @@ mod tests {
             problem,
             serde_json::json!({ "type": "about:blank", "title": "Bad Gateway", "status": 502 })
         );
-        server.abort();
     }
 }
