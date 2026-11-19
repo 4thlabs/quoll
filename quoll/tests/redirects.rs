@@ -11,7 +11,8 @@ use axum::Router;
 use axum::body::Bytes;
 use axum::extract::Request;
 use axum::response::{IntoResponse, Response};
-use quoll::rest::{self, Result, Route, Text};
+use futures_util::StreamExt;
+use quoll::rest::{self, Events, Result, Route, Text};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue, LOCATION};
 use reqwest::{Method, StatusCode};
 use reqwest_middleware::ClientBuilder;
@@ -29,6 +30,7 @@ rest::api! {
         GET  "/loop"      => looping() -> String;
         GET  "/endless"   => endless() -> String;
         GET  "/utf8"      => utf8() -> String;
+        GET  "/slow"      => slow() -> Events<u32>;
         POST "/see-other" => see_other(text: Text) -> String;
         POST "/temporary" => temporary(text: Text) -> String;
     }
@@ -288,4 +290,44 @@ async fn redirects_past_the_limit_are_an_error() {
 
     assert!(source.contains("more than 3 times"), "{error:?}");
     assert!(got(&log).is_empty());
+}
+
+#[tokio::test]
+async fn the_deadline_of_a_streams_head_starts_again_on_each_hop() -> Result<()> {
+    // Each hop answers after 60 % of the deadline: in time, but not twice in a row.
+    const DEADLINE: Duration = Duration::from_millis(1000);
+    const HOP: Duration = Duration::from_millis(600);
+
+    let api = Router::new()
+        .route(
+            "/api/slow",
+            axum::routing::get(|| async {
+                tokio::time::sleep(HOP).await;
+
+                redirect(StatusCode::FOUND, "/api/slow/here".into())
+            }),
+        )
+        .route(
+            "/api/slow/here",
+            axum::routing::get(|| async {
+                tokio::time::sleep(HOP).await;
+
+                ([(CONTENT_TYPE, "text/event-stream")], "data: 1\n\n").into_response()
+            }),
+        );
+    let url = rest::test::spawn(api).await;
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("a client");
+    let http = ClientBuilder::new(http)
+        .with(rest::client::timeout(DEADLINE))
+        .with(rest::client::redirects(5))
+        .build();
+    let api = Api::client_with(http, &url)?;
+
+    let mut events = api.moves().slow().await?;
+
+    assert_eq!(events.next().await.expect("an event")?, 1);
+    Ok(())
 }
