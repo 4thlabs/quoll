@@ -9,6 +9,7 @@ use http::{Extensions, HeaderMap, HeaderName, Method, StatusCode};
 use reqwest::{Request, Response, Url};
 use reqwest_middleware::{Middleware, Next};
 
+use super::request::HeadDeadline;
 use super::{Failure, middleware};
 
 /// Follows up to `hops` redirects of each call, each hop sent through the middleware added after it, on a reqwest
@@ -102,6 +103,11 @@ async fn follow(
 
         if hop.url().origin() != from {
             strip_credentials(hop.headers_mut());
+        }
+
+        // The head of each hop of a stream's answer has its own deadline, as each hop has its own request.
+        if let Some(deadline) = extensions.get::<HeadDeadline>() {
+            deadline.restart();
         }
 
         drop(response);
