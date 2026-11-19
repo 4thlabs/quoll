@@ -12,7 +12,10 @@
 //!   client may leave out but always receives, the type has both, `NoteInput` and `NoteOutput`, as has a type that
 //!   holds one of them; a number follows when a type of the contract has that name already. A character a component's
 //!   name does not take, as the space of `#[schemars(rename = "Old Note")]` or the `<` of a `schema_name` of
-//!   `Page<Note>`, is a `_`.
+//!   `Page<Note>`, is a `_`. The two sides are paired by the names schemars gives, as it says no more of a type: two
+//!   types of one name, one of which only one side holds, as through a field with `#[serde(skip_deserializing)]`, may
+//!   take names that mislead, `NoteInput` for one and `NoteOutput` for the other. Every reference still points at the
+//!   schema of its own type on its own side, and `#[schemars(rename = "...")]` on one of them avoids it.
 //! - **Operations** are named `group_function`, `notes_get`, and tagged by their group. The first paragraph of a
 //!   route's `///` is its summary, the rest its description; a group's is the description of its tag, the api's the
 //!   document's.
