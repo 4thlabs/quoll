@@ -9,7 +9,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, BodyKind, Group, Param, Route, snake_case};
+use crate::model::{Api, BodyKind, Group, Param, Reply, Route, snake_case};
 use crate::path::Segment;
 use crate::{doc_attrs, route_docs, scheme_type};
 
@@ -63,8 +63,8 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     }
 }
 
-/// `fn get(&self, id: i64) -> impl Future<Output = Result<Note>> + Send`: a `Created<T>` gives its `T`, as the 201
-/// is only the server's answer.
+/// `fn get(&self, id: i64) -> impl Future<Output = Result<Note>> + Send`: a `Created<T>` or an `Accepted<T>` gives
+/// its `T`, as the 201 or the 202 is only the server's answer.
 fn signature(route: &Route) -> TokenStream {
     let name = &route.name;
     let args = route
@@ -150,9 +150,13 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
             BodyKind::Bytes => quote_spanned! {ty.span()=> .bytes(#name) },
         }
     });
-    let answer = match route.reply.value() {
-        None => quote_spanned! {route.span=> .none().await },
-        Some(ty) => quote_spanned! {ty.span()=> .json::<#ty>().await },
+    let answer = match &route.reply {
+        Reply::None => quote_spanned! {route.span=> .none().await },
+        Reply::Json(ty) | Reply::Created { inner: ty, .. } | Reply::Accepted { inner: ty, .. } => {
+            quote_spanned! {ty.span()=> .json::<#ty>().await }
+        }
+        Reply::Text(ty) => quote_spanned! {ty.span()=> .text::<#ty>().await },
+        Reply::Bytes(ty) => quote_spanned! {ty.span()=> .bytes::<#ty>().await },
     };
 
     quote! {

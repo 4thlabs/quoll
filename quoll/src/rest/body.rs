@@ -1,7 +1,8 @@
-//! The bodies a route reads that are not JSON: a form, text and bytes.
+//! The bodies a route reads that are not JSON, a form, text and bytes; text and bytes are results too.
 //!
 //! The contract names them by their type, `login: Form<Login>`, `note: Text` or `file: Bytes`: the server reads the
-//! body into it, and the client sends it with its content type.
+//! body into it, and the client sends it with its content type. As a result, `-> Text` or `-> Bytes`, the server
+//! answers it with its content type, and the client reads it back.
 
 use std::fmt;
 use std::ops::{Deref, DerefMut};
@@ -42,7 +43,7 @@ impl<T> DerefMut for Form<T> {
     }
 }
 
-/// A body sent as text, `text/plain` in UTF-8.
+/// A body or a result sent as text, `text/plain` in UTF-8.
 ///
 /// It holds the text as a `String`, and derefs to a `str`:
 ///
@@ -56,7 +57,8 @@ impl<T> DerefMut for Form<T> {
 /// ```
 ///
 /// The server answers 415 to a request with another content type or another charset than UTF-8, and 400 to a body that
-/// is not UTF-8.
+/// is not UTF-8. As a result, it is answered `text/plain; charset=utf-8`, and the client refuses an answer of another
+/// content type or charset, or one that is not UTF-8, with an error that has no status.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Text(pub String);
 
@@ -87,7 +89,7 @@ impl fmt::Display for Text {
     }
 }
 
-/// A body sent as bytes, `application/octet-stream`.
+/// A body or a result sent as bytes, `application/octet-stream`.
 ///
 /// It holds the bytes as a `Vec<u8>`, and derefs to a `[u8]`:
 ///
@@ -101,7 +103,9 @@ impl fmt::Display for Text {
 /// ```
 ///
 /// The server answers 415 to a request with another content type, so that a form posted from another site, which a
-/// browser sends without asking, never reaches the route.
+/// browser sends without asking, never reaches the route. As a result, it is answered `application/octet-stream`, and
+/// the client refuses an answer of another content type with an error that has no status; it reads the body whole, as
+/// it does a JSON result.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Bytes(pub Vec<u8>);
 

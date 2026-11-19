@@ -18,14 +18,21 @@
 //! The body is the JSON of its type, `application/json`, or one of [`Form`], [`Text`] and [`Bytes`], each sent with
 //! its content type. The server answers 415 to a body without the content type it reads.
 //!
-//! The contract names `Created`, `Form`, `Text` and `Bytes` as it names any type, so that the module that writes it
-//! imports them: `use quoll::rest::{self, Created, Form};`. A type of another crate with one of these names does not
-//! compile there.
+//! The result is the JSON of its type, answered 200, or 204 with no body for a route that returns nothing. A
+//! [`Created`] answers 201 and an [`Accepted`] 202, each with the JSON of its `T`, which is what the client returns. A
+//! [`Text`] answers `text/plain; charset=utf-8` and a [`Bytes`] `application/octet-stream`, both 200. The client reads
+//! each from an answer of its own content type only, and text only in UTF-8: any other answer is an error with no
+//! status, as JSON that is not the result's is.
+//!
+//! The contract names `Created`, `Accepted`, `Form`, `Text` and `Bytes` as it names any type, so that the module that
+//! writes it imports them: `use quoll::rest::{self, Created, Form};`. A type of another crate with one of these names
+//! does not compile there.
 //!
 //! A group or a route that takes a credential says so with `#[auth(Bearer)]`, and a route of such a group that takes
 //! none with `#[auth(none)]`: the service implements [`Authenticate`], whose caller each handler receives, and the
 //! client sends the credential through a middleware, `client::bearer` with the feature `client`.
 
+mod accepted;
 mod auth;
 mod body;
 #[cfg(feature = "client")]
@@ -37,6 +44,7 @@ mod route;
 #[cfg(feature = "server")]
 pub mod test;
 
+pub use accepted::Accepted;
 pub use auth::{Authenticate, Bearer, Scheme};
 pub use body::{Bytes, Form, Text};
 pub use created::Created;

@@ -61,15 +61,22 @@ fn expand(api: &Api) -> proc_macro2::TokenStream {
     }
 }
 
-/// Checks that each type the contract names `Created`, `Form`, `Text` or `Bytes`, which the macro reads by its name,
-/// is the crate's. The types are the contract's tokens, so that the user's import names them; and the check is written
-/// whatever the features of `quoll`, so that the import is used, and the type checked, with neither of them.
+/// Checks that each type the contract names `Created`, `Accepted`, `Form`, `Text` or `Bytes`, which the macro reads by
+/// its name, is the crate's. The types are the contract's tokens, so that the user's import names them; and the check
+/// is written whatever the features of `quoll`, so that the import is used, and the type checked, with neither of them.
 fn known_types(api: &Api) -> proc_macro2::TokenStream {
     let mut checks = Vec::new();
 
     for route in api.groups.iter().flat_map(|group| &group.routes) {
-        if let Reply::Created { outer: ty, .. } = &route.reply {
-            checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::created::<#ty>(); });
+        let result = match &route.reply {
+            Reply::None | Reply::Json(_) => None,
+            Reply::Created { outer, .. } => Some((outer, quote! { created })),
+            Reply::Accepted { outer, .. } => Some((outer, quote! { accepted })),
+            Reply::Text(ty) => Some((ty, quote! { text })),
+            Reply::Bytes(ty) => Some((ty, quote! { bytes })),
+        };
+        if let Some((ty, check)) = result {
+            checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::#check::<#ty>(); });
         }
 
         let Some((param, kind)) = route.body() else {

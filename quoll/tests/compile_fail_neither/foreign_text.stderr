@@ -1,4 +1,4 @@
-error[E0277]: `Text` is not quoll's `Text`, which a body named `Text` is read as
+error[E0277]: `Text` is not quoll's `Text`, which a body or a result named `Text` is read as
   --> tests/compile_fail_neither/foreign_text.rs:13:39
    |
 13 |         POST "/notes" => create(note: Text);

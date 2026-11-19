@@ -3,7 +3,7 @@
 //! What only the server's code checks, a route left out of a service or a handler of the wrong signature, is in
 //! `tests/compile_fail_server/`, which builds with the feature `server`; what only the client's checks, a fake of the
 //! wrong signature, in `tests/compile_fail_client/`, which builds with the feature `client`. A type the contract names
-//! `Created`, `Form`, `Text` or `Bytes` that is not quoll's is in `tests/compile_fail_neither/`, built with neither
+//! `Created`, `Accepted`, `Form`, `Text` or `Bytes` that is not quoll's is in `tests/compile_fail_neither/`, built with neither
 //! feature: the server's code and the client's each repeat its message.
 
 #[test]
