@@ -1,0 +1,5 @@
+error: `notes read` is not a scope: a scope is printable ASCII with no space, `"` or `\`, as in "repo" or "notes:read"
+ --> tests/compile_fail/auth_scope_invalid.rs:8:31
+  |
+8 |         #[auth(Bearer, scopes("notes read"))]
+  |                               ^^^^^^^^^^^^

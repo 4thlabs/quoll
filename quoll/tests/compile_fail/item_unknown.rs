@@ -1,7 +1,7 @@
 use quoll::rest;
 
 rest::api! {
-    pub scheme Key = header "X-Api-Key";
+    pub service Notes = "notes";
     pub api Api = "/api";
 }
 

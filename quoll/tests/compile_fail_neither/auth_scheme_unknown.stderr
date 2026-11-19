@@ -1,0 +1,5 @@
+error[E0425]: cannot find type `Key` in this scope
+ --> tests/compile_fail_neither/auth_scheme_unknown.rs:7:12
+  |
+7 |     #[auth(Key)]
+  |            ^^^ not found in this scope

@@ -1,5 +1,0 @@
-error: `optional` is not supported yet in `#[auth(...)]`: write `#[auth(Bearer)]`, or `#[auth(none)]` on a route that takes no credential
- --> tests/compile_fail/auth_optional.rs:7:24
-  |
-7 |         #[auth(Bearer, optional)]
-  |                        ^^^^^^^^

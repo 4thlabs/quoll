@@ -1,4 +1,4 @@
-error: `#[auth]` takes a scheme: write `#[auth(Bearer)]`, or `#[auth(none)]` on a route that takes no credential
+error: `#[auth]` takes a scheme: write `#[auth(Bearer)]`, `#[auth(Bearer | Key)]`, `#[auth(Bearer, optional)]` or `#[auth(Bearer, scopes("repo"))]`, or `#[auth(none)]` on a route that takes no credential
  --> tests/compile_fail/auth_without_scheme.rs:6:5
   |
 6 |     #[auth]

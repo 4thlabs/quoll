@@ -1,6 +1,10 @@
 //! What a request is for: the route of the contract it calls, which middleware reads.
 
+use std::any::TypeId;
+
 use http::Method;
+
+use crate::rest::Scheme;
 
 /// The route of the contract a request calls. The client puts it in the extensions of each request it sends, where a
 /// reqwest-middleware middleware reads it, to name a span after the operation or to send a credential to the routes
@@ -22,6 +26,7 @@ pub struct Route {
     pub(crate) method: Method,
     pub(crate) path: &'static str,
     pub(crate) schemes: &'static [&'static str],
+    pub(crate) scheme_types: &'static [TypeId],
 }
 
 impl Route {
@@ -47,10 +52,28 @@ impl Route {
         self.path
     }
 
-    /// The names of the schemes the route takes, as its `#[auth(...)]` or its group's writes them: `["Bearer"]`, or
-    /// none for a route that takes no credential. A middleware that sends a credential reads them, so that the routes
-    /// that do not take it never get it.
+    /// The names of the schemes the route takes, each its [`Scheme::NAME`], in the order its `#[auth(...)]` or its
+    /// group's writes them: `["Bearer", "Key"]`, or none for a route that takes no credential.
+    ///
+    /// Two contracts may each declare a scheme of one name, as `Key`: a middleware that sends a credential asks
+    /// [`takes`](Route::takes), which tells them apart.
     pub fn schemes(&self) -> &'static [&'static str] {
         self.schemes
+    }
+
+    /// Whether the route takes the scheme `S`: a middleware that sends its credential asks it, so that the routes that
+    /// do not take it never get it.
+    ///
+    /// ```
+    /// use quoll::rest::{Bearer, Route};
+    ///
+    /// /// Whether a request is for a route that takes a bearer token.
+    /// fn takes_bearer(extensions: &http::Extensions) -> bool {
+    ///     extensions.get::<Route>().is_some_and(Route::takes::<Bearer>)
+    /// }
+    /// # assert!(!takes_bearer(&http::Extensions::new()));
+    /// ```
+    pub fn takes<S: Scheme>(&self) -> bool {
+        self.scheme_types.contains(&TypeId::of::<S>())
     }
 }

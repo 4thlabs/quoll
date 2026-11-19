@@ -1,0 +1,18 @@
+error[E0271]: type mismatch resolving `<App as Authenticate<Key>>::Caller == User`
+  --> tests/compile_fail_server/callers_differ.rs:35:22
+   |
+35 | impl AdminServer for App {
+   |                      ^^^ type mismatch resolving `<App as Authenticate<Key>>::Caller == User`
+   |
+note: expected this to be `User`
+  --> tests/compile_fail_server/callers_differ.rs:28:19
+   |
+28 |     type Caller = Operator;
+   |                   ^^^^^^^^
+note: required by a bound in `AdminServer`
+  --> tests/compile_fail_server/callers_differ.rs:8:21
+   |
+ 8 |     #[auth(Bearer | Key)]
+   |                     ^^^ required by this bound in `AdminServer`
+ 9 |     pub group Admin {
+   |

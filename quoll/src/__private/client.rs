@@ -2,6 +2,7 @@
 //! reqwest-middleware with its [`Route`] in its extensions, and its answer read as the route's result, whole or as a
 //! stream, or as an error.
 
+use std::any::TypeId;
 use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
@@ -61,6 +62,7 @@ pub const fn route(
     method: Method,
     path: &'static str,
     schemes: &'static [&'static str],
+    scheme_types: &'static [TypeId],
 ) -> Route {
     Route {
         operation_id,
@@ -68,6 +70,7 @@ pub const fn route(
         method,
         path,
         schemes,
+        scheme_types,
     }
 }
 
@@ -682,7 +685,14 @@ fn read_problem(body: &[u8]) -> Option<Problem> {
 mod tests {
     use super::*;
 
-    static ROUTE: Route = route("notes_get", "Notes", Method::GET, "/api/notes/{id}", &[]);
+    static ROUTE: Route = route(
+        "notes_get",
+        "Notes",
+        Method::GET,
+        "/api/notes/{id}",
+        &[],
+        &[],
+    );
 
     fn client(url: &str) -> Result<Client> {
         Client::new(url)

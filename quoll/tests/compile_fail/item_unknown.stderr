@@ -1,5 +1,5 @@
-error: unexpected `scheme`: an item of a contract starts with `api` or `group`
+error: unexpected `service`: an item of a contract starts with `api`, `scheme` or `group`
  --> tests/compile_fail/item_unknown.rs:4:9
   |
-4 |     pub scheme Key = header "X-Api-Key";
-  |         ^^^^^^
+4 |     pub service Notes = "notes";
+  |         ^^^^^^^

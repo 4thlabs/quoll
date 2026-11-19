@@ -11,6 +11,14 @@ use syn::{Error, Ident, LitStr, Result, Type, Visibility, ext::IdentExt};
 use crate::known::{BodyKind, Known, ResultKind};
 use crate::path::{Segment, Template, literal_problem};
 
+mod auth;
+
+#[cfg(test)]
+pub(crate) use auth::Location;
+pub(crate) use auth::{
+    Auth, DeclaredKind, DeclaredScheme, MAX_ALTERNATIVES, RouteAuth, Scheme, SchemeKind,
+};
+
 /// The `///` comments of an item, one string per line, as rustc gives them (with their leading space).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Docs(pub(crate) Vec<String>);
@@ -26,6 +34,8 @@ pub(crate) struct Api {
     pub(crate) name: Ident,
     /// What every path starts with: empty, or a `/` and segments with no `{name}`.
     pub(crate) prefix: String,
+    /// The schemes the contract declares, in the order they are written.
+    pub(crate) schemes: Vec<DeclaredScheme>,
     /// The groups, in the order they are written.
     pub(crate) groups: Vec<Group>,
 }
@@ -41,32 +51,6 @@ pub(crate) struct Group {
     pub(crate) name: Ident,
     /// The routes, in the order they are written.
     pub(crate) routes: Vec<Route>,
-}
-
-/// A scheme a route is authenticated with: how the server reads the credential, and how the client sends it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum Scheme {
-    /// `Bearer`: a token in `Authorization: Bearer`, the crate's `rest::Bearer`.
-    Bearer,
-}
-
-impl Scheme {
-    /// The word the contract writes for the scheme, which the docs of what is generated show. The name on the wire,
-    /// which `rest::Route::schemes` gives, is the crate's: the generated code takes it from the scheme's type.
-    pub(crate) const fn word(self) -> &'static str {
-        match self {
-            Self::Bearer => "Bearer",
-        }
-    }
-}
-
-/// The authentication a group or a route says it takes, as written in its attribute.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Auth {
-    /// `#[auth(none)]`: no credential, whatever the group takes.
-    None,
-    /// `#[auth(Bearer)]`: a credential of this scheme.
-    Scheme(Scheme),
 }
 
 /// An HTTP method of a route.
@@ -141,9 +125,9 @@ pub(crate) struct Route {
     pub(crate) path_order: Vec<usize>,
     /// What the route returns: nothing, a 204 with no body, or a type.
     pub(crate) reply: Option<Box<Returned>>,
-    /// The scheme the route is authenticated with: its own attribute's, else its group's; `None` when it takes no
+    /// The authentication the route takes: its own attribute's, else its group's; `None` when it takes no
     /// credential.
-    pub(crate) auth: Option<Scheme>,
+    pub(crate) auth: Option<RouteAuth>,
     /// The span of the route's string, where a mistake about the route as a whole is pointed.
     pub(crate) span: Span,
 }
@@ -322,7 +306,7 @@ impl Route {
     /// struct beside a query in the string or another query struct, a header name that is not one or that is read
     /// twice, an argument that is nowhere, a second body or a body the method does not take, a result that is not
     /// supported.
-    pub(crate) fn resolve(decl: RouteDecl, group_auth: Option<Auth>) -> Result<Self> {
+    pub(crate) fn resolve(decl: RouteDecl, group_auth: Option<&Auth>) -> Result<Self> {
         let RouteDecl {
             docs,
             method,
@@ -335,13 +319,13 @@ impl Route {
         let template = Template::parse(&path)?;
 
         // A route's attribute replaces its group's.
-        let auth = match auth.or(group_auth) {
-            Some(Auth::Scheme(scheme)) => Some(scheme),
+        let auth = match auth.as_ref().or(group_auth) {
+            Some(Auth::Takes(auth)) => Some(auth.clone()),
             Some(Auth::None) | None => None,
         };
 
         check_names_unique(&args)?;
-        let params = match_args(method, &path, &template, auth, args)?;
+        let params = match_args(method, &path, &template, auth.as_ref(), args)?;
         let path_order = template
             .path_names()
             .map(|path_name| {
@@ -388,7 +372,7 @@ fn match_args(
     method: Method,
     path: &LitStr,
     template: &Template,
-    auth: Option<Scheme>,
+    auth: Option<&RouteAuth>,
     args: Vec<ArgDecl>,
 ) -> Result<Vec<Param>> {
     let find = |name: &str| args.iter().find(|arg| arg.name.unraw() == name);
@@ -531,7 +515,46 @@ const RESERVED_HEADERS: &[&str] = &[
 
 /// A header's name is one HTTP takes and that quoll leaves to the route, and the route reads each header once.
 /// `Authorization` is the scheme's, on a route that takes one.
-fn check_header(header: &LitStr, earlier: &[LitStr], auth: Option<Scheme>) -> Result<()> {
+fn check_header(header: &LitStr, earlier: &[LitStr], auth: Option<&RouteAuth>) -> Result<()> {
+    let name = header.value();
+
+    check_header_name(header)?;
+
+    if let Some(auth) = auth
+        && name.eq_ignore_ascii_case("Authorization")
+    {
+        let words: Vec<String> = auth
+            .schemes
+            .iter()
+            .map(|scheme| format!("`{}`", scheme.word()))
+            .collect();
+
+        return Err(Error::new(
+            header.span(),
+            format!(
+                "the header `Authorization` carries the credential of {}, which the route takes: the handler receives its caller, and the client's middleware sends it",
+                words.join(" or ")
+            ),
+        ));
+    }
+    if let Some(first) = earlier
+        .iter()
+        .find(|first| first.value().eq_ignore_ascii_case(&name))
+    {
+        return Err(Error::new(
+            header.span(),
+            format!(
+                "the header `{}` is already read by another argument: a route reads a header once",
+                first.value()
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+/// A header's name is one HTTP takes, and that quoll leaves to the contract.
+pub(crate) fn check_header_name(header: &LitStr) -> Result<()> {
     let name = header.value();
     // The `token` of RFC 9110: letters, digits and these signs.
     let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
@@ -552,29 +575,6 @@ fn check_header(header: &LitStr, earlier: &[LitStr], auth: Option<Scheme>) -> Re
             header.span(),
             format!(
                 "the header `{reserved}` is written by quoll or by HTTP itself, so no argument takes it: read what the route needs from another header"
-            ),
-        ));
-    }
-    if let Some(scheme) = auth
-        && name.eq_ignore_ascii_case("Authorization")
-    {
-        return Err(Error::new(
-            header.span(),
-            format!(
-                "the header `Authorization` carries the credential of `{}`, which the route takes: the handler receives its caller, and the client's middleware sends it",
-                scheme.word()
-            ),
-        ));
-    }
-    if let Some(first) = earlier
-        .iter()
-        .find(|first| first.value().eq_ignore_ascii_case(&name))
-    {
-        return Err(Error::new(
-            header.span(),
-            format!(
-                "the header `{}` is already read by another argument: a route reads a header once",
-                first.value()
             ),
         ));
     }
@@ -831,6 +831,7 @@ impl Api {
         vis: Visibility,
         name: Ident,
         prefix: &LitStr,
+        schemes: Vec<DeclaredScheme>,
         groups: Vec<Group>,
     ) -> Result<Self> {
         let mut errors = ErrorList::default();
@@ -838,14 +839,16 @@ impl Api {
             errors.push(error);
             String::new()
         });
-        let api = Self {
+        let mut api = Self {
             docs,
             vis,
             name,
             prefix,
+            schemes,
             groups,
         };
         api.check_unique(&mut errors);
+        auth::resolve(&mut api, &mut errors);
 
         errors.finish().map(|()| api)
     }
@@ -855,6 +858,12 @@ impl Api {
         let mut fields: Vec<(String, &Ident)> = Vec::new();
         let mut seen: Vec<Seen> = Vec::new();
         let mut names = Names::new(self);
+
+        for scheme in &self.schemes {
+            if let Err(error) = names.add_scheme(scheme) {
+                errors.push(error);
+            }
+        }
 
         for group in &self.groups {
             if let Some(first) = groups
@@ -939,6 +948,32 @@ impl Names {
         ])
     }
 
+    /// Adds the name of a declared scheme, the type it becomes.
+    ///
+    /// # Errors
+    ///
+    /// Spanned on the scheme's name, when it is already another item's.
+    fn add_scheme(&mut self, scheme: &DeclaredScheme) -> Result<()> {
+        let name = scheme.name.unraw().to_string();
+
+        let what = format!("the scheme `{name}`");
+
+        if let Some((_, first)) = self.0.iter().find(|(taken, _)| *taken == name) {
+            let message = if *first == what {
+                format!("the scheme `{name}` is already declared: each scheme has its own name")
+            } else {
+                format!(
+                    "`{name}`, the scheme, is already {first}: rename the scheme, as each item the contract writes has its own name"
+                )
+            };
+
+            return Err(Error::new(scheme.name.span(), message));
+        }
+
+        self.0.push((name, what));
+        Ok(())
+    }
+
     /// Adds the names a group gives: its own, which its client's trait takes, its server's trait and its client.
     ///
     /// # Errors
@@ -1000,18 +1035,24 @@ fn check_visibility(api: &Api, group: &Group) -> Result<()> {
         return Ok(());
     }
 
-    let vis = &api.vis;
-    let vis = quote::quote!(#vis)
-        .to_string()
-        .replace("pub (", "pub(")
-        .replace(" :: ", "::");
     Err(Error::new(
         group.name.span(),
         format!(
             "the group `{}` is less visible than the api `{}`, whose router and client name the group's items: write `{} group {}`",
-            group.name, api.name, vis, group.name,
+            group.name,
+            api.name,
+            shown_vis(&api.vis),
+            group.name,
         ),
     ))
+}
+
+/// A visibility as the contract writes it: `pub`, `pub(crate)`.
+fn shown_vis(vis: &Visibility) -> String {
+    quote::quote!(#vis)
+        .to_string()
+        .replace("pub (", "pub(")
+        .replace(" :: ", "::")
 }
 
 /// A route already read, against which the next ones are checked.
@@ -1115,20 +1156,6 @@ impl Group {
     /// `NotesClient` for the group `Notes`: the client implementing the group's trait.
     pub(crate) fn client(&self) -> Ident {
         quote::format_ident!("{}Client", self.name.unraw(), span = self.name.span())
-    }
-
-    /// The schemes its routes take, each once, in the order they first appear: the service implements
-    /// `Authenticate` for each.
-    pub(crate) fn schemes(&self) -> Vec<Scheme> {
-        let mut schemes = Vec::new();
-
-        for scheme in self.routes.iter().filter_map(|route| route.auth) {
-            if !schemes.contains(&scheme) {
-                schemes.push(scheme);
-            }
-        }
-
-        schemes
     }
 
     /// The group's name in snake case, as an identifier: raw when it is a keyword, `Type` giving `r#type`.

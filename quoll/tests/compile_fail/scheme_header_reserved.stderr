@@ -1,0 +1,5 @@
+error: the header `Content-Type` is written by quoll or by HTTP itself, so no argument takes it: read what the route needs from another header
+ --> tests/compile_fail/scheme_header_reserved.rs:7:29
+  |
+7 |     pub scheme Key = header "Content-Type";
+  |                             ^^^^^^^^^^^^^^

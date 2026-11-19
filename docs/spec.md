@@ -6,7 +6,7 @@
 
 A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI document; the OpenAPI document feeds TypeScript generators (TanStack Query, SWR, zod...). No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
 
-Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`; pagination by header comes later; the error of `authenticate` answers its own status, not always 401; a path parameter of a struct type is refused when it is called, until a `rest::PathValue` derive refuses it at compile time; a header read twice, an argument in two places, a query struct that is not a struct and a header that quoll or HTTP writes do not compile; `Bytes` carries its content type; a failure after the 200 ends an `Events` stream with an `event: problem`, and the client reads every event that has data, whatever its name.
+Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`; pagination by header comes later; the error of `authenticate` answers its own status, not always 401; a path parameter of a struct type is refused when it is called, until a `rest::PathValue` derive refuses it at compile time; a header read twice, an argument in two places, a query struct that is not a struct and a header that quoll or HTTP writes do not compile; `Bytes` carries its content type; a failure after the 200 ends an `Events` stream with an `event: problem`, and the client reads every event that has data, whatever its name; a scheme gives its name and its challenge as `Scheme::NAME` and `Scheme::CHALLENGE`, its credential is `Send`, and `openapi` comes with the OpenAPI document; `Basic` reads a `BasicCredential` and challenges with the realm `api`; a declared scheme is written with its visibility, `pub scheme Key`; in `Bearer | Key` the first credential the request carries decides; a route needs all its scopes, and `optional` with `scopes` does not compile; `key::<K>` sends any declared scheme's credential, `openid`'s included, and the client's middleware tell a route's schemes by their type; a cookie scheme refuses a request from another origin, as Go's `CrossOriginProtection` does, the server's own origin alone trusted for now; an alternative takes up to four schemes.
 
 ## Stack and crates
 
@@ -124,8 +124,10 @@ impl NotesServer for App {
 | `#[auth(none)]` on a route | nothing | the route leaves its group's authentication |
 
 - The caller comes after `&self`, before the route's own arguments, in the server's trait only. A route's attribute replaces its group's.
+- `#[auth(Bearer | Key)]` tries the schemes in the order written, up to four: the first whose credential the request carries decides, and a wrong one is refused with its error, the next not tried. A request may carry two credentials, a session cookie beside a token: neither is refused for the other. A 401 carries one `WWW-Authenticate` per scheme of the route, in that order.
+- `optional` gives `None` for a request with no credential of any of its schemes; a credential that is malformed or that `authenticate` refuses is answered as on any route.
 - A service whose group takes `Bearer` implements `Authenticate<Bearer>`: the server's trait requires it, so a service that cannot authenticate does not compile. Its `authenticate` runs before the handler, and its error answers its own status: 401 for an unknown or expired credential, 403 for a caller refused, 500 for a failure of the service, logged, so that a client does not drop a valid token when the store is down.
-- With scopes, the caller implements `rest::Scoped`, and the router answers 403 before the handler. OpenAPI lists each route's scopes.
+- With scopes, the caller implements `rest::Scoped`, and the router answers 403 before the handler, after `authenticate` and before the path, the query and the body are read, when the caller lacks one of them: a route needs every scope it names, `scopes("repo", "admin")` both. `optional` with `scopes` does not compile: a request with no credential has no scope to check. OpenAPI lists each route's scopes.
 - The client's trait has no caller: its middleware sends the credential.
 
 ```rust
@@ -142,19 +144,26 @@ pub trait Scoped {
 
 ### Schemes
 
-A scheme is a type implementing `rest::Scheme`: how the server reads a credential, and how OpenAPI describes it.
+A scheme is a type implementing `rest::Scheme`: how the server reads a credential, its name, the challenge of a 401, and how OpenAPI describes it.
 
 ```rust
-pub trait Scheme {
-    type Credential;
+pub trait Scheme: 'static {
+    type Credential: Send + 'static;
+
+    const NAME: &'static str;
+    const CHALLENGE: HeaderValue = HeaderValue::from_static(Self::NAME);
 
     fn read(request: &http::request::Parts) -> Result<Option<Self::Credential>>;
     fn openapi() -> SecurityScheme;
 }
 ```
 
-- Given by the crate: `Bearer` and `Basic`. Declared in the contract, with a name: `scheme Key = header "X-Api-Key";`, `scheme Session = cookie "session";`, `scheme Token = query "token";`, `scheme Login = openid "https://accounts.example.com/.well-known/openid-configuration";` (a bearer token on the wire, described as OpenID Connect).
-- Any other is a type of the application implementing `Scheme`, as an HMAC signature, named in `#[auth(...)]` as the others are.
+- `NAME` is what `rest::Route::schemes()` holds and what OpenAPI names the scheme; `CHALLENGE` is the `WWW-Authenticate` of a 401, a constant so that one that is not a header's value does not compile. The credential is `Send`, as `authenticate` holds it across an `await`. `openapi` comes with the OpenAPI document.
+- `read` gives `None` for a request with none of its credential, leaving to another scheme an `Authorization` header of another scheme, and a 401 for one of its own that is not well formed. Its detail never shows the credential.
+- Given by the crate: `Bearer`, whose credential is the token, a `String`; and `Basic`, whose credential is a `rest::BasicCredential { user, password }`, read from the base64 of `user:password` in UTF-8, and whose `Debug` hides the password. `Basic` challenges with `Basic realm="api", charset="UTF-8"`, which makes a browser open its own login window: a route the web page calls takes another scheme.
+- Declared in the contract, with a name and a visibility: `pub scheme Key = header "X-Api-Key";`, `pub scheme Session = cookie "session";`, `pub scheme Token = query "token";`, `pub scheme Login = openid "https://accounts.example.com/.well-known/openid-configuration";` (a bearer token on the wire, described as OpenID Connect, whose challenge is `Bearer`; quoll checks no token, `authenticate` does). Each becomes a type of that name implementing `Scheme`, whose credential is a `String` and whose name is its own: the server implements `Authenticate<Key>`. A header or a query key given twice is a 401, as is an empty one; a cookie given twice is a 401, an empty one is none, as a cookie cleared by the application.
+- A cookie travels with a request that a page of another site has a browser send, with no preflight for a form or text. A request that carries the cookie of a cookie scheme, with a method other than `GET`, `HEAD` or `OPTIONS`, is answered 403 unless its `Sec-Fetch-Site` is `same-origin` or `none`, or, from a browser that sends none, its `Origin` is the server's own host; a request with neither header comes from no browser and passes. Only the server's own origin is trusted for now: trusted origins come later. The application sets the cookie `SameSite=Lax` or `Strict`, `HttpOnly` and `Secure`, a second defense that does not cover a page of the same site.
+- Any other is a type of the application implementing `Scheme`, as an HMAC signature, named in `#[auth(...)]` as the others are, by its path: `#[auth(crate::auth::Hmac)]`.
 
 ## What the macro generates
 
@@ -208,13 +217,15 @@ One mechanism a side: reqwest-middleware on the client, tower layers on the serv
 | `on_request(f)` | a closure that changes each request before it leaves, given its `rest::Route`: what an interceptor does elsewhere |
 | `bearer(token)` | `Authorization: Bearer`, on the routes whose schemes hold `Bearer` only |
 | `bearer_from(source)` | asks a token source before each call, and again once after a 401, for tokens that expire |
-| `basic(user, password)` | `Authorization: Basic`, on the routes that take it |
-| `key::<Key>(value)` | a key in the header, cookie or query its scheme declares |
+| `basic(user, password)` | `Authorization: Basic`, on the routes whose schemes hold `Basic` only |
+| `key::<Key>(value)` | the credential of a scheme the contract declares, where it travels: its header, its cookie beside the request's others, its query key, or `Authorization: Bearer` for `openid`; on the routes that take it only |
 | `user_agent(name)` | `User-Agent` |
 | `request_id()` | a new `X-Request-Id` per call |
 | `retry(times)` | backoff on a failure with no response, 502, 503 or 504; `GET`, `HEAD`, `PUT` and `DELETE` only (reqwest-retry) |
 | `timeout(duration)` | a deadline per call |
 | `trace()` | a tracing span per call, named by the operation id (reqwest-tracing) |
+
+The helpers tell a route's schemes by their type, `rest::Route::takes::<Key>()`, so that two contracts declaring a `Key` each get their own through one `ClientWithMiddleware`, and send nothing on a request with no `rest::Route`. A credential the server would not read, a token that is not a `b64token`, a user with a `:`, a key with a line break, fails each call that would send it with an error that does not show it.
 
 A header computed from the request is a closure given to `on_request`; the helpers of authentication are written so:
 
@@ -344,7 +355,7 @@ rest::api! {
     pub api Api = "/api";
 
     /// The key of an operator's scripts.
-    scheme Key = header "X-Api-Key";
+    pub scheme Key = header "X-Api-Key";
 
     pub group Auth {
         /// Trades a login for a token.
@@ -703,7 +714,10 @@ export function NoteView({ id }: { id: number }) {
 - Two items the macro writes with one name: a group named as its api, or as the `NotesServer`, `NotesClient`, `ApiServices` or `ApiClient` the contract writes for another.
 - A route left out of a service or a fake, a handler or a fake's method of the wrong signature: Rust's own errors on the trait.
 - A group without a service; a service of a group with authentication that does not implement `Authenticate` for its schemes; two schemes of one `#[auth(A | B)]` giving callers of two types; scopes on a caller that does not implement `Scoped`.
-- A scheme in `#[auth(...)]` that is neither given by the crate, declared in the contract nor a type implementing `Scheme`.
+- A scheme in `#[auth(...)]` that is neither given by the crate, declared in the contract nor a type implementing `Scheme`; a scheme's credential that is not `Send`; `key::<K>` for a scheme the contract does not declare.
+- In `#[auth(...)]`: `none` beside a scheme or an option; a scheme twice in an alternative, or more than four; two schemes of an alternative that read one place, `Bearer | Login` for an `openid` scheme or two header schemes of one header; `optional` or `scopes` twice, or an option it does not take; `scopes()` empty, a scope written twice or that is not an OAuth `scope-token`; `optional` with `scopes`.
+- A declared scheme of a kind other than `header`, `cookie`, `query` and `openid`; named `Bearer`, `Basic` or `none`, with a name that is not ASCII, or with the name of another scheme or of an item the macro writes; a header that quoll or HTTP writes, `Authorization` or `Cookie`; a header or a cookie whose name is not a token, a query key other than letters, digits and `-._~`; an `openid` URL that is not `http(s)://`; a scheme less visible than a group that takes it; `#[auth(...)]` on a scheme.
+- An argument that reads the credential of a scheme its route takes: the header of a header scheme, `Cookie` beside a cookie scheme, the query key of a query scheme.
 
 Each message the macro writes points at the token at fault and says what it expected, and has a test (trybuild).
 

@@ -39,6 +39,21 @@
 //! A group or a route that takes a credential says so with `#[auth(Bearer)]`, and a route of such a group that takes
 //! none with `#[auth(none)]`: the service implements [`Authenticate`], whose caller each handler receives, and the
 //! client sends the credential through a middleware, `client::bearer` with the feature `client`.
+//!
+//! A scheme is [`Bearer`], [`Basic`], one the contract declares, `pub scheme Key = header "X-Api-Key";` (or `cookie
+//! "session"`, `query "token"`, `openid "<discovery URL>"`), or a type of the application's implementing [`Scheme`].
+//! A declared scheme becomes a type of that name, whose credential is a `String`, and which `client::key::<Key>`
+//! sends. `#[auth(Bearer | Key)]` takes either, both giving one caller: the first scheme whose credential the
+//! request carries decides, and a wrong one is refused, the next not tried. `#[auth(Bearer, optional)]` gives the
+//! handler an `Option<&Caller>`, `None` for a request with no credential and a 401 for a wrong one.
+//! `#[auth(Bearer, scopes("repo"))]` answers 403 before the handler when the caller, which implements [`Scoped`],
+//! lacks one of the scopes, every one of which it needs.
+//!
+//! A cookie travels with a request a page of another site has a browser send: a request with the cookie of a cookie
+//! scheme whose method is not `GET`, `HEAD` or `OPTIONS` comes from the server's own origin, as its `Sec-Fetch-Site`
+//! or its `Origin` says, or is answered 403. Only the server's own origin is trusted for now: a page served from
+//! another origin, even of the same site, calls the api with another scheme. The cookie had better be set
+//! `SameSite=Lax` or `Strict`, `HttpOnly` and `Secure`, as a second defense.
 
 mod accepted;
 mod auth;
@@ -54,7 +69,7 @@ pub(crate) mod stream;
 pub mod test;
 
 pub use accepted::Accepted;
-pub use auth::{Authenticate, Bearer, Scheme};
+pub use auth::{Authenticate, Basic, BasicCredential, Bearer, Scheme, Scoped};
 pub use body::{Bytes, Form, Text};
 pub use created::Created;
 pub use error::{Error, Result};

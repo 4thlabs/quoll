@@ -5,6 +5,9 @@
 //! pub api Api = "/api";
 //!
 //! /// The signed-in user's notes.
+//! /// The key of an operator's scripts.
+//! pub scheme Key = header "X-Api-Key";
+//!
 //! #[auth(Bearer)]
 //! pub group Notes {
 //!     /// One note.
@@ -21,7 +24,8 @@ use syn::{
 };
 
 use crate::model::{
-    Api, ArgDecl, Auth, Docs, ErrorList, Group, Method, Route, RouteDecl, Scheme, Source,
+    Api, ArgDecl, Auth, DeclaredScheme, Docs, ErrorList, Group, MAX_ALTERNATIVES, Method, Route,
+    RouteAuth, RouteDecl, Scheme, Source,
 };
 
 /// What the macro is given: one api, with its groups.
@@ -43,6 +47,7 @@ impl Parse for Contract {
 /// of meaning is gathered and the reading goes on.
 fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     let mut api: Option<ApiDecl> = None;
+    let mut schemes = Vec::new();
     let mut groups = Vec::new();
 
     while !input.is_empty() {
@@ -51,7 +56,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         let keyword = input.call(Ident::parse_any).map_err(|error| {
             Error::new(
                 error.span(),
-                "expected `api` or `group`: an item of a contract starts with one of them",
+                "expected `api`, `scheme` or `group`: an item of a contract starts with one of them",
             )
         })?;
 
@@ -74,9 +79,21 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 )),
                 None => api = Some(decl),
             }
+        } else if keyword == "scheme" {
+            if let Some((attr, _)) = &auth {
+                errors.push(Error::new_spanned(
+                    attr,
+                    "a scheme takes no `#[auth(...)]`: put it on a group, or on a route, that takes the scheme",
+                ));
+            }
+
+            match parse_scheme(input, docs, vis)? {
+                Ok(scheme) => schemes.push(scheme),
+                Err(error) => errors.push(error),
+            }
         } else if keyword == "group" {
             let auth = auth.and_then(|(_, auth)| keep(errors, auth));
-            groups.push(parse_group(input, docs, vis, auth, errors)?);
+            groups.push(parse_group(input, docs, vis, auth.as_ref(), errors)?);
         } else {
             return Err(unexpected_item(&keyword));
         }
@@ -89,7 +106,8 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         ));
     };
 
-    Api::new(api.docs, api.vis, api.name, &api.prefix, groups).map_err(|error| fold(errors, error))
+    Api::new(api.docs, api.vis, api.name, &api.prefix, schemes, groups)
+        .map_err(|error| fold(errors, error))
 }
 
 /// The value of `result`, or `None` once its error is gathered.
@@ -106,7 +124,7 @@ fn unexpected_item(keyword: &Ident) -> Error {
     let hint = if Method::from_name(&keyword.to_string()).is_some() {
         "a route goes inside a group: `pub group Name { ... }`"
     } else {
-        "an item of a contract starts with `api` or `group`"
+        "an item of a contract starts with `api`, `scheme` or `group`"
     };
 
     Error::new(keyword.span(), format!("unexpected `{keyword}`: {hint}"))
@@ -148,13 +166,44 @@ impl ApiDecl {
     }
 }
 
+/// After the `scheme` keyword: `Name = kind "value";`. The outer error is a mistake of syntax, after which nothing can
+/// be read; the inner one a mistake of the scheme's meaning, which leaves the next item readable.
+fn parse_scheme(input: ParseStream, docs: Docs, vis: Visibility) -> Result<Result<DeclaredScheme>> {
+    const WRITE: &str = "write `pub scheme Key = header \"X-Api-Key\";`";
+
+    let name: Ident = input.parse().map_err(|error| {
+        Error::new(
+            error.span(),
+            format!("`scheme` takes the name of the scheme's type: {WRITE}"),
+        )
+    })?;
+    input.parse::<Token![=]>().map_err(|error| {
+        Error::new(
+            error.span(),
+            format!("expected `=` after the scheme's name: {WRITE}"),
+        )
+    })?;
+    let kind = input.call(Ident::parse_any).map_err(|error| {
+        Error::new(
+            error.span(),
+            format!("a scheme says where its credential travels, `header`, `cookie`, `query` or `openid`: {WRITE}"),
+        )
+    })?;
+    let value: LitStr = input
+        .parse()
+        .map_err(|error| Error::new(error.span(), format!("`{kind}` takes a string: {WRITE}")))?;
+    input.parse::<Token![;]>()?;
+
+    Ok(DeclaredScheme::new(docs, vis, name, &kind, &value))
+}
+
 /// After the `group` keyword: `Name { routes }`, whose routes take `auth` unless they say otherwise. A mistake in one
 /// route is gathered, the others are still read.
 fn parse_group(
     input: ParseStream,
     docs: Docs,
     vis: Visibility,
-    auth: Option<Auth>,
+    auth: Option<&Auth>,
     errors: &mut ErrorList,
 ) -> Result<Group> {
     let name: Ident = input.parse().map_err(|error| {
@@ -185,7 +234,7 @@ fn parse_group(
 
 /// One route, which takes `group_auth` unless it says otherwise. The outer error is a mistake of syntax, after which
 /// nothing can be read; the inner one a mistake of the route's meaning, which leaves the next route readable.
-fn parse_route(input: ParseStream, group_auth: Option<Auth>) -> Result<Result<Route>> {
+fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<Route>> {
     let Attrs { docs, auth } = parse_attrs(input)?;
     let method = parse_method(input)?;
     let path: LitStr = input.parse().map_err(|error| {
@@ -372,59 +421,172 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
     })
 }
 
-/// What an `#[auth(...)]` says: `Bearer`, or `none`. What comes later, another scheme, alternatives, `optional` and
-/// scopes, is refused with a message saying so.
-fn parse_auth(attr: &Attribute) -> Result<Auth> {
-    const WRITE: &str =
-        "write `#[auth(Bearer)]`, or `#[auth(none)]` on a route that takes no credential";
+/// How an `#[auth(...)]` is written, which its errors say.
+const WRITE_AUTH: &str = "write `#[auth(Bearer)]`, `#[auth(Bearer | Key)]`, `#[auth(Bearer, optional)]` or `#[auth(Bearer, scopes(\"repo\"))]`, or `#[auth(none)]` on a route that takes no credential";
 
+/// What an `#[auth(...)]` says: `none`, or schemes, `A | B`, then its options, `optional` or `scopes("...")`.
+fn parse_auth(attr: &Attribute) -> Result<Auth> {
     let Meta::List(list) = &attr.meta else {
         return Err(Error::new_spanned(
             attr,
-            format!("`#[auth]` takes a scheme: {WRITE}"),
+            format!("`#[auth]` takes a scheme: {WRITE_AUTH}"),
         ));
     };
 
     list.parse_args_with(|input: ParseStream| {
-        let word = input.call(Ident::parse_any).map_err(|error| {
-            Error::new(error.span(), format!("`#[auth]` takes a scheme: {WRITE}"))
-        })?;
-        let auth = if word == "none" {
-            Auth::None
-        } else if word == "Bearer" {
-            Auth::Scheme(Scheme::Bearer)
-        } else {
-            return Err(Error::new(
-                word.span(),
-                format!("the scheme `{word}` is not supported yet: {WRITE}"),
-            ));
-        };
+        let first = parse_scheme_path(input)?;
 
-        if input.peek(Token![|]) {
-            let bar: Token![|] = input.parse()?;
-            return Err(Error::new_spanned(
-                bar,
-                format!("alternatives of schemes are not supported yet: a route takes one scheme, {WRITE}"),
-            ));
+        if first.is_ident("none") {
+            if !input.is_empty() {
+                return Err(input.error(
+                    "`#[auth(none)]` takes nothing else: a route with `none` takes no credential, and no option",
+                ));
+            }
+
+            return Ok(Auth::None);
         }
 
-        if input.peek(Token![,]) {
+        let mut schemes = vec![Scheme::new(first)];
+        while input.peek(Token![|]) {
+            let bar: Token![|] = input.parse()?;
+            let path = parse_scheme_path(input)?;
+
+            if path.is_ident("none") {
+                return Err(Error::new_spanned(
+                    path,
+                    "`none` is not a scheme of an alternative: a route takes `none` alone, `#[auth(none)]`",
+                ));
+            }
+
+            let scheme = Scheme::new(path);
+            if schemes.iter().any(|first| first.word() == scheme.word()) {
+                return Err(Error::new(
+                    scheme.span(),
+                    format!("`{}` is already a scheme of this alternative: remove it", scheme.word()),
+                ));
+            }
+            if schemes.len() == MAX_ALTERNATIVES {
+                return Err(Error::new_spanned(
+                    bar,
+                    format!("an alternative takes up to {MAX_ALTERNATIVES} schemes: remove one, or give the route a scheme of its own that reads them all"),
+                ));
+            }
+
+            schemes.push(scheme);
+        }
+
+        let mut optional: Option<Ident> = None;
+        let mut scopes: Option<(Ident, Vec<String>)> = None;
+        while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
+            if input.is_empty() {
+                break;
+            }
+
             let option = input.call(Ident::parse_any).map_err(|error| {
-                Error::new(error.span(), format!("`#[auth]` takes a scheme alone: {WRITE}"))
+                Error::new(
+                    error.span(),
+                    format!("after its schemes, `#[auth]` takes `optional` or `scopes(\"...\")`: {WRITE_AUTH}"),
+                )
             })?;
-            return Err(Error::new(
-                option.span(),
-                format!("`{option}` is not supported yet in `#[auth(...)]`: {WRITE}"),
-            ));
+
+            if option == "optional" {
+                if optional.is_some() {
+                    return Err(Error::new(option.span(), "`optional` is written twice: remove one"));
+                }
+                optional = Some(option);
+            } else if option == "scopes" {
+                if scopes.is_some() {
+                    return Err(Error::new(
+                        option.span(),
+                        "`scopes` is written twice: put every scope in one `scopes(...)`",
+                    ));
+                }
+                scopes = Some((option, parse_scopes(input)?));
+            } else {
+                return Err(Error::new(
+                    option.span(),
+                    format!("`{option}` is not an option of `#[auth]`, which takes `optional` or `scopes(\"...\")`: {WRITE_AUTH}"),
+                ));
+            }
         }
 
         if !input.is_empty() {
-            return Err(input.error(format!("`#[auth]` takes a scheme alone: {WRITE}")));
+            return Err(input.error(format!(
+                "expected `|` and a scheme, or `,` and an option: {WRITE_AUTH}"
+            )));
         }
 
-        Ok(auth)
+        if let (Some(_), Some((scopes, _))) = (&optional, &scopes) {
+            return Err(Error::new(
+                scopes.span(),
+                "a route with `optional` takes no `scopes`: a request with no credential has no scope to check, so make the route require its credential",
+            ));
+        }
+
+        Ok(Auth::Takes(RouteAuth {
+            schemes,
+            optional: optional.is_some(),
+            scopes: scopes.map(|(_, scopes)| scopes).unwrap_or_default(),
+        }))
     })
+}
+
+/// A scheme in `#[auth(...)]`: a path to its type, `Bearer`, `Key` or `crate::auth::Hmac`.
+fn parse_scheme_path(input: ParseStream) -> Result<syn::Path> {
+    input.call(syn::Path::parse_mod_style).map_err(|error| {
+        Error::new(
+            error.span(),
+            format!("`#[auth]` takes a scheme: {WRITE_AUTH}"),
+        )
+    })
+}
+
+/// After `scopes`: `("repo", "admin")`, each scope an OAuth `scope-token` written once.
+fn parse_scopes(input: ParseStream) -> Result<Vec<String>> {
+    const WRITE: &str =
+        "write `scopes(\"repo\")`, or `scopes(\"repo\", \"admin\")` for a caller that needs both";
+
+    let content;
+    let paren = syn::parenthesized!(content in input);
+    let items = Punctuated::<LitStr, Token![,]>::parse_terminated(&content)
+        .map_err(|error| Error::new(error.span(), format!("`scopes` takes strings: {WRITE}")))?;
+
+    if items.is_empty() {
+        return Err(Error::new(
+            paren.span.join(),
+            format!("`scopes` takes at least one scope: {WRITE}"),
+        ));
+    }
+
+    let mut scopes: Vec<String> = Vec::with_capacity(items.len());
+    for item in &items {
+        let scope = item.value();
+        // The `scope-token` of RFC 6749: printable ASCII but space, `"` and `\`.
+        let valid = !scope.is_empty()
+            && scope
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic() && byte != b'"' && byte != b'\\');
+
+        if !valid {
+            return Err(Error::new(
+                item.span(),
+                format!(
+                    "`{scope}` is not a scope: a scope is printable ASCII with no space, `\"` or `\\`, as in \"repo\" or \"notes:read\""
+                ),
+            ));
+        }
+        if scopes.contains(&scope) {
+            return Err(Error::new(
+                item.span(),
+                format!("the scope `{scope}` is written twice: remove one"),
+            ));
+        }
+
+        scopes.push(scope);
+    }
+
+    Ok(scopes)
 }
 
 #[cfg(test)]
@@ -433,7 +595,7 @@ mod tests {
 
     use super::*;
     use crate::known::{BodyKind, ResultKind};
-    use crate::model::{ParamKind, Returned};
+    use crate::model::{DeclaredKind, Location, ParamKind, Returned, SchemeKind};
     use crate::path::Segment;
 
     fn parse(tokens: proc_macro2::TokenStream) -> Result<Api> {
@@ -1050,19 +1212,6 @@ mod tests {
     }
 
     #[test]
-    fn what_is_left_for_later_says_what_is_supported() {
-        let auth = messages(quote! {
-            pub api Api = "/api";
-            #[auth(Basic)]
-            pub group G { GET "/a" => f(); }
-        });
-        assert!(
-            auth[0].contains("the scheme `Basic` is not supported yet"),
-            "{auth:?}"
-        );
-    }
-
-    #[test]
     fn each_result_is_read_into_its_kind() {
         let api = parse(quote! {
             pub api Api = "/api";
@@ -1198,10 +1347,17 @@ mod tests {
         }
     }
 
-    fn schemes(api: &Api) -> Vec<Vec<Option<Scheme>>> {
+    /// The schemes each route takes, as the contract writes them.
+    fn schemes(api: &Api) -> Vec<Vec<Vec<String>>> {
         api.groups
             .iter()
-            .map(|group| group.routes.iter().map(|route| route.auth).collect())
+            .map(|group| {
+                group
+                    .routes
+                    .iter()
+                    .map(|route| route.schemes().map(Scheme::word).collect())
+                    .collect()
+            })
             .collect()
     }
 
@@ -1231,41 +1387,115 @@ mod tests {
         })
         .unwrap();
 
-        let bearer = Some(Scheme::Bearer);
+        let bearer = vec!["Bearer".to_owned()];
         assert_eq!(
             schemes(&api),
-            [vec![bearer, None], vec![None, bearer], vec![None]]
+            [
+                vec![bearer.clone(), vec![]],
+                vec![vec![], bearer],
+                vec![vec![]]
+            ]
         );
         assert_eq!(api.groups[0].routes[1].docs.0, [" Open to all."]);
-        assert_eq!(api.groups[0].schemes(), [Scheme::Bearer]);
-        assert_eq!(api.groups[1].schemes(), [Scheme::Bearer]);
-        assert!(api.groups[2].schemes().is_empty());
     }
 
     #[test]
-    fn what_auth_does_not_take_yet_says_so() {
+    fn auth_takes_alternatives_optional_and_scopes() {
+        let api = parse(quote! {
+            pub api Api = "/api";
+            pub scheme Key = header "X-Api-Key";
+
+            pub group G {
+                #[auth(Bearer | Key | crate::auth::Hmac)]
+                GET "/a" => a();
+                #[auth(Basic, optional)]
+                GET "/b" => b();
+                #[auth(Bearer, scopes("repo", "notes:read"),)]
+                GET "/c" => c();
+            }
+        })
+        .unwrap();
+        let routes = &api.groups[0].routes;
+        let auth = |index: usize| routes[index].auth.as_ref().expect("an auth");
+
+        assert_eq!(schemes(&api)[0][0], ["Bearer", "Key", "crate::auth::Hmac"]);
+        let kinds: Vec<&SchemeKind> = auth(0).schemes.iter().map(|scheme| &scheme.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                &SchemeKind::Bearer,
+                &SchemeKind::Declared(Location::Header("x-api-key".into())),
+                &SchemeKind::Foreign
+            ]
+        );
+        assert!(auth(1).optional);
+        assert_eq!(auth(1).schemes[0].kind, SchemeKind::Basic);
+        assert_eq!(auth(2).scopes, ["repo", "notes:read"]);
+        assert!(!auth(2).optional);
+    }
+
+    #[test]
+    fn a_mistake_in_auth_says_how_to_write_it() {
         let cases = [
-            (
-                quote! { #[auth(Key)] },
-                "the scheme `Key` is not supported yet",
-            ),
-            (
-                quote! { #[auth(Bearer | Key)] },
-                "alternatives of schemes are not supported yet",
-            ),
-            (
-                quote! { #[auth(Bearer, optional)] },
-                "`optional` is not supported yet",
-            ),
-            (
-                quote! { #[auth(Bearer, scopes("repo"))] },
-                "`scopes` is not supported yet",
-            ),
-            (quote! { #[auth(Bearer Key)] }, "takes a scheme alone"),
+            (quote! { #[auth(Bearer Key)] }, "expected `|` and a scheme"),
             (quote! { #[auth()] }, "`#[auth]` takes a scheme"),
             (quote! { #[auth] }, "`#[auth]` takes a scheme"),
             (quote! { #[auth = "Bearer"] }, "`#[auth]` takes a scheme"),
             (quote! { #[auth("Bearer")] }, "`#[auth]` takes a scheme"),
+            (
+                quote! { #[auth(none | Bearer)] },
+                "`#[auth(none)]` takes nothing else",
+            ),
+            (
+                quote! { #[auth(Bearer | none)] },
+                "`none` is not a scheme of an alternative",
+            ),
+            (
+                quote! { #[auth(none, optional)] },
+                "`#[auth(none)]` takes nothing else",
+            ),
+            (
+                quote! { #[auth(Bearer | Bearer)] },
+                "`Bearer` is already a scheme of this alternative",
+            ),
+            (quote! { #[auth(A | B | C | D | E)] }, "up to 4 schemes"),
+            (
+                quote! { #[auth(Bearer, optional, optional)] },
+                "`optional` is written twice",
+            ),
+            (
+                quote! { #[auth(Bearer, scopes("a"), scopes("b"))] },
+                "`scopes` is written twice",
+            ),
+            (
+                quote! { #[auth(Bearer, required)] },
+                "`required` is not an option of `#[auth]`",
+            ),
+            (
+                quote! { #[auth(Bearer, scopes())] },
+                "takes at least one scope",
+            ),
+            (
+                quote! { #[auth(Bearer, scopes(repo))] },
+                "`scopes` takes strings",
+            ),
+            (
+                quote! { #[auth(Bearer, scopes("a b"))] },
+                "`a b` is not a scope",
+            ),
+            (quote! { #[auth(Bearer, scopes(""))] }, "`` is not a scope"),
+            (
+                quote! { #[auth(Bearer, scopes("a", "a"))] },
+                "the scope `a` is written twice",
+            ),
+            (
+                quote! { #[auth(Bearer, optional, scopes("a"))] },
+                "a route with `optional` takes no `scopes`",
+            ),
+            (
+                quote! { #[auth(Bearer, scopes("a"), optional)] },
+                "a route with `optional` takes no `scopes`",
+            ),
         ];
 
         for (attr, message) in cases {
@@ -1291,17 +1521,17 @@ mod tests {
     fn a_mistake_in_auth_leaves_the_rest_read() {
         let all = messages(quote! {
             pub api Api = "/api";
-            #[auth(Key)]
+            #[auth(Bearer | )]
             pub group G {
-                #[auth(Basic)]
+                #[auth(Basic, x)]
                 GET "/a/{x}" => a();
                 GET "/b/{y}" => b();
             }
         });
 
         assert_eq!(all.len(), 4, "{all:?}");
-        assert!(all[0].contains("`Key`"), "{all:?}");
-        assert!(all[1].contains("`Basic`"), "{all:?}");
+        assert!(all[0].contains("`#[auth]` takes a scheme"), "{all:?}");
+        assert!(all[1].contains("`x` is not an option"), "{all:?}");
         assert!(all[2].contains("no argument named `x`"), "{all:?}");
         assert!(all[3].contains("no argument named `y`"), "{all:?}");
     }
@@ -1314,21 +1544,340 @@ mod tests {
         });
         assert!(api[0].contains("an api takes no `#[auth(...)]`"), "{api:?}");
 
+        let scheme = messages(quote! {
+            pub api Api = "/api";
+            #[auth(Bearer)]
+            pub scheme Key = header "X-Api-Key";
+        });
+        assert!(
+            scheme[0].contains("a scheme takes no `#[auth(...)]`"),
+            "{scheme:?}"
+        );
+
         // Gathered, so that the mistakes after it are reported in the same build.
         let twice = messages(quote! {
             pub api Api = "/api";
             #[auth(Bearer)]
             #[auth(none)]
             pub group G {
-                #[auth(Key)]
+                #[auth(Bearer, x)]
                 #[auth(Bearer)]
                 GET "/a/{x}" => a();
             }
         });
         assert_eq!(twice.len(), 4, "{twice:?}");
         assert!(twice[0].contains("one `#[auth(...)]`"), "{twice:?}");
-        assert!(twice[1].contains("`Key`"), "{twice:?}");
+        assert!(twice[1].contains("`x` is not an option"), "{twice:?}");
         assert!(twice[2].contains("one `#[auth(...)]`"), "{twice:?}");
         assert!(twice[3].contains("no argument named `x`"), "{twice:?}");
+    }
+
+    #[test]
+    fn a_scheme_is_declared_with_where_its_credential_travels() {
+        let api = parse(quote! {
+            pub api Api = "/api";
+            /// The key of an operator's scripts.
+            pub scheme Key = header "X-Api-Key";
+            pub(crate) scheme Session = cookie "session";
+            scheme Token = query "token";
+            pub scheme Login = openid "https://accounts.example.com/.well-known/openid-configuration";
+        })
+        .unwrap();
+        let kinds: Vec<(String, DeclaredKind)> = api
+            .schemes
+            .iter()
+            .map(|scheme| (scheme.name.to_string(), scheme.kind.clone()))
+            .collect();
+
+        assert_eq!(
+            kinds,
+            [
+                ("Key".into(), DeclaredKind::Header("X-Api-Key".into())),
+                ("Session".into(), DeclaredKind::Cookie("session".into())),
+                ("Token".into(), DeclaredKind::Query("token".into())),
+                (
+                    "Login".into(),
+                    DeclaredKind::OpenId(
+                        "https://accounts.example.com/.well-known/openid-configuration".into()
+                    )
+                ),
+            ]
+        );
+        assert_eq!(
+            api.schemes[0].docs.0,
+            [" The key of an operator's scripts."]
+        );
+        assert_eq!(text(&api.schemes[1].vis), "pub (crate)");
+    }
+
+    #[test]
+    fn a_mistake_in_a_scheme_says_how_to_write_it() {
+        let cases = [
+            (
+                quote! { pub scheme = header "X"; },
+                "`scheme` takes the name",
+            ),
+            (quote! { pub scheme Key header "X"; }, "expected `=`"),
+            (
+                quote! { pub scheme Key = "X"; },
+                "says where its credential travels",
+            ),
+            (
+                quote! { pub scheme Key = header X; },
+                "`header` takes a string",
+            ),
+            (
+                quote! { pub scheme Key = body "X"; },
+                "`body` is not a kind of scheme",
+            ),
+            (
+                quote! { pub scheme Key = header "X Key"; },
+                "is not the name of a header",
+            ),
+            (
+                quote! { pub scheme Key = header "Content-Type"; },
+                "written by quoll or by HTTP",
+            ),
+            (
+                quote! { pub scheme Key = header "authorization"; },
+                "read by `Bearer` and `Basic`",
+            ),
+            (
+                quote! { pub scheme Key = header "Cookie"; },
+                "read by `cookie` schemes",
+            ),
+            (
+                quote! { pub scheme Key = cookie "a;b"; },
+                "is not the name of a cookie",
+            ),
+            (quote! { pub scheme Key = query ""; }, "is not a query key"),
+            (
+                quote! { pub scheme Key = query "a&b"; },
+                "is not a query key",
+            ),
+            (
+                quote! { pub scheme Key = openid "accounts.example.com"; },
+                "the URL of its discovery document",
+            ),
+            (
+                quote! { pub scheme Key = openid "https://"; },
+                "the URL of its discovery document",
+            ),
+            (
+                quote! { pub scheme Bearer = header "X"; },
+                "`Bearer` is a word `#[auth(...)]` already takes",
+            ),
+            (
+                quote! { pub scheme Basic = header "X"; },
+                "`Basic` is a word",
+            ),
+            (quote! { pub scheme none = header "X"; }, "`none` is a word"),
+            (quote! { pub scheme Clé = header "X"; }, "which is ASCII"),
+        ];
+
+        for (item, message) in cases {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                #item
+            });
+
+            assert!(all[0].contains(message), "{item}: {all:?}");
+        }
+    }
+
+    #[test]
+    fn a_scheme_has_its_own_name() {
+        let cases = [
+            (
+                quote! {
+                    pub scheme Key = header "X-A";
+                    pub scheme Key = header "X-B";
+                },
+                "the scheme `Key` is already declared",
+            ),
+            (
+                quote! { pub scheme Api = header "X-A"; },
+                "is already the type of the api",
+            ),
+            (
+                quote! { pub scheme ApiClient = header "X-A"; },
+                "is already the client of the api",
+            ),
+            (
+                quote! {
+                    pub scheme Notes = header "X-A";
+                    pub group Notes { }
+                },
+                "is already the scheme `Notes`",
+            ),
+        ];
+
+        for (items, message) in cases {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                #items
+            });
+
+            assert!(all[0].contains(message), "{items}: {all:?}");
+        }
+    }
+
+    #[test]
+    fn a_scheme_reaches_as_far_as_the_groups_that_take_it() {
+        let all = messages(quote! {
+            pub api Api = "/api";
+            scheme Key = header "X-Api-Key";
+            #[auth(Key)]
+            pub group G { GET "/a" => a(); }
+        });
+        assert!(
+            all[0].contains("the scheme `Key` is less visible than the group `G`"),
+            "{all:?}"
+        );
+        assert!(all[0].contains("write `pub scheme Key`"), "{all:?}");
+
+        let private = parse(quote! {
+            api Api = "/api";
+            scheme Key = header "X-Api-Key";
+            #[auth(Key)]
+            group G { GET "/a" => a(); }
+        });
+        assert!(private.is_ok(), "{private:?}");
+    }
+
+    #[test]
+    fn two_schemes_of_an_alternative_read_two_places() {
+        let cases = [
+            (
+                quote! { #[auth(Bearer | Login)] },
+                "`Bearer` and `Login` both read the header `Authorization: Bearer`",
+            ),
+            (
+                quote! { #[auth(Key | Other)] },
+                "`Key` and `Other` both read the header `x-api-key`",
+            ),
+        ];
+
+        for (attr, message) in cases {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                pub scheme Key = header "X-Api-Key";
+                pub scheme Other = header "x-api-KEY";
+                pub scheme Login = openid "https://accounts.example.com/.well-known/openid-configuration";
+                pub group G {
+                    #attr
+                    GET "/a" => a();
+                }
+            });
+
+            assert!(all[0].contains(message), "{attr}: {all:?}");
+        }
+
+        let apart = parse(quote! {
+            pub api Api = "/api";
+            pub scheme Key = header "X-Api-Key";
+            pub scheme Session = cookie "session";
+            pub scheme Token = query "token";
+            pub group G {
+                #[auth(Bearer | Basic | Key | Session)]
+                GET "/a" => a();
+                #[auth(Token | Hmac)]
+                GET "/b" => b();
+            }
+        });
+        assert!(apart.is_ok(), "{apart:?}");
+    }
+
+    #[test]
+    fn no_argument_reads_the_credential_of_a_scheme_the_route_takes() {
+        let cases = [
+            (
+                quote! { #[auth(Key)] GET "/a" => a(header("x-api-key") key: String); },
+                "the header `x-api-key` carries the credential of `Key`",
+            ),
+            (
+                quote! { #[auth(Bearer | Session)] GET "/a" => a(header("Cookie") all: String); },
+                "the header `Cookie` carries the credential of `Session`",
+            ),
+            (
+                quote! { #[auth(Token)] GET "/a?token={value}" => a(value: String); },
+                "the query key `token` carries the credential of `Token`",
+            ),
+            (
+                quote! { #[auth(Key | Hmac)] GET "/a" => a(header("Authorization") all: String); },
+                "carries the credential of `Key` or `Hmac`",
+            ),
+        ];
+
+        for (route, message) in cases {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                pub scheme Key = header "X-Api-Key";
+                pub scheme Session = cookie "session";
+                pub scheme Token = query "token";
+                pub group G { #route }
+            });
+
+            assert!(all[0].contains(message), "{route}: {all:?}");
+        }
+
+        let elsewhere = parse(quote! {
+            pub api Api = "/api";
+            pub scheme Key = header "X-Api-Key";
+            pub scheme Token = query "token";
+            pub group G {
+                #[auth(Bearer)]
+                GET "/a?token={value}" => a(header("X-Api-Key") key: String, value: String);
+                GET "/b" => b(header("Cookie") all: String);
+            }
+        });
+        assert!(elsewhere.is_ok(), "{elsewhere:?}");
+    }
+
+    #[test]
+    fn a_group_ties_the_callers_of_an_alternative_to_its_first_scheme() {
+        let api = parse(quote! {
+            pub api Api = "/api";
+            pub scheme Key = header "X-Api-Key";
+            pub group G {
+                #[auth(Key)]
+                GET "/a" => a();
+                #[auth(Bearer | Key, scopes("x"))]
+                GET "/b" => b();
+                #[auth(Basic)]
+                GET "/c" => c();
+            }
+        })
+        .unwrap();
+        let group = &api.groups[0];
+        let bounds: Vec<(String, Option<String>, bool)> = group
+            .bounds()
+            .iter()
+            .map(|bound| {
+                (
+                    bound.scheme.word(),
+                    bound.same_as.map(Scheme::word),
+                    bound.scoped,
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            bounds,
+            [
+                ("Key".into(), None, true),
+                ("Bearer".into(), Some("Key".into()), false),
+                ("Basic".into(), None, false),
+            ]
+        );
+        let callers: Vec<Option<String>> = group
+            .routes
+            .iter()
+            .map(|route| group.caller_scheme(route).map(Scheme::word))
+            .collect();
+        assert_eq!(
+            callers,
+            [Some("Key".into()), Some("Key".into()), Some("Basic".into())]
+        );
     }
 }

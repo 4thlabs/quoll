@@ -43,14 +43,9 @@ help: the trait `Authenticate<Bearer>` is not implemented for `App`
    | ^^^^^^^^^^
    = note: a group or a route with `#[auth(Bearer)]` gives each handler its caller: implement `quoll::rest::Authenticate<Bearer>` for `App`, with its `type Caller` and its `async fn authenticate`
 note: required by a bound in `NotesServer`
-  --> tests/compile_fail_server/service_without_authenticate.rs:3:1
+  --> tests/compile_fail_server/service_without_authenticate.rs:6:12
    |
- 3 | / rest::api! {
- 4 | |     pub api Api = "/api";
- 5 | |
- 6 | |     #[auth(Bearer)]
- 7 | |     pub group Notes {
-...  |
-10 | | }
-   | |_^ required by this bound in `NotesServer`
-   = note: this error originates in the macro `rest::api` (in Nightly builds, run with -Z macro-backtrace for more info)
+ 6 |     #[auth(Bearer)]
+   |            ^^^^^^ required by this bound in `NotesServer`
+ 7 |     pub group Notes {
+   |

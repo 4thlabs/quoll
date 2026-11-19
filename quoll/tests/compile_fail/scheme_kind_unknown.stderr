@@ -1,0 +1,5 @@
+error: `body` is not a kind of scheme: a credential travels in a `header`, a `cookie`, a `query` key, or `openid`; write `pub scheme Key = header "X-Api-Key";`, or `cookie "session"`, `query "token"`, `openid "https://.../.well-known/openid-configuration"`
+ --> tests/compile_fail/scheme_kind_unknown.rs:7:22
+  |
+7 |     pub scheme Key = body "key";
+  |                      ^^^^

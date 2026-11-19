@@ -1,0 +1,5 @@
+error: a scheme takes no `#[auth(...)]`: put it on a group, or on a route, that takes the scheme
+ --> tests/compile_fail/auth_on_scheme.rs:7:5
+  |
+7 |     #[auth(Bearer)]
+  |     ^^^^^^^^^^^^^^^

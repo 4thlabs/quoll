@@ -9,7 +9,8 @@ use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::model::{Api, Group, Method, Param, Route, is_vec};
-use crate::{doc_attrs, route_docs, scheme_type};
+use crate::scheme::{scheme_type, schemes_type};
+use crate::{doc_attrs, route_docs};
 
 /// The server's code of the api, behind the feature `server` of `quoll`.
 pub(crate) fn expand(api: &Api) -> TokenStream {
@@ -42,11 +43,11 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     };
     lines.extend([String::new(), usage]);
 
-    let schemes = group.schemes();
-    if !schemes.is_empty() {
-        let names: Vec<String> = schemes
+    let bounds = group.bounds();
+    if !bounds.is_empty() {
+        let names: Vec<String> = bounds
             .iter()
-            .map(|scheme| format!("`Authenticate<{}>`", scheme.word()))
+            .map(|bound| format!("`Authenticate<{}>`", bound.scheme.word()))
             .collect();
         lines.push(format!(
             " It also implements {}, which gives the caller of each route that takes it.",
@@ -55,11 +56,22 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     }
 
     let docs = doc_attrs(&lines);
-    let methods = group.routes.iter().map(|route| method(api, route));
-    let authenticate = schemes.into_iter().map(|scheme| {
-        let scheme = scheme_type(scheme);
+    let methods = group.routes.iter().map(|route| method(api, group, route));
+    let authenticate = bounds.iter().map(|bound| {
+        let scheme = scheme_type(bound.scheme);
+        let span = bound.scheme.span();
+        let caller = match (bound.same_as, bound.scoped) {
+            (Some(first), _) => {
+                let first = scheme_type(first);
 
-        quote! { + ::quoll::rest::Authenticate<#scheme> }
+                quote_spanned! {span=> , Caller = <Self as ::quoll::rest::Authenticate<#first>>::Caller }
+            }
+            (None, true) => quote_spanned! {span=> , Caller: ::quoll::rest::Scoped },
+            (None, false) => quote! {},
+        };
+
+        // Spanned on the scheme in its `#[auth(...)]`, where an error on the bound points.
+        quote_spanned! {span=> + ::quoll::rest::Authenticate<#scheme #caller> }
     });
 
     quote! {
@@ -70,7 +82,7 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     }
 }
 
-fn method(api: &Api, route: &Route) -> TokenStream {
+fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
     let docs = route_docs(api, route);
     let name = &route.name;
     let args = route
@@ -85,12 +97,18 @@ fn method(api: &Api, route: &Route) -> TokenStream {
             quote! { #ty }
         }
     };
-    let caller = route.auth.map(|scheme| {
+    let caller = group.caller_scheme(route).map(|scheme| {
         let scheme = scheme_type(scheme);
         // Its own hygiene, so that a route's argument may be named `caller` too.
         let caller = Ident::new("caller", Span::mixed_site());
+        let ty = quote! { <Self as ::quoll::rest::Authenticate<#scheme>>::Caller };
+        let optional = route.auth.as_ref().is_some_and(|auth| auth.optional);
 
-        quote! { #caller: &<Self as ::quoll::rest::Authenticate<#scheme>>::Caller, }
+        if optional {
+            quote! { #caller: ::core::option::Option<&#ty>, }
+        } else {
+            quote! { #caller: &#ty, }
+        }
     });
 
     quote_spanned! {route.name.span()=>
@@ -196,17 +214,31 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
 
     let method = method_filter(route.method);
     let path = route.full_path(&api.prefix);
-    let challenges = route.auth.map_or_else(|| quote! { () }, scheme_type);
+    let challenges = schemes_type(route.auth.as_ref().map_or(&[], |auth| &auth.schemes));
     let mut reads = Vec::new();
 
     // Before anything else is read: a request that is not authenticated learns nothing of the route's arguments, and
     // its body is never read.
-    let caller_arg = route.auth.map(|scheme| {
-        let scheme = scheme_type(scheme);
+    let caller_arg = route.auth.as_ref().map(|auth| {
+        if auth.optional {
+            reads.push(quote! {
+                let #caller = #request.authenticate_optional::<#challenges, _>(&*#service).await?;
+            });
+
+            return quote! { #caller.as_ref(), };
+        }
 
         reads.push(quote! {
-            let #caller = #request.authenticate::<#scheme, _>(&*#service).await?;
+            let #caller = #request.authenticate::<#challenges, _>(&*#service).await?;
         });
+
+        if !auth.scopes.is_empty() {
+            let scopes = &auth.scopes;
+
+            reads.push(quote! {
+                ::quoll::__private::server::authorize(&#caller, &[#(#scopes),*])?;
+            });
+        }
 
         quote! { &#caller, }
     });
