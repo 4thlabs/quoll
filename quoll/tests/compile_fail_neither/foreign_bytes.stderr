@@ -1,4 +1,4 @@
-error[E0277]: `other::Bytes` is not quoll's `Bytes`, which a body named `Bytes` is read as
+error[E0277]: `other::Bytes` is not quoll's `Bytes`, which a body or a result named `Bytes` is read as
   --> tests/compile_fail_neither/foreign_bytes.rs:12:52
    |
 12 |         PUT "/files/{id}" => upload(id: i64, file: other::Bytes);

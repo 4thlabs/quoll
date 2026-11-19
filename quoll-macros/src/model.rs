@@ -267,10 +267,6 @@ impl BodyKind {
 
 /// What a route answers, and so its status and its body.
 #[derive(Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "one per route, built once as the macro runs: its size costs nothing"
-)]
 pub(crate) enum Reply {
     /// No `->`: 204, no body.
     None,
@@ -283,14 +279,42 @@ pub(crate) enum Reply {
         /// The `T`, which the client returns.
         inner: Type,
     },
+    /// `Accepted<T>`: 202, JSON.
+    Accepted {
+        /// The whole `Accepted<T>`, as the contract writes it, which the server's trait returns.
+        outer: Type,
+        /// The `T`, which the client returns.
+        inner: Type,
+    },
+    /// `Text`: 200, `text/plain` in UTF-8.
+    Text(Type),
+    /// `Bytes`: 200, `application/octet-stream`.
+    Bytes(Type),
 }
 
 impl Reply {
-    /// The type of the value the route answers, which the client returns: the `T` of a `Created<T>`.
+    /// The type the server's trait returns, as the contract writes it.
+    pub(crate) fn served(&self) -> Option<&Type> {
+        match self {
+            Self::None => None,
+            Self::Json(ty)
+            | Self::Created { outer: ty, .. }
+            | Self::Accepted { outer: ty, .. }
+            | Self::Text(ty)
+            | Self::Bytes(ty) => Some(ty),
+        }
+    }
+
+    /// The type of the value the route answers, which the client returns: the `T` of a `Created<T>` or an
+    /// `Accepted<T>`, whose status is only the server's answer.
     pub(crate) fn value(&self) -> Option<&Type> {
         match self {
             Self::None => None,
-            Self::Json(ty) | Self::Created { inner: ty, .. } => Some(ty),
+            Self::Json(ty)
+            | Self::Created { inner: ty, .. }
+            | Self::Accepted { inner: ty, .. }
+            | Self::Text(ty)
+            | Self::Bytes(ty) => Some(ty),
         }
     }
 }
@@ -686,6 +710,7 @@ const NOT_TEXT: &[&str] = &[
     "BinaryHeap",
     "Option",
     "Created",
+    "Accepted",
     "Form",
     "Text",
     "Bytes",
@@ -757,21 +782,30 @@ impl Reply {
                 "a route that returns nothing has no `->`: remove `-> ()`",
             ));
         }
-        if let Some(wrapper) =
-            reserved_name(&ty, &["Accepted", "Events", "JsonLines", "Text", "Bytes"])
-        {
+        if let Some(wrapper) = reserved_name(&ty, &["Events", "JsonLines"]) {
             return Err(Error::new_spanned(
                 &ty,
                 format!(
-                    "`{wrapper}` is not supported as a result: a route returns nothing (no `->`), `T` or `Created<T>`"
+                    "`{wrapper}` is not supported as a result: a route returns nothing (no `->`), `T`, `Created<T>`, `Accepted<T>`, `Text` or `Bytes`"
                 ),
             ));
         }
-        if let Some(inner) = created_inner(&ty)? {
-            return Ok(Self::Created { outer: ty, inner });
-        }
 
-        Ok(Self::Json(ty))
+        match reserved_name(&ty, &["Created", "Accepted", "Text", "Bytes"]) {
+            Some("Created") => {
+                let inner = wrapped(&ty, "Created")?;
+
+                Ok(Self::Created { outer: ty, inner })
+            }
+            Some("Accepted") => {
+                let inner = wrapped(&ty, "Accepted")?;
+
+                Ok(Self::Accepted { outer: ty, inner })
+            }
+            Some("Text") => Ok(Self::Text(ty)),
+            Some("Bytes") => Ok(Self::Bytes(ty)),
+            _ => Ok(Self::Json(ty)),
+        }
     }
 }
 
@@ -790,35 +824,29 @@ fn reserved_name<'a>(ty: &Type, names: &[&'a str]) -> Option<&'a str> {
     names.iter().copied().find(|name| last.ident == name)
 }
 
-/// The `T` of a `Created<T>`; `None` when the type is something else, an error when `Created` has no single `T`.
-fn created_inner(ty: &Type) -> Result<Option<Type>> {
-    let Type::Path(path) = peel(ty) else {
-        return Ok(None);
+/// The `T` of a `Created<T>` or an `Accepted<T>`, `wrapper`, whose last segment the caller has read; an error when it
+/// has no single `T`.
+fn wrapped(ty: &Type, wrapper: &str) -> Result<Type> {
+    let args = match peel(ty) {
+        Type::Path(path) => path.path.segments.last().map(|last| &last.arguments),
+        _ => None,
     };
-    let Some(last) = path
-        .path
-        .segments
-        .last()
-        .filter(|last| last.ident == "Created")
-    else {
-        return Ok(None);
-    };
-
-    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+    let Some(syn::PathArguments::AngleBracketed(args)) = args else {
         return Err(Error::new_spanned(
             ty,
-            "`Created` wraps the type of the body: write `Created<Note>`",
+            format!("`{wrapper}` wraps the type of the body: write `{wrapper}<Note>`"),
         ));
     };
+
     let mut types = args.args.iter().filter_map(|arg| match arg {
         syn::GenericArgument::Type(ty) => Some(ty),
         _ => None,
     });
     match (types.next(), types.next(), args.args.len()) {
-        (Some(inner), None, 1) => Ok(Some(inner.clone())),
+        (Some(inner), None, 1) => Ok(inner.clone()),
         _ => Err(Error::new_spanned(
             ty,
-            "`Created` wraps one type, the body: write `Created<Note>`",
+            format!("`{wrapper}` wraps one type, the body: write `{wrapper}<Note>`"),
         )),
     }
 }

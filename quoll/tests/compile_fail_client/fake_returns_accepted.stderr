@@ -1,0 +1,15 @@
+error[E0271]: expected `impl Future<Output = Result<Accepted<String>, Error>>` to be a future that resolves to `Result<String, Error>`, but it resolves to `Result<Accepted<String>, Error>`
+  --> tests/compile_fail_client/fake_returns_accepted.rs:15:45
+   |
+15 |     async fn export(&self, name: String) -> Result<Accepted<String>> {
+   |                                             ^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<String, Error>`, found `Result<Accepted<String>, Error>`
+   |
+   = note: expected enum `Result<String, Error>`
+              found enum `Result<Accepted<String>, Error>`
+note: required by a bound in `Exports::export::{anon_assoc#0}`
+  --> tests/compile_fail_client/fake_returns_accepted.rs:7:28
+   |
+ 3 | rest::api! {
+...
+ 7 |         POST "/exports" => export(name: String) -> Accepted<String>;
+   |                            ^^^^^^ required by this bound in `Exports::export::{anon_assoc#0}`

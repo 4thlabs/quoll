@@ -1,0 +1,5 @@
+error: `Accepted` wraps the type of the body: write `Accepted<Note>`
+ --> tests/compile_fail/reply_accepted_bare.rs:7:52
+  |
+7 |         POST "/exports" => export(name: String) -> Accepted;
+  |                                                    ^^^^^^^^

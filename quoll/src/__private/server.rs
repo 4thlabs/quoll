@@ -16,8 +16,8 @@ use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::__private::Given;
-use crate::__private::known::{IsBytes, IsCreated, IsForm, IsText};
+use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
+use crate::__private::{Given, content_type};
 use crate::rest::error::Repr;
 use crate::rest::{Authenticate, Error, Result, Scheme};
 
@@ -278,44 +278,18 @@ impl Request {
     /// whose credential the browser adds on its own, a cookie, needs a defense of its own. A Bearer token is never
     /// added so.
     fn check_content_type(&self, expected: &str, utf8: bool) -> Result<()> {
-        let refused = || {
-            let charset = if utf8 { "; charset=utf-8" } else { "" };
-
-            Error::new(
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                format!(
-                    "the body is read as `{expected}`: send it with `Content-Type: {expected}{charset}`"
-                ),
-            )
-        };
-        let Some(value) = self
-            .parts
-            .headers
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-        else {
-            return Err(refused());
-        };
-
-        let mut parts = value.split(';');
-        let essence = parts.next().unwrap_or_default().trim();
-
-        if !essence.eq_ignore_ascii_case(expected) {
-            return Err(refused());
+        if content_type::is(&self.parts.headers, expected, utf8) {
+            return Ok(());
         }
 
-        let other_charset = parts
-            .filter_map(|param| param.split_once('='))
-            .any(|(name, value)| {
-                let value = value.trim().trim_matches('"');
+        let charset = if utf8 { "; charset=utf-8" } else { "" };
 
-                name.trim().eq_ignore_ascii_case("charset") && !value.eq_ignore_ascii_case("utf-8")
-            });
-        if utf8 && other_charset {
-            return Err(refused());
-        }
-
-        Ok(())
+        Err(Error::new(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            format!(
+                "the body is read as `{expected}`: send it with `Content-Type: {expected}{charset}`"
+            ),
+        ))
     }
 
     /// The whole body, within the limit axum sets.
@@ -336,6 +310,9 @@ const TEXT: &str = "text/plain";
 
 /// The content type of bytes.
 const BYTES: &str = "application/octet-stream";
+
+/// The content type of a text result, which says its charset.
+const TEXT_ANSWER: &str = "text/plain; charset=utf-8";
 
 /// `form`, the query or a body, read as serde_html_form reads a form into `T`; `what` names it in the errors.
 fn from_form<T: DeserializeOwned>(form: &[u8], what: &str) -> Result<T> {
@@ -397,6 +374,37 @@ where
     Ok(response)
 }
 
+/// A 202 with the JSON of what the handler accepted.
+///
+/// # Errors
+///
+/// The handler's error, or a 500 when its value cannot be written as JSON.
+pub fn accepted<A>(result: Result<A>) -> Result<Response>
+where
+    A: IsAccepted,
+    A::Value: Serialize,
+{
+    json(StatusCode::ACCEPTED, &result?.into_value())
+}
+
+/// A 200 with the text the handler returned, `text/plain; charset=utf-8`.
+///
+/// # Errors
+///
+/// The handler's error.
+pub fn ok_text<T: IsText>(result: Result<T>) -> Result<Response> {
+    Ok(answer_body(TEXT_ANSWER, result?.into_string().into_bytes()))
+}
+
+/// A 200 with the bytes the handler returned, `application/octet-stream`.
+///
+/// # Errors
+///
+/// The handler's error.
+pub fn ok_bytes<B: IsBytes>(result: Result<B>) -> Result<Response> {
+    Ok(answer_body(BYTES, result?.into_vec()))
+}
+
 /// A 204, with no body.
 ///
 /// # Errors
@@ -416,6 +424,13 @@ fn json<T: Serialize>(status: StatusCode, value: &T) -> Result<Response> {
     )];
 
     Ok((status, content_type, body).into_response())
+}
+
+/// A 200 with `body`, of `content_type`.
+fn answer_body(content_type: &'static str, body: Vec<u8>) -> Response {
+    let content_type = [(header::CONTENT_TYPE, HeaderValue::from_static(content_type))];
+
+    (StatusCode::OK, content_type, body).into_response()
 }
 
 /// What the server answers for this error: the status and, when it is to be sent, the detail. Logs what is not

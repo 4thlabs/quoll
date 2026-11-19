@@ -3,8 +3,8 @@ use quoll::rest;
 rest::api! {
     pub api Api = "/api";
 
-    pub group Notes {
-        GET "/notes" => export() -> Text;
+    pub group Health {
+        HEAD "/" => check() -> Accepted<Job>;
     }
 }
 

@@ -13,6 +13,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::__private::content_type;
 use crate::__private::known::{IsBytes, IsForm, IsText};
 use crate::rest::{Error, Problem, Result, Route};
 
@@ -398,10 +399,14 @@ impl<'a> Call<'a> {
 }
 
 /// The error of a call that got no answer to read: a handler that returns it answers 502.
-fn no_answer(route: &Route, what: &str, error: impl StdError + Send + Sync + 'static) -> Error {
+fn no_answer(
+    route: &Route,
+    what: &str,
+    error: impl Into<Box<dyn StdError + Send + Sync>>,
+) -> Error {
     Error::failed(
         format!("the call `{}` {what}", route.operation_id),
-        Some(Box::new(error)),
+        Some(error.into()),
         StatusCode::BAD_GATEWAY,
     )
 }
@@ -414,21 +419,71 @@ pub struct Answer {
 }
 
 impl Answer {
-    /// The body, read as the JSON of `T`: what a route returning `T` or `Created<T>` gives. It is read whole: it is
-    /// the route's data.
+    /// The body, read as the JSON of `T`: what a route returning `T`, `Created<T>` or `Accepted<T>` gives. It is read
+    /// whole: it is the route's data.
     ///
     /// # Errors
     ///
     /// An error with no status when the body cannot be read, or is not the JSON of `T`.
     pub async fn json<T: DeserializeOwned>(self) -> Result<T> {
+        let route = self.route;
+        let body = self.read().await?;
+
+        serde_json::from_slice(&body).map_err(|error| no_answer(route, NOT_ITS_RESULT, error))
+    }
+
+    /// The body, read whole as UTF-8 text: what a route returning `Text` gives.
+    ///
+    /// # Errors
+    ///
+    /// An error with no status when the answer is not `text/plain`, names a charset other than UTF-8, or its body
+    /// cannot be read or is not UTF-8.
+    pub async fn text<T: IsText>(self) -> Result<T> {
+        let route = self.route;
+        let body = self.read_as(TEXT, true).await?;
+        let text =
+            String::from_utf8(body).map_err(|error| no_answer(route, NOT_ITS_RESULT, error))?;
+
+        Ok(T::from_string(text))
+    }
+
+    /// The body, read whole as its bytes: what a route returning `Bytes` gives.
+    ///
+    /// # Errors
+    ///
+    /// An error with no status when the answer is not `application/octet-stream`, or its body cannot be read.
+    pub async fn bytes<B: IsBytes>(self) -> Result<B> {
+        let body = self.read_as(BYTES, false).await?;
+
+        Ok(B::from_vec(body))
+    }
+
+    /// The whole body, when the answer's content type is `expected`, with no charset but UTF-8 when `utf8` is set: a
+    /// body of another type is not the route's result, even when it would read as one, as a page of HTML would as
+    /// text.
+    async fn read_as(self, expected: &str, utf8: bool) -> Result<Vec<u8>> {
+        if !content_type::is(self.response.headers(), expected, utf8) {
+            let charset = if utf8 { " in UTF-8" } else { "" };
+
+            return Err(no_answer(
+                self.route,
+                NOT_ITS_RESULT,
+                format!("its content type is not `{expected}`{charset}"),
+            ));
+        }
+
+        self.read().await
+    }
+
+    /// The whole body.
+    async fn read(self) -> Result<Vec<u8>> {
         let Self { response, route } = self;
         let body = response
             .bytes()
             .await
             .map_err(|error| no_answer(route, "got an answer whose body cannot be read", error))?;
 
-        serde_json::from_slice(&body)
-            .map_err(|error| no_answer(route, "got an answer that is not its result", error))
+        Ok(body.into())
     }
 
     /// Nothing: what a route with no result gives, whatever the body. A body is read and dropped, up to 64 KiB, so
@@ -444,6 +499,15 @@ impl Answer {
         Ok(())
     }
 }
+
+/// What the error of an answer that is not the route's result says.
+const NOT_ITS_RESULT: &str = "got an answer that is not its result";
+
+/// The content type of a text result.
+const TEXT: &str = "text/plain";
+
+/// The content type of a bytes result.
+const BYTES: &str = "application/octet-stream";
 
 /// The body of `response`, read up to [`BODY_LIMIT`] bytes: past them, the rest is not read.
 async fn read_up_to_limit(mut response: reqwest::Response) -> reqwest::Result<Vec<u8>> {
@@ -462,15 +526,7 @@ async fn read_up_to_limit(mut response: reqwest::Response) -> reqwest::Result<Ve
 
 /// Whether the content type of an answer is `application/problem+json`, whatever its parameters.
 fn is_problem(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(';').next())
-        .is_some_and(|essence| {
-            essence
-                .trim()
-                .eq_ignore_ascii_case("application/problem+json")
-        })
+    content_type::is(headers, "application/problem+json", false)
 }
 
 /// The RFC 9457 problem in a body: a JSON object, whose members of the wrong type are left out.

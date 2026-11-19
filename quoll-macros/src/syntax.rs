@@ -1040,9 +1040,85 @@ mod tests {
             pub group G { GET "/a" => f() -> Events<Note>; }
         });
         assert!(
-            events[0].contains("nothing (no `->`), `T` or `Created<T>`"),
+            events[0]
+                .contains("nothing (no `->`), `T`, `Created<T>`, `Accepted<T>`, `Text` or `Bytes`"),
             "{events:?}"
         );
+    }
+
+    #[test]
+    fn each_result_is_read_into_its_kind() {
+        let api = parse(quote! {
+            pub api Api = "/api";
+
+            pub group Files {
+                POST "/exports" => export() -> rest::Accepted<Job>;
+                GET "/readme" => readme() -> Text;
+                GET "/logo" => logo() -> rest::Bytes;
+                GET "/texts" => texts() -> Vec<Text>;
+            }
+        })
+        .unwrap();
+        let routes = &api.groups[0].routes;
+
+        assert!(
+            matches!(&routes[0].reply, Reply::Accepted { outer, .. } if text(outer) == "rest :: Accepted < Job >")
+        );
+        assert_eq!(routes[0].reply.value().map(text), Some("Job".into()));
+        assert_eq!(
+            routes[0].reply.served().map(text),
+            Some("rest :: Accepted < Job >".into())
+        );
+
+        assert!(matches!(&routes[1].reply, Reply::Text(ty) if text(ty) == "Text"));
+        assert_eq!(routes[1].reply.value().map(text), Some("Text".into()));
+
+        assert!(matches!(&routes[2].reply, Reply::Bytes(ty) if text(ty) == "rest :: Bytes"));
+        assert_eq!(
+            routes[2].reply.value().map(text),
+            Some("rest :: Bytes".into())
+        );
+
+        // Only the result's own type is read so: a `Vec` of text is JSON, which does not compile later.
+        assert!(matches!(&routes[3].reply, Reply::Json(_)));
+    }
+
+    #[test]
+    fn accepted_wraps_one_type() {
+        let bare = messages(quote! {
+            pub api Api = "/api";
+            pub group G { POST "/x" => f() -> Accepted; }
+        });
+        assert!(
+            bare[0].contains("`Accepted` wraps the type of the body: write `Accepted<Note>`"),
+            "{bare:?}"
+        );
+
+        let two = messages(quote! {
+            pub api Api = "/api";
+            pub group G { POST "/x" => f() -> Accepted<Job, Note>; }
+        });
+        assert!(
+            two[0].contains("`Accepted` wraps one type, the body"),
+            "{two:?}"
+        );
+    }
+
+    #[test]
+    fn a_head_route_returns_nothing_whatever_its_result() {
+        for result in [
+            quote! { String },
+            quote! { Created<Note> },
+            quote! { Accepted<Job> },
+            quote! { Text },
+            quote! { Bytes },
+        ] {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                pub group G { HEAD "/x" => f() -> #result; }
+            });
+            assert!(all[0].contains("a HEAD answer has no body"), "{all:?}");
+        }
     }
 
     fn schemes(api: &Api) -> Vec<Vec<Option<Scheme>>> {
