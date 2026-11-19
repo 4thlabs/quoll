@@ -10,7 +10,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::ext::IdentExt;
 
-use crate::model::{Api, ParamKind, Route};
+use crate::model::{Api, Route};
 use crate::syntax::Contract;
 
 /// Reads a REST contract and checks it.
@@ -73,10 +73,9 @@ pub(crate) fn route_docs(api: &Api, route: &Route) -> proc_macro2::TokenStream {
 /// The path with its query, as the docs show it: `/api/notes?page={page}`.
 fn shown_path(api: &Api, route: &Route) -> String {
     let mut path = route.full_path(&api.prefix);
-    let query = route.params.iter().filter_map(|param| match &param.kind {
-        ParamKind::Query { key } => Some(format!("{key}={{{}}}", param.name.unraw())),
-        ParamKind::Path | ParamKind::Body => None,
-    });
+    let query = route
+        .query_params()
+        .map(|(param, key)| format!("{key}={{{}}}", param.name.unraw()));
 
     for (index, pair) in query.enumerate() {
         path.push(if index == 0 { '?' } else { '&' });

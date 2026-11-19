@@ -434,11 +434,25 @@ struct Teapot {
     code: u32,
 }
 
+/// What the third party answers with an error, longer than what the client keeps of it.
+const LONG_BODY: usize = 1 << 20;
+
+/// What the third party answers on a route with no result: more than a first read gives, less than the client reads.
+const IGNORED_BODY: usize = 48 * 1024;
+
 /// Another API, written without the contract: it answers the client's routes in its own way.
 fn third_party(_url: &str) -> axum::Router {
-    use axum::routing::get;
+    use axum::routing::{delete, get};
 
     axum::Router::new()
+        .route(
+            "/api/notes/4",
+            get(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "x".repeat(LONG_BODY)) }),
+        )
+        .route(
+            "/api/notes/{id}",
+            delete(|| async { "removed ".repeat(IGNORED_BODY / 8) }),
+        )
         .route("/api/notes/1", get(|| async { "not json" }))
         .route(
             "/api/notes/2",
@@ -489,6 +503,46 @@ async fn an_error_of_another_shape_is_read_with_body_as() -> Result<()> {
         })
     );
     assert_eq!(error.body_as::<Note>(), None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_error_keeps_the_first_64_kib_of_its_body() -> Result<()> {
+    let api = Api::client(&serve_router(third_party).await)?;
+
+    let error = api.notes().get(4).await.expect_err("a long error");
+    let body = error.body().expect("an error answer has a body");
+
+    assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
+    assert_eq!(body.len(), 64 * 1024);
+    assert!(body.iter().all(|&byte| byte == b'x'));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_route_with_no_result_reads_a_body_so_that_its_connection_serves_again() -> Result<()> {
+    use axum::serve::ListenerExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port is free");
+    let url = format!(
+        "http://{}",
+        listener.local_addr().expect("the listener has an address")
+    );
+    let connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&connections);
+    let listener = listener.tap_io(move |_| {
+        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    tokio::spawn(async move { axum::serve(listener, third_party("")).await });
+    let api = Api::client(&url)?;
+
+    for id in 5..=7 {
+        api.notes().remove(id).await?;
+    }
+
+    assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
     Ok(())
 }
 

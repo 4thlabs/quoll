@@ -7,6 +7,9 @@ use http::StatusCode;
 
 use crate::rest::Problem;
 
+#[cfg(feature = "client")]
+mod client;
+
 /// A result whose error is [`Error`], what every route returns.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -157,6 +160,19 @@ impl Error {
         }
     }
 
+    /// A client given what it cannot use, a URL that is not one or a value it cannot write: the mistake of the code
+    /// that called it, which a handler returning it answers with a 500.
+    #[cfg_attr(
+        not(feature = "client"),
+        expect(dead_code, reason = "only the client builds it")
+    )]
+    pub(crate) fn misuse(
+        message: impl Into<String>,
+        source: Option<Box<dyn StdError + Send + Sync>>,
+    ) -> Self {
+        Self::failed(message, source, StatusCode::INTERNAL_SERVER_ERROR)
+    }
+
     /// The RFC 9457 problem another API answered, when its body is one: its content type is
     /// `application/problem+json` and it holds a JSON object.
     pub fn problem(&self) -> Option<&Problem> {
@@ -166,24 +182,13 @@ impl Error {
         }
     }
 
-    /// The body another API answered with an error status, as it came; `None` for an error that is not such an
-    /// answer.
+    /// The body another API answered with an error status, as it came: its first 64 KiB, as the client reads no
+    /// further. `None` for an error that is not such an answer.
     pub fn body(&self) -> Option<&[u8]> {
         match &*self.0 {
             Repr::Upstream { body, .. } => Some(body),
             Repr::Problem { .. } | Repr::Internal(_) | Repr::Failed { .. } => None,
         }
-    }
-}
-
-#[cfg(feature = "client")]
-impl Error {
-    /// The body another API answered with an error status, read as the JSON of `T`: the error shape of an API that
-    /// does not answer RFC 9457 problems, or the extension members of one that does.
-    ///
-    /// `None` for an error that is not such an answer, or a body that is not the JSON of `T`.
-    pub fn body_as<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
-        serde_json::from_slice(self.body()?).ok()
     }
 }
 

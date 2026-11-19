@@ -3,8 +3,9 @@
 //!
 //! The crate has two features, each off by default: `server` for the axum side and `client` for the reqwest side.
 //!
-//! The client turns on no TLS in reqwest: an application that calls `https` URLs turns on the TLS of its choice in
-//! its own dependency on reqwest, such as `reqwest = { version = "0.13", features = ["rustls"] }`.
+//! The feature `client` turns on two features of reqwest, so that `Api::client` calls an `https` URL as it is:
+//! `rustls`, TLS through rustls with the platform's roots, and `system-proxy`, the proxy settings of Windows and macOS,
+//! beside the `HTTP_PROXY` variables reqwest always reads. `Api::client_with` keeps the client the application built.
 
 pub mod rest;
 

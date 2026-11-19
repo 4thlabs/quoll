@@ -47,8 +47,7 @@ impl Route {
         self.path
     }
 
-    /// The names of the authentication schemes the route accepts, as the contract writes them; empty for a route
-    /// that takes none.
+    /// The schemes the contract gives the route.
     pub fn schemes(&self) -> &'static [&'static str] {
         self.schemes
     }
