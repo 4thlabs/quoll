@@ -1,0 +1,5 @@
+error: the group `Notes` is the name of the api, and both become types: each one has its own name
+ --> tests/compile_fail/group_named_like_api.rs:6:15
+  |
+6 |     pub group Notes {
+  |               ^^^^^

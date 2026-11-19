@@ -8,43 +8,43 @@
 use proc_macro2::Span;
 use syn::{Error, Ident, LitStr, Result, Type, Visibility, ext::IdentExt};
 
-use crate::path::{Segment, Template};
+use crate::path::{Segment, Template, literal_problem};
 
 /// The `///` comments of an item, one string per line, as rustc gives them (with their leading space).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct Docs(pub Vec<String>);
+pub(crate) struct Docs(pub(crate) Vec<String>);
 
 /// A whole api: its type, its prefix and its groups.
 #[derive(Debug)]
-pub struct Api {
+pub(crate) struct Api {
     /// The comments on the api.
-    pub docs: Docs,
+    pub(crate) docs: Docs,
     /// The visibility of the type the api becomes.
-    pub vis: Visibility,
+    pub(crate) vis: Visibility,
     /// The name of that type.
-    pub name: Ident,
+    pub(crate) name: Ident,
     /// What every path starts with: empty, or a `/` and segments with no `{name}`.
-    pub prefix: String,
+    pub(crate) prefix: String,
     /// The groups, in the order they are written.
-    pub groups: Vec<Group>,
+    pub(crate) groups: Vec<Group>,
 }
 
 /// Routes that go together: one service on the server, one trait on the client, one tag in OpenAPI.
 #[derive(Debug)]
-pub struct Group {
+pub(crate) struct Group {
     /// The comments on the group.
-    pub docs: Docs,
+    pub(crate) docs: Docs,
     /// The visibility of what the group becomes.
-    pub vis: Visibility,
+    pub(crate) vis: Visibility,
     /// The name of the group.
-    pub name: Ident,
+    pub(crate) name: Ident,
     /// The routes, in the order they are written.
-    pub routes: Vec<Route>,
+    pub(crate) routes: Vec<Route>,
 }
 
 /// An HTTP method of a route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Method {
+pub(crate) enum Method {
     /// `GET`.
     Get,
     /// `POST`.
@@ -63,7 +63,7 @@ pub enum Method {
 
 impl Method {
     /// Every method, in the order the spec lists them.
-    pub const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Get,
         Self::Post,
         Self::Put,
@@ -74,7 +74,7 @@ impl Method {
     ];
 
     /// The method written as HTTP does.
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Get => "GET",
             Self::Post => "POST",
@@ -87,38 +87,38 @@ impl Method {
     }
 
     /// The method named `text`, in capitals.
-    pub fn from_name(text: &str) -> Option<Self> {
+    pub(crate) fn from_name(text: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|method| method.as_str() == text)
     }
 
     /// Whether a request with this method carries a body.
-    pub const fn takes_body(self) -> bool {
+    pub(crate) const fn takes_body(self) -> bool {
         matches!(self, Self::Post | Self::Put | Self::Patch | Self::Delete)
     }
 }
 
 /// A route: a method and a path that become a function.
 #[derive(Debug)]
-pub struct Route {
+pub(crate) struct Route {
     /// The comments on the route.
-    pub docs: Docs,
+    pub(crate) docs: Docs,
     /// The HTTP method.
-    pub method: Method,
+    pub(crate) method: Method,
     /// The name of the function the route becomes.
-    pub name: Ident,
+    pub(crate) name: Ident,
     /// The segments of the path, below the api's prefix.
-    pub path: Vec<Segment>,
+    pub(crate) path: Vec<Segment>,
     /// The arguments, in the order they are written, each with the place it is read from.
-    pub params: Vec<Param>,
+    pub(crate) params: Vec<Param>,
     /// What the route answers.
-    pub reply: Reply,
+    pub(crate) reply: Reply,
     /// The span of the route's string, where a mistake about the route as a whole is pointed.
-    pub span: Span,
+    pub(crate) span: Span,
 }
 
 impl Route {
     /// The argument read from the body, if the route has one.
-    pub fn body(&self) -> Option<&Param> {
+    pub(crate) fn body(&self) -> Option<&Param> {
         self.params
             .iter()
             .find(|param| matches!(param.kind, ParamKind::Body))
@@ -127,18 +127,18 @@ impl Route {
 
 /// An argument of a route.
 #[derive(Debug)]
-pub struct Param {
+pub(crate) struct Param {
     /// The name of the argument.
-    pub name: Ident,
+    pub(crate) name: Ident,
     /// Its type, as written.
-    pub ty: Type,
+    pub(crate) ty: Type,
     /// Where its value is read from.
-    pub kind: ParamKind,
+    pub(crate) kind: ParamKind,
 }
 
 /// Where an argument comes from on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParamKind {
+pub(crate) enum ParamKind {
     /// A `{name}` of the path.
     Path,
     /// A `key={name}` of the query. An `Option` may be missing; a `Vec` repeats the key.
@@ -152,7 +152,7 @@ pub enum ParamKind {
 
 /// What a route answers, and so its status and its body.
 #[derive(Debug)]
-pub enum Reply {
+pub(crate) enum Reply {
     /// No `->`: 204, no body.
     None,
     /// `T`: 200, JSON.
@@ -163,19 +163,19 @@ pub enum Reply {
 
 /// A route as a spelling writes it, before its arguments are matched to its string.
 #[derive(Debug)]
-pub struct RouteDecl {
+pub(crate) struct RouteDecl {
     /// The comments on the route.
-    pub docs: Docs,
+    pub(crate) docs: Docs,
     /// The method.
-    pub method: Method,
+    pub(crate) method: Method,
     /// The string with the path and the query.
-    pub path: LitStr,
+    pub(crate) path: LitStr,
     /// The name of the function.
-    pub name: Ident,
+    pub(crate) name: Ident,
     /// The arguments, `(name, type)`, in the order they are written.
-    pub args: Vec<(Ident, Type)>,
+    pub(crate) args: Vec<(Ident, Type)>,
     /// The type after `->`, if there is one.
-    pub reply: Option<Type>,
+    pub(crate) reply: Option<Type>,
 }
 
 impl Route {
@@ -187,7 +187,7 @@ impl Route {
     /// An error spanned on the argument or the string at fault: an argument twice, a `{name}` with no argument, a path
     /// argument that is not read from text, an argument that is nowhere, a second body or a body the method does not
     /// take, a result or a body that is not supported.
-    pub fn resolve(decl: RouteDecl) -> Result<Self> {
+    pub(crate) fn resolve(decl: RouteDecl) -> Result<Self> {
         let RouteDecl {
             docs,
             method,
@@ -240,17 +240,13 @@ fn match_args(
 
     for name in template.path_names() {
         let Some(index) = find(name) else {
-            return Err(missing_argument(path, name, "{"));
+            return Err(missing_argument(path, name, &Place::Path));
         };
         check_read_from_text(&args[index].0, &args[index].1)?;
     }
     for item in &template.query {
         if find(&item.name).is_none() {
-            return Err(missing_argument(
-                path,
-                &item.name,
-                &format!("{}=", item.key),
-            ));
+            return Err(missing_argument(path, &item.name, &Place::Query(&item.key)));
         }
     }
 
@@ -276,11 +272,17 @@ fn match_args(
     Ok(params)
 }
 
-fn missing_argument(path: &LitStr, name: &str, before: &str) -> Error {
-    let place = if before == "{" {
-        format!("`{{{name}}}` of the path")
-    } else {
-        format!("`{before}{{{name}}}` of the query")
+/// Where a name is written in the route's string.
+enum Place<'a> {
+    Path,
+    /// The query, with the key the name is bound to.
+    Query(&'a str),
+}
+
+fn missing_argument(path: &LitStr, name: &str, place: &Place) -> Error {
+    let place = match place {
+        Place::Path => format!("`{{{name}}}` of the path"),
+        Place::Query(key) => format!("`{key}={{{name}}}` of the query"),
     };
 
     Error::new(
@@ -289,8 +291,19 @@ fn missing_argument(path: &LitStr, name: &str, before: &str) -> Error {
     )
 }
 
+/// The type itself, without the parentheses or the invisible group a `$t:ty` of a `macro_rules!` arrives in.
+fn peel(mut ty: &Type) -> &Type {
+    loop {
+        match ty {
+            Type::Paren(inner) => ty = &inner.elem,
+            Type::Group(inner) => ty = &inner.elem,
+            _ => return ty,
+        }
+    }
+}
+
 fn check_read_from_text(name: &Ident, ty: &Type) -> Result<()> {
-    let readable = match ty {
+    let readable = match peel(ty) {
         Type::Path(path) => {
             path.qself.is_none()
                 && !path
@@ -299,8 +312,6 @@ fn check_read_from_text(name: &Ident, ty: &Type) -> Result<()> {
                     .last()
                     .is_some_and(|last| last.ident == "Vec" || last.ident == "Option")
         }
-        Type::Paren(inner) => return check_read_from_text(name, &inner.elem),
-        Type::Group(inner) => return check_read_from_text(name, &inner.elem),
         _ => false,
     };
     if readable {
@@ -352,7 +363,7 @@ impl Reply {
             return Ok(Self::None);
         };
 
-        if matches!(&ty, Type::Tuple(tuple) if tuple.elems.is_empty()) {
+        if matches!(peel(&ty), Type::Tuple(tuple) if tuple.elems.is_empty()) {
             return Err(Error::new_spanned(
                 &ty,
                 "a route that returns nothing has no `->`: remove `-> ()`",
@@ -378,7 +389,7 @@ impl Reply {
 
 /// The last segment of a type's path, if it is one of `names`.
 fn reserved_name<'a>(ty: &Type, names: &[&'a str]) -> Option<&'a str> {
-    let Type::Path(path) = ty else {
+    let Type::Path(path) = peel(ty) else {
         return None;
     };
     let last = path.path.segments.last()?;
@@ -388,7 +399,7 @@ fn reserved_name<'a>(ty: &Type, names: &[&'a str]) -> Option<&'a str> {
 
 /// The `T` of a `Created<T>`; `None` when the type is something else, an error when `Created` has no single `T`.
 fn created_inner(ty: &Type) -> Result<Option<Type>> {
-    let Type::Path(path) = ty else {
+    let Type::Path(path) = peel(ty) else {
         return Ok(None);
     };
     let Some(last) = path
@@ -426,14 +437,18 @@ impl Api {
     ///
     /// An error spanned on the second of two groups with a name, of two routes with a name in a group, or of two routes
     /// with a method and a path in the api; or on the prefix, when it is not empty or `/` and segments.
-    pub fn new(
+    pub(crate) fn new(
         docs: Docs,
         vis: Visibility,
         name: Ident,
         prefix: &LitStr,
         groups: Vec<Group>,
     ) -> Result<Self> {
-        let prefix = check_prefix(prefix)?;
+        let mut errors = ErrorList::default();
+        let prefix = check_prefix(prefix).unwrap_or_else(|error| {
+            errors.push(error);
+            String::new()
+        });
         let api = Self {
             docs,
             vis,
@@ -441,22 +456,29 @@ impl Api {
             prefix,
             groups,
         };
-        api.check_unique()?;
+        api.check_unique(&mut errors);
 
-        Ok(api)
+        errors.finish().map(|()| api)
     }
 
-    fn check_unique(&self) -> Result<()> {
-        let mut errors = ErrorList::default();
-        let mut groups: Vec<&Ident> = Vec::new();
+    fn check_unique(&self, errors: &mut ErrorList) {
+        let mut groups: Vec<&Ident> = vec![&self.name];
         let mut seen: Vec<(Method, Vec<Segment>, &Ident, &Ident)> = Vec::new();
 
         for group in &self.groups {
-            if groups.contains(&&group.name) {
+            if let Some(first) = groups
+                .iter()
+                .position(|first| same_name(first, &group.name))
+            {
+                let what = if first == 0 {
+                    "is the name of the api, and both become types"
+                } else {
+                    "is already defined"
+                };
                 errors.push(Error::new(
                     group.name.span(),
                     format!(
-                        "the group `{}` is already defined: each group has its own name",
+                        "the group `{}` {what}: each one has its own name",
                         group.name
                     ),
                 ));
@@ -465,7 +487,7 @@ impl Api {
 
             let mut functions: Vec<&Ident> = Vec::new();
             for route in &group.routes {
-                if functions.contains(&&route.name) {
+                if functions.iter().any(|first| same_name(first, &route.name)) {
                     errors.push(Error::new(
                         route.name.span(),
                         format!(
@@ -492,9 +514,12 @@ impl Api {
                 seen.push((route.method, shape, &group.name, &route.name));
             }
         }
-
-        errors.finish()
     }
+}
+
+/// Whether two names are one, `r#get` and `get` being the same function.
+fn same_name(first: &Ident, second: &Ident) -> bool {
+    first.unraw() == second.unraw()
 }
 
 /// A path with its parameter names erased: `/notes/{id}` and `/notes/{note}` are one path to a router.
@@ -525,8 +550,11 @@ fn check_prefix(prefix: &LitStr) -> Result<String> {
     if value.ends_with('/') || value.contains("//") {
         return Err(wrong("has no empty segment (`//` or a final `/`)"));
     }
-    if value.contains(['{', '}', '?', '#']) || value.contains(char::is_whitespace) {
-        return Err(wrong("is plain text, with no `{name}`, `?` or `#`"));
+    if let Some(problem) = value[1..].split('/').find_map(literal_problem) {
+        return Err(Error::new(
+            prefix.span(),
+            format!("in the prefix, {problem} (a prefix is written \"/api\", or \"\" for none)"),
+        ));
     }
 
     Ok(value)
@@ -534,19 +562,26 @@ fn check_prefix(prefix: &LitStr) -> Result<String> {
 
 /// Errors gathered so that one run of the macro reports them all.
 #[derive(Debug, Default)]
-pub struct ErrorList(Option<Error>);
+pub(crate) struct ErrorList(Option<Error>);
 
 impl ErrorList {
     /// Adds an error to the ones already gathered.
-    pub fn push(&mut self, error: Error) {
+    pub(crate) fn push(&mut self, error: Error) {
         match &mut self.0 {
             Some(all) => all.combine(error),
             None => self.0 = Some(error),
         }
     }
 
+    /// Ends with the errors gathered and one more, the one that stopped the reading.
+    pub(crate) fn fail(mut self, last: Error) -> Error {
+        self.push(last);
+
+        self.0.expect("an error was just pushed")
+    }
+
     /// Ends with the errors gathered: `Ok` when there are none.
-    pub fn finish(self) -> Result<()> {
+    pub(crate) fn finish(self) -> Result<()> {
         self.0.map_or(Ok(()), Err)
     }
 }

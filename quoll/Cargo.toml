@@ -15,5 +15,8 @@ client = []
 [dependencies]
 quoll-macros = { version = "0.1.0", path = "../quoll-macros" }
 
+[dev-dependencies]
+trybuild = "1"
+
 [lints]
 workspace = true

@@ -44,7 +44,14 @@ fn expand(api: &Api) -> proc_macro2::TokenStream {
     let Api {
         docs, vis, name, ..
     } = api;
-    let docs = docs.0.iter().map(|line| quote! { #[doc = #line] });
+    // A crate that denies `missing_docs` must not fail on what the macro writes.
+    let fallback = vec![format!(" The REST contract `{name}`, from `rest::api!`.")];
+    let lines = if docs.0.is_empty() {
+        &fallback
+    } else {
+        &docs.0
+    };
+    let docs = lines.iter().map(|line| quote! { #[doc = #line] });
 
     quote! {
         #(#docs)*
@@ -55,5 +62,37 @@ fn expand(api: &Api) -> proc_macro2::TokenStream {
             ::core::default::Default,
         )]
         #vis struct #name;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expansion(contract: proc_macro2::TokenStream) -> String {
+        let Contract(api) = syn::parse2(contract).expect("the contract is valid");
+
+        expand(&api).to_string()
+    }
+
+    #[test]
+    fn the_api_type_has_the_contracts_docs() {
+        let tokens = expansion(quote! {
+            #[doc = " Notes."]
+            pub api Api = "/api";
+        });
+
+        assert!(tokens.contains("\" Notes.\""), "{tokens}");
+        assert!(!tokens.contains("from `rest::api!`"), "{tokens}");
+    }
+
+    #[test]
+    fn the_api_type_is_documented_even_when_the_contract_is_not() {
+        let tokens = expansion(quote! { pub api Api = "/api"; });
+
+        assert!(
+            tokens.contains("The REST contract `Api`, from `rest::api!`."),
+            "{tokens}"
+        );
     }
 }

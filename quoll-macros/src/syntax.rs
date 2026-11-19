@@ -23,62 +23,67 @@ use crate::model::{Api, Docs, ErrorList, Group, Method, Route, RouteDecl};
 
 /// What the macro is given: one api, with its groups.
 #[derive(Debug)]
-pub struct Contract(pub Api);
+pub(crate) struct Contract(pub(crate) Api);
 
 impl Parse for Contract {
     fn parse(input: ParseStream) -> Result<Self> {
-        let mut api: Option<ApiDecl> = None;
-        let mut groups = Vec::new();
         let mut errors = ErrorList::default();
 
-        while !input.is_empty() {
-            let docs = parse_docs(input)?;
-            let vis: Visibility = input.parse()?;
-            let keyword = input.call(Ident::parse_any).map_err(|error| {
-                Error::new(
-                    error.span(),
-                    "expected `api` or `group`: an item of a contract starts with one of them",
-                )
-            })?;
-
-            if keyword == "api" {
-                let decl = ApiDecl::parse(input, docs, vis, &keyword)?;
-                if let Some(first) = &api {
-                    errors.push(Error::new(
-                        keyword.span(),
-                        format!(
-                            "the contract has one api, and `{}` is already it: remove this one",
-                            first.name
-                        ),
-                    ));
-                } else {
-                    api = Some(decl);
-                }
-            } else if keyword == "group" {
-                match parse_group(input, docs, vis, &mut errors) {
-                    Ok(group) => groups.push(group),
-                    Err(error) => return Err(combined(errors, error)),
-                }
-            } else {
-                return Err(combined(errors, unexpected_item(&keyword)));
-            }
-        }
-
-        let Some(api) = api else {
-            return Err(combined(
-                errors,
-                Error::new(
-                    proc_macro2::Span::call_site(),
-                    "a contract names its api: write `pub api Api = \"/api\";`",
-                ),
-            ));
-        };
-        let built = Api::new(api.docs, api.vis, api.name, &api.prefix, groups);
-        match built {
+        match read_items(input, &mut errors) {
             Ok(api) => errors.finish().map(|()| Self(api)),
-            Err(error) => Err(combined(errors, error)),
+            Err(error) => Err(errors.fail(error)),
         }
     }
+}
+
+/// Reads every item. A mistake of syntax ends the reading, and the caller adds what was gathered before it; a mistake
+/// of meaning is gathered and the reading goes on.
+fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
+    let mut api: Option<ApiDecl> = None;
+    let mut groups = Vec::new();
+
+    while !input.is_empty() {
+        let docs = parse_docs(input)?;
+        let vis: Visibility = input.parse()?;
+        let keyword = input.call(Ident::parse_any).map_err(|error| {
+            Error::new(
+                error.span(),
+                "expected `api` or `group`: an item of a contract starts with one of them",
+            )
+        })?;
+
+        if keyword == "api" {
+            let decl = ApiDecl::parse(input, docs, vis, &keyword)?;
+            match &api {
+                Some(first) => errors.push(Error::new(
+                    keyword.span(),
+                    format!(
+                        "the contract has one api, and `{}` is already it: remove this one",
+                        first.name
+                    ),
+                )),
+                None => api = Some(decl),
+            }
+        } else if keyword == "group" {
+            groups.push(parse_group(input, docs, vis, errors)?);
+        } else {
+            return Err(unexpected_item(&keyword));
+        }
+    }
+
+    let Some(api) = api else {
+        return Err(Error::new(
+            proc_macro2::Span::call_site(),
+            "a contract names its api: write `pub api Api = \"/api\";`",
+        ));
+    };
+
+    Api::new(api.docs, api.vis, api.name, &api.prefix, groups).map_err(|error| fold(errors, error))
+}
+
+/// Moves the errors gathered so far into `error`, which they come before.
+fn fold(errors: &mut ErrorList, error: Error) -> Error {
+    std::mem::take(errors).fail(error)
 }
 
 fn unexpected_item(keyword: &Ident) -> Error {
@@ -89,14 +94,6 @@ fn unexpected_item(keyword: &Ident) -> Error {
     };
 
     Error::new(keyword.span(), format!("unexpected `{keyword}`: {hint}"))
-}
-
-/// All the errors gathered so far, then `last`.
-fn combined(errors: ErrorList, last: Error) -> Error {
-    let mut all = errors;
-    all.push(last);
-
-    all.finish().expect_err("an error was just pushed")
 }
 
 struct ApiDecl {
@@ -461,6 +458,110 @@ mod tests {
 
         let two = messages(quote! { pub api A = "/a"; pub api B = "/b"; });
         assert!(two[0].contains("has one api"), "{two:?}");
+    }
+
+    #[test]
+    fn a_type_through_macro_rules_is_classified_as_written() {
+        // `$t:ty` of a `macro_rules!` arrives in an invisible group, and a parenthesis may wrap a type too.
+        let group = |tokens: proc_macro2::TokenStream| {
+            proc_macro2::Group::new(proc_macro2::Delimiter::None, tokens)
+        };
+        let created = group(quote! { Created<Note> });
+        let api = parse(quote! {
+            pub api Api = "/api";
+            pub group G { POST "/x" => f(note: NewNote) -> #created; }
+        })
+        .unwrap();
+        assert!(matches!(&api.groups[0].routes[0].reply, Reply::Created(ty) if text(ty) == "Note"));
+
+        let events = group(quote! { Events<Note> });
+        let all = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/x" => f() -> #events; }
+        });
+        assert!(all[0].contains("`Events` is not supported"), "{all:?}");
+
+        let form = group(quote! { Form<Login> });
+        let all = messages(quote! {
+            pub api Api = "/api";
+            pub group G { POST "/x" => f(login: #form); }
+        });
+        assert!(all[0].contains("`Form` is not supported"), "{all:?}");
+
+        let unit = group(quote! { () });
+        let all = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/x" => f() -> #unit; }
+        });
+        assert!(all[0].contains("no `->`"), "{all:?}");
+
+        let vec = group(quote! { Vec<i64> });
+        let all = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/x/{ids}" => f(ids: #vec); }
+        });
+        assert!(all[0].contains("read from text"), "{all:?}");
+    }
+
+    #[test]
+    fn errors_gathered_are_kept_when_the_reading_stops() {
+        let all = messages(quote! {
+            pub api Api = "/api";
+            pub group G {
+                GET "/a/{x}" => a();
+            }
+            #[auth(Bearer)]
+            pub group H { }
+        });
+        assert_eq!(all.len(), 2, "{all:?}");
+        assert!(all[0].contains("no argument named `x`"), "{all:?}");
+        assert!(all[1].contains("only `///` comments"), "{all:?}");
+
+        let missing = messages(quote! {
+            pub group G {
+                GET "/a/{x}" => a();
+            }
+        });
+        assert_eq!(missing.len(), 2, "{missing:?}");
+        assert!(missing[1].contains("names its api"), "{missing:?}");
+    }
+
+    #[test]
+    fn a_bad_prefix_does_not_hide_the_duplicates() {
+        let all = messages(quote! {
+            pub api Api = "api";
+            pub group G { GET "/a" => f(); GET "/b" => f(); }
+        });
+
+        assert_eq!(all.len(), 2, "{all:?}");
+        assert!(all[0].contains("the prefix"), "{all:?}");
+        assert!(all[1].contains("`f` already"), "{all:?}");
+    }
+
+    #[test]
+    fn names_are_compared_without_their_raw_marker() {
+        let functions = messages(quote! {
+            pub api Api = "/api";
+            pub group G { GET "/a" => get(); GET "/b" => r#get(); }
+        });
+        assert!(functions[0].contains("`r#get` already"), "{functions:?}");
+
+        let groups = messages(quote! {
+            pub api Api = "/api";
+            pub group Notes { }
+            pub group r#Notes { }
+        });
+        assert!(groups[0].contains("already defined"), "{groups:?}");
+    }
+
+    #[test]
+    fn a_group_cannot_take_the_name_of_the_api() {
+        let all = messages(quote! {
+            pub api Notes = "/api";
+            pub group Notes { }
+        });
+
+        assert!(all[0].contains("is the name of the api"), "{all:?}");
     }
 
     #[test]

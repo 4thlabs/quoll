@@ -1,5 +1,0 @@
-error: `my notes` has a space or a `#`: a literal segment is plain text, as in "/notes"
- --> tests/compile_fail/path_literal_with_space.rs:7:13
-  |
-7 |         GET "/my notes" => list();
-  |             ^^^^^^^^^^^
