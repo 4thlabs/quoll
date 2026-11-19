@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="Quoll">
+  <title>Quoll</title>
+  <!-- A "q" whose bowl carries the spots of the quoll, the spotted marsupial Quoll is named after. -->
+  <rect x="8" y="8" width="144" height="144" rx="34" fill="#8A5A35"/>
+  <circle cx="72" cy="74" r="36" fill="none" stroke="#F4EBDD" stroke-width="16"/>
+  <path d="M108 74 V 132" stroke="#F4EBDD" stroke-width="16" stroke-linecap="round"/>
+  <g fill="#F4EBDD">
+    <circle cx="72" cy="74" r="7"/>
+    <circle cx="56" cy="62" r="3.6"/>
+    <circle cx="86" cy="88" r="3.6"/>
+    <circle cx="58" cy="88" r="3"/>
+    <circle cx="88" cy="60" r="3"/>
+  </g>
+</svg>
