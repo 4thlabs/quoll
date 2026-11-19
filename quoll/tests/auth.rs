@@ -19,6 +19,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod support {
+    pub(crate) mod log;
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Note {
     id: i64,
@@ -377,14 +381,7 @@ async fn a_route_with_auth_none_takes_no_token() -> Result<()> {
 
 #[tokio::test]
 async fn nothing_answered_or_logged_shows_the_token() {
-    let log = Log::default();
-    let writer = log.clone();
-    let _logging = tracing_subscriber::util::SubscriberInitExt::set_default(
-        tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .finish(),
-    );
+    let (log, _capture) = support::log::capture(false);
     let served = serve().await;
     let http = reqwest::Client::new();
     let get = |value: &str| {
@@ -411,31 +408,6 @@ async fn nothing_answered_or_logged_shows_the_token() {
             !shown.contains("secret") && !shown.contains("store-down-token"),
             "{shown}"
         );
-    }
-}
-
-/// A log kept in memory.
-#[derive(Clone, Default)]
-struct Log(Arc<Mutex<Vec<u8>>>);
-
-impl Log {
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().expect("no writer panics").clone())
-            .expect("the log is text")
-    }
-}
-
-impl std::io::Write for Log {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .expect("no writer panics")
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 

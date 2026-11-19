@@ -723,18 +723,33 @@ impl IntoResponse for Error {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Logged;
 
-/// What `f` logs, and what it gives.
+/// What `f` logs on this thread, and what it gives.
+///
+/// One subscriber serves every unit test, set once as the global default, and writes each event into the log of the
+/// thread it happens on, if that thread captures one. A subscriber per call, set as the thread's default, would race:
+/// tracing caches whether a callsite is enabled across every subscriber, and a test running beside another, with none,
+/// may find it cached as disabled and log nothing.
 #[cfg(test)]
 fn logged_by<R>(f: impl FnOnce() -> R) -> (String, R) {
-    #[derive(Clone, Default)]
-    struct Log(Arc<std::sync::Mutex<Vec<u8>>>);
+    use std::cell::RefCell;
+    use std::sync::Once;
 
-    impl std::io::Write for Log {
+    thread_local! {
+        /// What this thread logs, while it captures it.
+        static CAPTURED: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+    }
+
+    /// Writes an event into the log its thread captures, or nowhere.
+    struct ThreadLog;
+
+    impl std::io::Write for ThreadLog {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .expect("no writer panics")
-                .extend_from_slice(bytes);
+            CAPTURED.with_borrow_mut(|captured| {
+                if let Some(log) = captured {
+                    log.extend_from_slice(bytes);
+                }
+            });
+
             Ok(bytes.len())
         }
 
@@ -743,18 +758,26 @@ fn logged_by<R>(f: impl FnOnce() -> R) -> (String, R) {
         }
     }
 
-    let log = Log::default();
-    let writer = log.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(move || writer.clone())
-        .with_ansi(false)
-        .finish();
+    static INSTALLED: Once = Once::new();
 
-    let given = tracing::subscriber::with_default(subscriber, f);
-    let text = String::from_utf8(log.0.lock().expect("no writer panics").clone())
-        .expect("the log is text");
+    INSTALLED.call_once(|| {
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(|| ThreadLog)
+            .with_ansi(false)
+            .finish();
 
-    (text, given)
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("no other subscriber is set in the unit tests");
+    });
+
+    CAPTURED.with_borrow_mut(|captured| *captured = Some(Vec::new()));
+
+    let given = f();
+    let log = CAPTURED
+        .with_borrow_mut(Option::take)
+        .expect("this thread captures its log");
+
+    (String::from_utf8(log).expect("the log is text"), given)
 }
 
 #[cfg(test)]

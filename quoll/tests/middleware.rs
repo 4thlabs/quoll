@@ -21,6 +21,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
+mod support {
+    pub(crate) mod log;
+}
+
 /// What the server saw of a request's headers.
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Seen {
@@ -566,42 +570,9 @@ async fn timeout_bounds_the_wait_for_a_streams_head_which_retry_tries_again() {
     assert_eq!(accepted.load(Ordering::SeqCst), 3);
 }
 
-/// A log kept in memory.
-#[derive(Clone, Default)]
-struct Log(Arc<Mutex<Vec<u8>>>);
-
-impl Log {
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().expect("no writer panics").clone())
-            .expect("the log is text")
-    }
-}
-
-impl std::io::Write for Log {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .expect("no writer panics")
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 #[tokio::test]
 async fn trace_opens_a_span_named_by_the_operation() -> Result<()> {
-    let log = Log::default();
-    let writer = log.clone();
-    let _logging = tracing_subscriber::util::SubscriberInitExt::set_default(
-        tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-            .finish(),
-    );
+    let (log, _capture) = support::log::capture(true);
     let url = serve(&App::default()).await;
     let http = ClientBuilder::new(reqwest::Client::new())
         .with(rest::client::trace())
@@ -637,15 +608,7 @@ async fn trace_opens_a_span_named_by_the_operation() -> Result<()> {
 
 #[tokio::test]
 async fn trace_shows_no_query_of_a_call_that_got_no_answer() {
-    let log = Log::default();
-    let writer = log.clone();
-    let _logging = tracing_subscriber::util::SubscriberInitExt::set_default(
-        tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-            .finish(),
-    );
+    let (log, _capture) = support::log::capture(true);
     // A port nothing listens on: each connection is refused.
     let url = {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

@@ -2,8 +2,7 @@
 
 #![cfg(all(feature = "server", feature = "client"))]
 
-use std::cell::RefCell;
-use std::sync::{Arc, Mutex, Once};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
@@ -15,6 +14,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
+
+use crate::support::log::Log;
+
+mod support {
+    pub(crate) mod log;
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Note {
@@ -322,88 +327,13 @@ async fn a_route_puts_itself_in_its_answer() {
     assert_eq!(missing.headers()["x-operation"], "none");
 }
 
-/// What the tracing of a test logs: the events of its thread, which its server runs on.
-///
-/// One subscriber serves the whole binary, set once as the global default, and writes each event into the log of the
-/// thread it happens on, if that thread captures one. A subscriber per test, set as the thread's default, would race:
-/// tracing caches whether a callsite is enabled across every subscriber, and a test running beside another, with none,
-/// may have it cached as disabled.
-#[derive(Clone, Default)]
-struct Log(Arc<Mutex<Vec<u8>>>);
-
-thread_local! {
-    /// The log of the test running on this thread, while it captures one.
-    static CAPTURED: RefCell<Option<Log>> = const { RefCell::new(None) };
-}
-
-/// Captures the log of its thread until it is dropped.
-struct Capture;
-
-impl Drop for Capture {
-    fn drop(&mut self) {
-        CAPTURED.with_borrow_mut(|captured| *captured = None);
-    }
-}
-
-impl Log {
-    /// Captures what is logged on this thread into a new log, until the guard is dropped.
-    fn capture() -> (Self, Capture) {
-        static INSTALLED: Once = Once::new();
-
-        INSTALLED.call_once(|| {
-            let subscriber = tracing_subscriber::fmt()
-                .with_writer(|| ThreadLog)
-                .with_ansi(false)
-                .finish();
-
-            tracing::subscriber::set_global_default(subscriber)
-                .expect("no other subscriber is set in this binary");
-        });
-
-        let log = Self::default();
-
-        CAPTURED.with_borrow_mut(|captured| *captured = Some(log.clone()));
-        (log, Capture)
-    }
-
-    fn lines(&self) -> Vec<String> {
-        let bytes = self.0.lock().expect("no writer panics").clone();
-
-        String::from_utf8(bytes)
-            .expect("the log is text")
-            .lines()
-            .map(str::to_owned)
-            .collect()
-    }
-
-    /// The lines of the crate's own events.
-    fn quoll_lines(&self) -> Vec<String> {
-        self.lines()
-            .into_iter()
-            .filter(|line| line.contains("quoll::"))
-            .collect()
-    }
-}
-
-/// Writes an event into the log its thread captures, or nowhere.
-struct ThreadLog;
-
-impl std::io::Write for ThreadLog {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        CAPTURED.with_borrow(|captured| {
-            if let Some(Log(log)) = captured {
-                log.lock()
-                    .expect("no writer panics")
-                    .extend_from_slice(bytes);
-            }
-        });
-
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
+/// The lines of the crate's own events in `log`.
+fn quoll_lines(log: &Log) -> Vec<String> {
+    log.text()
+        .lines()
+        .filter(|line| line.contains("quoll::"))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// `GET path` with the request id `id`: its status.
@@ -419,7 +349,7 @@ async fn get_with_id(url: &str, path: &str, id: &str) -> StatusCode {
 
 #[tokio::test]
 async fn a_request_is_traced_with_its_operation_and_its_id() {
-    let (log, _guard) = Log::capture();
+    let (log, _capture) = support::log::capture(false);
     let (url, _) = serve(layered(&App::default())).await;
 
     assert_eq!(
@@ -427,7 +357,7 @@ async fn a_request_is_traced_with_its_operation_and_its_id() {
         StatusCode::OK
     );
 
-    let lines = log.quoll_lines();
+    let lines = quoll_lines(&log);
     let [answered] = lines.as_slice() else {
         panic!("one line per answer: {lines:#?}");
     };
@@ -447,7 +377,7 @@ async fn a_request_is_traced_with_its_operation_and_its_id() {
 
 #[tokio::test]
 async fn a_request_gets_its_id_in_its_span_whichever_layer_runs_first() {
-    let (log, _guard) = Log::capture();
+    let (log, _capture) = support::log::capture(false);
     let router = router(&App::default())
         .layer(rest::server::request_id())
         .layer(rest::server::trace());
@@ -458,7 +388,7 @@ async fn a_request_gets_its_id_in_its_span_whichever_layer_runs_first() {
         StatusCode::OK
     );
 
-    let lines = log.quoll_lines();
+    let lines = quoll_lines(&log);
 
     assert_eq!(lines.len(), 1, "{lines:#?}");
     assert!(lines[0].contains("request_id=trace-2"), "{lines:#?}");
@@ -466,7 +396,7 @@ async fn a_request_gets_its_id_in_its_span_whichever_layer_runs_first() {
 
 #[tokio::test]
 async fn an_internal_error_is_logged_once_as_an_error() {
-    let (log, _guard) = Log::capture();
+    let (log, _capture) = support::log::capture(false);
     let (url, _) = serve(layered(&App::default())).await;
 
     assert_eq!(
@@ -474,7 +404,7 @@ async fn an_internal_error_is_logged_once_as_an_error() {
         StatusCode::INTERNAL_SERVER_ERROR
     );
 
-    let lines = log.quoll_lines();
+    let lines = quoll_lines(&log);
     let [cause, answered] = lines.as_slice() else {
         panic!("the cause, then the answer: {lines:#?}");
     };
@@ -489,7 +419,7 @@ async fn an_internal_error_is_logged_once_as_an_error() {
 
 #[tokio::test]
 async fn a_server_error_a_handler_gives_is_logged_as_an_error() {
-    let (log, _guard) = Log::capture();
+    let (log, _capture) = support::log::capture(false);
     let (url, _) = serve(layered(&App::default())).await;
 
     assert_eq!(
@@ -497,7 +427,7 @@ async fn a_server_error_a_handler_gives_is_logged_as_an_error() {
         StatusCode::SERVICE_UNAVAILABLE
     );
 
-    let lines = log.quoll_lines();
+    let lines = quoll_lines(&log);
     let [answered] = lines.as_slice() else {
         panic!("one line per answer: {lines:#?}");
     };
@@ -508,7 +438,7 @@ async fn a_server_error_a_handler_gives_is_logged_as_an_error() {
 
 #[tokio::test]
 async fn a_client_error_is_logged_as_information() {
-    let (log, _guard) = Log::capture();
+    let (log, _capture) = support::log::capture(false);
     let (url, _) = serve(layered(&App::default())).await;
 
     assert_eq!(
@@ -516,7 +446,7 @@ async fn a_client_error_is_logged_as_information() {
         StatusCode::BAD_REQUEST
     );
 
-    let lines = log.quoll_lines();
+    let lines = quoll_lines(&log);
 
     assert_eq!(lines.len(), 1, "{lines:#?}");
     assert!(lines[0].contains(" INFO "), "{lines:#?}");
@@ -525,7 +455,7 @@ async fn a_client_error_is_logged_as_information() {
 
 #[tokio::test]
 async fn a_route_past_its_deadline_answers_503_logged_once() {
-    let (log, _guard) = Log::capture();
+    let (log, _capture) = support::log::capture(false);
     let (url, api) = serve(layered(&App::default())).await;
 
     let response = reqwest::Client::new()
@@ -542,7 +472,7 @@ async fn a_route_past_its_deadline_answers_503_logged_once() {
     assert_eq!(detail, "the server took longer than 100ms to answer");
     assert_eq!(id, "trace-6");
 
-    let lines = log.quoll_lines();
+    let lines = quoll_lines(&log);
     let [cause, answered] = lines.as_slice() else {
         panic!("the deadline, then the answer: {lines:#?}");
     };
