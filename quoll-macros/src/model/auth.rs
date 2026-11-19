@@ -5,7 +5,7 @@ use proc_macro2::Span;
 use quote::ToTokens;
 use syn::{Error, Ident, LitStr, Path, Result, Visibility, ext::IdentExt};
 
-use super::{Api, Docs, ErrorList, Group, Route, check_header_name, reach, shown_vis};
+use super::{Api, Docs, ErrorList, Group, Route, check_header_name, is_token, reach, shown_vis};
 
 /// The most schemes an alternative takes: `#[auth(A | B | C | D)]`, which the crate implements for tuples of up to
 /// four.
@@ -69,6 +69,19 @@ impl Scheme {
             .replace(":: ", "::")
             .replace(" < ", "<")
             .replace(" >", ">")
+    }
+
+    /// Whether two schemes are one: the crate's `Bearer` or `Basic`, a declared scheme by its name, or a type of the
+    /// application's by its path as written.
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        match (&self.kind, &other.kind) {
+            (SchemeKind::Bearer, SchemeKind::Bearer) | (SchemeKind::Basic, SchemeKind::Basic) => {
+                true
+            }
+            (SchemeKind::Declared(_), SchemeKind::Declared(_))
+            | (SchemeKind::Foreign, SchemeKind::Foreign) => self.word() == other.word(),
+            _ => false,
+        }
     }
 
     /// The span of the scheme in its `#[auth(...)]`.
@@ -263,13 +276,6 @@ impl DeclaredScheme {
     }
 }
 
-/// The `token` of RFC 9110: letters, digits and these signs.
-fn is_token(text: &str) -> bool {
-    let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
-
-    !text.is_empty() && text.chars().all(tchar)
-}
-
 /// The header of a header scheme: a name, which neither quoll, HTTP nor another scheme reads.
 fn check_scheme_header(value: &LitStr) -> Result<()> {
     check_header_name(value)?;
@@ -310,12 +316,45 @@ pub(crate) fn resolve(api: &mut Api, errors: &mut ErrorList) {
             };
 
             for scheme in &mut auth.schemes {
-                let Some(ident) = scheme.path.get_ident() else {
+                if let Some(ident) = scheme.path.get_ident() {
+                    if let Some((_, place)) =
+                        declared.iter().find(|(name, _)| ident.unraw() == name)
+                    {
+                        scheme.kind = SchemeKind::Declared(place.clone());
+                    }
+                    continue;
+                }
+
+                // A path that ends with a declared scheme's name, or goes through `rest` to the crate's, would be
+                // a second name for one scheme: `Key | self::Key` would take it twice. An application's own type
+                // of the name of a declared scheme takes another name.
+                let segments: Vec<String> = scheme
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.unraw().to_string())
+                    .collect();
+                let [.., before, last] = segments.as_slice() else {
                     continue;
                 };
-                if let Some((_, place)) = declared.iter().find(|(name, _)| ident.unraw() == name) {
-                    scheme.kind = SchemeKind::Declared(place.clone());
+                let crate_given = before == "rest" && (last == "Bearer" || last == "Basic");
+
+                if !crate_given && !declared.iter().any(|(name, _)| name == last) {
+                    continue;
                 }
+
+                let other = if crate_given {
+                    ""
+                } else {
+                    ", or give a type of your own another name than the contract's scheme"
+                };
+                errors.push(Error::new_spanned(
+                    &scheme.path,
+                    format!(
+                        "`{}` names the scheme `{last}`, which `#[auth(...)]` takes by its name alone: write `{last}`{other}",
+                        scheme.word()
+                    ),
+                ));
             }
         }
     }
@@ -333,7 +372,7 @@ pub(crate) fn resolve(api: &mut Api, errors: &mut ErrorList) {
 
 /// A declared scheme reaches as far as each group that takes it, whose server trait names it.
 fn check_visibility(api: &Api, group: &Group, errors: &mut ErrorList) {
-    let mut reported: Vec<String> = Vec::new();
+    let mut reported: Vec<&Scheme> = Vec::new();
 
     for scheme in group.routes.iter().flat_map(|route| route.schemes()) {
         let Some(declared) = api.schemes.iter().find(|declared| {
@@ -345,11 +384,13 @@ fn check_visibility(api: &Api, group: &Group, errors: &mut ErrorList) {
             continue;
         };
 
-        if reach(&declared.vis) >= reach(&group.vis) || reported.contains(&scheme.word()) {
+        if reach(&declared.vis) >= reach(&group.vis)
+            || reported.iter().any(|seen| seen.same(scheme))
+        {
             continue;
         }
 
-        reported.push(scheme.word());
+        reported.push(scheme);
         errors.push(Error::new(
             declared.name.span(),
             format!(
@@ -442,13 +483,17 @@ pub(crate) struct Bound<'a> {
     pub(crate) scoped: bool,
 }
 
+/// The bounds of a group, one per scheme its routes take, each once, in the order they first appear.
+#[derive(Debug)]
+pub(crate) struct Bounds<'a>(pub(crate) Vec<Bound<'a>>);
+
 impl Group {
-    /// The bounds of the group's server trait: one per scheme its routes take, each once, in the order they first
-    /// appear. The schemes of an alternative give the caller of the first of them that appears in the group.
-    pub(crate) fn bounds(&self) -> Vec<Bound<'_>> {
+    /// The bounds of the group's server trait. The schemes of an alternative give the caller of the first of them that
+    /// appears in the group.
+    pub(crate) fn bounds(&self) -> Bounds<'_> {
         let mut schemes: Vec<&Scheme> = Vec::new();
         for scheme in self.routes.iter().flat_map(Route::schemes) {
-            if !schemes.iter().any(|seen| seen.word() == scheme.word()) {
+            if !schemes.iter().any(|seen| seen.same(scheme)) {
                 schemes.push(scheme);
             }
         }
@@ -456,7 +501,7 @@ impl Group {
         let index = |scheme: &Scheme| {
             schemes
                 .iter()
-                .position(|seen| seen.word() == scheme.word())
+                .position(|seen| seen.same(scheme))
                 .expect("each scheme of a route is among the group's")
         };
 
@@ -468,8 +513,13 @@ impl Group {
             }
             at
         };
+        let auths: Vec<&RouteAuth> = self
+            .routes
+            .iter()
+            .filter_map(|route| route.auth.as_ref())
+            .collect();
 
-        for auth in self.routes.iter().filter_map(|route| route.auth.as_ref()) {
+        for auth in &auths {
             let mut members: Vec<usize> = auth
                 .schemes
                 .iter()
@@ -486,14 +536,11 @@ impl Group {
         }
 
         let mut scoped = vec![false; schemes.len()];
-        for auth in self.routes.iter().filter_map(|route| route.auth.as_ref()) {
-            if !auth.scopes.is_empty() {
-                let first = find(&root, index(&auth.schemes[0]));
-                scoped[first] = true;
-            }
+        for auth in auths.iter().filter(|auth| !auth.scopes.is_empty()) {
+            scoped[find(&root, index(&auth.schemes[0]))] = true;
         }
 
-        schemes
+        let bounds = schemes
             .iter()
             .enumerate()
             .map(|(at, scheme)| {
@@ -505,17 +552,18 @@ impl Group {
                     scoped: first == at && scoped[at],
                 }
             })
-            .collect()
-    }
+            .collect();
 
+        Bounds(bounds)
+    }
+}
+
+impl<'a> Bounds<'a> {
     /// The scheme whose caller the handlers of `route` receive: the first of the group's schemes in the alternative of
     /// the route's first scheme.
-    pub(crate) fn caller_scheme<'a>(&'a self, route: &'a Route) -> Option<&'a Scheme> {
+    pub(crate) fn caller_of(&self, route: &Route) -> Option<&'a Scheme> {
         let first = route.schemes().next()?;
-        let bounds = self.bounds();
-        let bound = bounds
-            .iter()
-            .find(|bound| bound.scheme.word() == first.word())?;
+        let bound = self.0.iter().find(|bound| bound.scheme.same(first))?;
 
         Some(bound.same_as.unwrap_or(bound.scheme))
     }

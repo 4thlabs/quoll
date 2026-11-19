@@ -4,10 +4,10 @@
 //! /// Notes, kept per user.
 //! pub api Api = "/api";
 //!
-//! /// The signed-in user's notes.
 //! /// The key of an operator's scripts.
 //! pub scheme Key = header "X-Api-Key";
 //!
+//! /// The signed-in user's notes.
 //! #[auth(Bearer)]
 //! pub group Notes {
 //!     /// One note.
@@ -1835,6 +1835,51 @@ mod tests {
     }
 
     #[test]
+    fn a_scheme_read_by_its_name_is_not_named_by_a_path() {
+        for (attr, message) in [
+            (
+                quote! { #[auth(Key | self::Key)] },
+                "`self::Key` names the scheme `Key`",
+            ),
+            (
+                quote! { #[auth(crate::Key)] },
+                "`crate::Key` names the scheme `Key`",
+            ),
+            (
+                quote! { #[auth(rest::Bearer)] },
+                "`rest::Bearer` names the scheme `Bearer`",
+            ),
+            (
+                quote! { #[auth(::quoll::rest::Basic)] },
+                "names the scheme `Basic`",
+            ),
+        ] {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                pub scheme Key = header "X-Api-Key";
+                pub group G {
+                    #attr
+                    GET "/a" => a();
+                }
+            });
+
+            assert!(all[0].contains(message), "{attr}: {all:?}");
+        }
+
+        let other = parse(quote! {
+            pub api Api = "/api";
+            pub scheme Key = header "X-Api-Key";
+            pub group G {
+                #[auth(Key | crate::auth::Hmac)]
+                GET "/a" => a();
+                #[auth(crate::auth::Bearer)]
+                GET "/b" => b();
+            }
+        });
+        assert!(other.is_ok(), "{other:?}");
+    }
+
+    #[test]
     fn a_group_ties_the_callers_of_an_alternative_to_its_first_scheme() {
         let api = parse(quote! {
             pub api Api = "/api";
@@ -1850,8 +1895,9 @@ mod tests {
         })
         .unwrap();
         let group = &api.groups[0];
-        let bounds: Vec<(String, Option<String>, bool)> = group
-            .bounds()
+        let bounds = group.bounds();
+        let shown: Vec<(String, Option<String>, bool)> = bounds
+            .0
             .iter()
             .map(|bound| {
                 (
@@ -1863,7 +1909,7 @@ mod tests {
             .collect();
 
         assert_eq!(
-            bounds,
+            shown,
             [
                 ("Key".into(), None, true),
                 ("Bearer".into(), Some("Key".into()), false),
@@ -1873,7 +1919,7 @@ mod tests {
         let callers: Vec<Option<String>> = group
             .routes
             .iter()
-            .map(|route| group.caller_scheme(route).map(Scheme::word))
+            .map(|route| bounds.caller_of(route).map(Scheme::word))
             .collect();
         assert_eq!(
             callers,

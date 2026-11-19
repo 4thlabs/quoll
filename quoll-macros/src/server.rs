@@ -8,7 +8,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Method, Param, Route, is_vec};
+use crate::model::{Api, Bounds, Group, Method, Param, Route, is_vec};
 use crate::scheme::{scheme_type, schemes_type};
 use crate::{doc_attrs, route_docs};
 
@@ -44,8 +44,9 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     lines.extend([String::new(), usage]);
 
     let bounds = group.bounds();
-    if !bounds.is_empty() {
+    if !bounds.0.is_empty() {
         let names: Vec<String> = bounds
+            .0
             .iter()
             .map(|bound| format!("`Authenticate<{}>`", bound.scheme.word()))
             .collect();
@@ -56,8 +57,8 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     }
 
     let docs = doc_attrs(&lines);
-    let methods = group.routes.iter().map(|route| method(api, group, route));
-    let authenticate = bounds.iter().map(|bound| {
+    let methods = group.routes.iter().map(|route| method(api, &bounds, route));
+    let authenticate = bounds.0.iter().map(|bound| {
         let scheme = scheme_type(bound.scheme);
         let span = bound.scheme.span();
         let caller = match (bound.same_as, bound.scoped) {
@@ -82,7 +83,7 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     }
 }
 
-fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
+fn method(api: &Api, bounds: &Bounds, route: &Route) -> TokenStream {
     let docs = route_docs(api, route);
     let name = &route.name;
     let args = route
@@ -97,7 +98,7 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
             quote! { #ty }
         }
     };
-    let caller = group.caller_scheme(route).map(|scheme| {
+    let caller = bounds.caller_of(route).map(|scheme| {
         let scheme = scheme_type(scheme);
         // Its own hygiene, so that a route's argument may be named `caller` too.
         let caller = Ident::new("caller", Span::mixed_site());

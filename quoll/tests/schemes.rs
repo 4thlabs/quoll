@@ -408,12 +408,13 @@ async fn a_header_scheme_reads_its_header() -> Result<()> {
     Ok(())
 }
 
-/// A middleware that adds the cookie `theme=dark` to each request, before the one that sends a session.
+/// A middleware that adds the cookies `theme=dark` and `lang=fr` to each request, in two `Cookie` headers, before the
+/// one that sends a session.
 fn theme() -> impl Middleware {
     middleware(|mut request, extensions, next| {
-        request
-            .headers_mut()
-            .insert(COOKIE, http::HeaderValue::from_static("theme=dark"));
+        let headers = request.headers_mut();
+        headers.append(COOKIE, http::HeaderValue::from_static("theme=dark"));
+        headers.append(COOKIE, http::HeaderValue::from_static("lang=fr"));
 
         Box::pin(next.run(request, extensions))
     })
@@ -446,8 +447,8 @@ async fn a_cookie_scheme_reads_its_cookie_beside_the_others() -> Result<()> {
     assert_eq!(
         cookies,
         [
-            Some("theme=dark; session=s-ana".into()),
-            Some("theme=dark; session=s-ana".into())
+            Some("theme=dark; lang=fr; session=s-ana".into()),
+            Some("theme=dark; lang=fr; session=s-ana".into())
         ]
     );
 
@@ -871,6 +872,7 @@ fn with(middleware: impl Middleware) -> ClientWithMiddleware {
 struct Request {
     schemes: Option<&'static [&'static str]>,
     takes: [bool; 4],
+    /// Its one `Cookie` header: none when it has none, or more than one.
     cookie: Option<String>,
     query: Option<String>,
 }
@@ -913,10 +915,97 @@ fn recorder(seen: Seen) -> impl Middleware {
                 cookie: request
                     .headers()
                     .get(COOKIE)
+                    .filter(|_| request.headers().get_all(COOKIE).iter().count() == 1)
                     .map(|cookie| cookie.to_str().expect("a cookie is text").to_owned()),
                 query: request.url().query().map(str::to_owned),
             });
 
         Box::pin(next.run(request, extensions))
     })
+}
+
+/// A server that keeps whether each request it gets carries a key, and a server that redirects `/api/key` to it: the
+/// URL of the second, and what the first saw.
+async fn redirecting() -> (String, Arc<Mutex<Vec<bool>>>) {
+    let seen: Arc<Mutex<Vec<bool>>> = Arc::default();
+    let elsewhere = {
+        let seen = Arc::clone(&seen);
+
+        axum::Router::new().fallback(move |headers: http::HeaderMap| {
+            seen.lock()
+                .expect("no test panics while holding it")
+                .push(headers.contains_key("x-api-key"));
+
+            async {
+                (
+                    [(http::header::CONTENT_TYPE, "application/json")],
+                    "\"elsewhere\"",
+                )
+            }
+        })
+    };
+    let elsewhere = rest::test::spawn(elsewhere).await;
+
+    let to = format!("{elsewhere}/api/key");
+    let api = axum::Router::new().route(
+        "/api/key",
+        axum::routing::get(
+            move || async move { (StatusCode::FOUND, [(http::header::LOCATION, to)]) },
+        ),
+    );
+
+    (rest::test::spawn(api).await, seen)
+}
+
+/// What the docs of `rest::client::key` say of redirects: reqwest keeps the key of a header scheme on a redirect to
+/// another host, and the policy they show stops there.
+#[tokio::test]
+async fn a_key_in_a_header_follows_a_redirect_to_another_origin_unless_the_policy_stops_it()
+-> Result<()> {
+    let (url, seen) = redirecting().await;
+    let with_key = |http: reqwest::Client| {
+        let http = ClientBuilder::new(http)
+            .with(rest::client::key::<Key>("k-ana"))
+            .build();
+
+        Api::client_with(http, &url)
+    };
+
+    let api = with_key(reqwest::Client::new())?;
+    assert_eq!(api.admin().key().await?, "elsewhere");
+    assert_eq!(
+        *seen.lock().expect("no test panics while holding it"),
+        [true],
+        "reqwest's default policy keeps the key"
+    );
+
+    // The policy the docs show.
+    let same_origin = reqwest::redirect::Policy::custom(|attempt| {
+        let previous = attempt.previous().last();
+        let same = previous.is_some_and(|previous| previous.origin() == attempt.url().origin());
+
+        if same && attempt.previous().len() <= 10 {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    });
+    let http = reqwest::Client::builder()
+        .redirect(same_origin)
+        .build()
+        .expect("a client");
+    let api = with_key(http)?;
+
+    let error = api
+        .admin()
+        .key()
+        .await
+        .expect_err("a redirect to another origin");
+    assert_eq!(error.status(), Some(StatusCode::FOUND));
+    assert_eq!(
+        *seen.lock().expect("no test panics while holding it"),
+        [true],
+        "the second server saw no other request"
+    );
+    Ok(())
 }

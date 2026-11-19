@@ -26,30 +26,42 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
             let lower = header.to_ascii_lowercase();
 
             (
-                format!(" A credential in the header `{header}`, read as a `String`."),
+                vec![format!(" A credential in the header `{header}`, read as a `String`.")],
                 quote! { ::quoll::__private::auth::header(request, #lower) },
                 quote! { Header(#lower) },
                 None,
             )
         }
         DeclaredKind::Cookie(cookie) => (
-            format!(
-                " A credential in the cookie `{cookie}`, read as a `String`. A request that carries it with a method other than `GET`, `HEAD` or `OPTIONS` comes from the server's own origin, or is refused with a 403."
-            ),
+            vec![
+                format!(
+                    " A credential in the cookie `{cookie}`, read as a `String`: the first of that name that is not empty, which a browser sends for the longest path."
+                ),
+                String::new(),
+                " A request that carries it with a method other than `GET`, `HEAD` or `OPTIONS` comes from the server's own origin, as its `Sec-Fetch-Site` says, or its `Origin` compared with its `Host`, or is refused with a 403. Behind a reverse proxy, the proxy passes the browser's `Host`, as nginx does with `proxy_set_header Host $host`. Only the server's own origin is trusted for now.".to_owned(),
+                String::new(),
+                " The application sets the cookie `SameSite=Lax` or `Strict`, `HttpOnly` and `Secure`, and names it with the prefix `__Host-`, as `__Host-session`, which a page of a subdomain cannot set.".to_owned(),
+            ],
             quote! { ::quoll::__private::auth::cookie(request, #cookie) },
             quote! { Cookie(#cookie) },
             None,
         ),
         DeclaredKind::Query(key) => (
-            format!(" A credential in the query key `{key}`, read as a `String`."),
+            vec![
+                format!(" A credential in the query key `{key}`, read as a `String`."),
+                String::new(),
+                format!(
+                    " A route that takes it reads no other value of `{key}`: the macro refuses a `{key}={{...}}` in its string, but cannot see the fields of a query struct, of which none is named `{key}`."
+                ),
+            ],
             quote! { ::quoll::__private::auth::query(request, #key) },
             quote! { Query(#key) },
             None,
         ),
         DeclaredKind::OpenId(url) => (
-            format!(
+            vec![format!(
                 " An OpenID Connect token in `Authorization: Bearer`, read as a `String`, from the provider at `{url}`."
-            ),
+            )],
             quote! { ::quoll::__private::auth::openid(request) },
             quote! { Bearer },
             Some(quote! {
@@ -63,7 +75,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
     if !lines.is_empty() {
         lines.push(String::new());
     }
-    lines.push(travels);
+    lines.extend(travels);
     let docs = doc_attrs(&lines);
 
     quote! {
