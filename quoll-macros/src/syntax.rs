@@ -51,7 +51,11 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     let mut groups = Vec::new();
 
     while !input.is_empty() {
-        let Attrs { docs, auth } = parse_attrs(input)?;
+        let Attrs {
+            docs,
+            auth,
+            openapi,
+        } = parse_attrs(input)?;
         let vis: Visibility = input.parse()?;
         let keyword = input.call(Ident::parse_any).map_err(|error| {
             Error::new(
@@ -68,7 +72,11 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 ));
             }
 
-            let decl = ApiDecl::parse(input, docs, vis, &keyword)?;
+            let openapi = match openapi {
+                Some((_, read)) => keep(errors, read).is_none_or(|document| document),
+                None => true,
+            };
+            let decl = ApiDecl::parse(input, docs, vis, openapi, &keyword)?;
             match &api {
                 Some(first) => errors.push(Error::new(
                     keyword.span(),
@@ -80,6 +88,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 None => api = Some(decl),
             }
         } else if keyword == "scheme" {
+            refuse_openapi(errors, openapi.as_ref(), "a scheme");
             if let Some((attr, _)) = &auth {
                 errors.push(Error::new_spanned(
                     attr,
@@ -92,6 +101,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 Err(error) => errors.push(error),
             }
         } else if keyword == "group" {
+            refuse_openapi(errors, openapi.as_ref(), "a group");
             let auth = auth.and_then(|(_, auth)| keep(errors, auth));
             groups.push(parse_group(input, docs, vis, auth.as_ref(), errors)?);
         } else {
@@ -106,8 +116,22 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         ));
     };
 
-    Api::new(api.docs, api.vis, api.name, &api.prefix, schemes, groups)
-        .map_err(|error| fold(errors, error))
+    let openapi = api.openapi;
+    let mut api = Api::new(api.docs, api.vis, api.name, &api.prefix, schemes, groups)
+        .map_err(|error| fold(errors, error))?;
+    api.openapi = openapi;
+
+    Ok(api)
+}
+
+/// Refuses an `#[openapi(...)]` on `what`, which is not the api.
+fn refuse_openapi(errors: &mut ErrorList, openapi: Option<&(Attribute, Result<bool>)>, what: &str) {
+    if let Some((attr, _)) = openapi {
+        errors.push(Error::new_spanned(
+            attr,
+            format!("{what} takes no `#[openapi(...)]`: `#[openapi(none)]` goes on the api, whose whole document it leaves out"),
+        ));
+    }
 }
 
 /// The value of `result`, or `None` once its error is gathered.
@@ -133,13 +157,20 @@ fn unexpected_item(keyword: &Ident) -> Error {
 struct ApiDecl {
     docs: Docs,
     vis: Visibility,
+    openapi: bool,
     name: Ident,
     prefix: LitStr,
 }
 
 impl ApiDecl {
     /// After the `api` keyword: `Name = "/prefix";`.
-    fn parse(input: ParseStream, docs: Docs, vis: Visibility, keyword: &Ident) -> Result<Self> {
+    fn parse(
+        input: ParseStream,
+        docs: Docs,
+        vis: Visibility,
+        openapi: bool,
+        keyword: &Ident,
+    ) -> Result<Self> {
         let name: Ident = input.parse().map_err(|error| {
             Error::new(
                 error.span(),
@@ -160,6 +191,7 @@ impl ApiDecl {
         Ok(Self {
             docs,
             vis,
+            openapi,
             name,
             prefix,
         })
@@ -235,7 +267,11 @@ fn parse_group(
 /// One route, which takes `group_auth` unless it says otherwise. The outer error is a mistake of syntax, after which
 /// nothing can be read; the inner one a mistake of the route's meaning, which leaves the next route readable.
 fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<Route>> {
-    let Attrs { docs, auth } = parse_attrs(input)?;
+    let Attrs {
+        docs,
+        auth,
+        openapi,
+    } = parse_attrs(input)?;
     let method = parse_method(input)?;
     let path: LitStr = input.parse().map_err(|error| {
         Error::new(error.span(), "a route's path is a string after its method: write `GET \"/notes/{id}\" => get(id: i64);`")
@@ -259,10 +295,21 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
     };
     input.parse::<Token![;]>()?;
 
-    let (auth, auth_error) = match auth.map(|(_, auth)| auth).transpose() {
+    let (auth, mut attr_error) = match auth.map(|(_, auth)| auth).transpose() {
         Ok(auth) => (auth, None),
         Err(error) => (None, Some(error)),
     };
+    if let Some((attr, _)) = &openapi {
+        let refused = Error::new_spanned(
+            attr,
+            "a route takes no `#[openapi(...)]`: `#[openapi(none)]` goes on the api, whose whole document it leaves out",
+        );
+
+        match &mut attr_error {
+            Some(error) => error.combine(refused),
+            None => attr_error = Some(refused),
+        }
+    }
     let route = Route::resolve(
         RouteDecl {
             docs,
@@ -276,7 +323,7 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
         group_auth,
     );
 
-    let Some(mut error) = auth_error else {
+    let Some(mut error) = attr_error else {
         return Ok(route);
     };
 
@@ -355,20 +402,50 @@ impl Parse for Arg {
     }
 }
 
-/// The attributes before an item: its `///` comments, and its `#[auth(...)]` with what it says, or the mistake in it.
+/// The attributes before an item: its `///` comments, its `#[auth(...)]` with what it says, or the mistake in it, and
+/// its `#[openapi(...)]` with whether the api has a document, or the mistake in it.
 struct Attrs {
     docs: Docs,
     auth: Option<(Attribute, Result<Auth>)>,
+    openapi: Option<(Attribute, Result<bool>)>,
 }
 
-/// The attributes before an item. Any attribute other than a comment or `#[auth(...)]` is refused, which stops the
-/// reading; a second `#[auth(...)]` is a mistake of the item's `auth`, gathered with the others.
+/// The attributes before an item. Any attribute other than a comment, `#[auth(...)]` or `#[openapi(...)]` is refused,
+/// which stops the reading; a second `#[auth(...)]` or `#[openapi(...)]` is a mistake of the item's, gathered with the
+/// others.
 fn parse_attrs(input: ParseStream) -> Result<Attrs> {
     let attrs = input.call(Attribute::parse_outer)?;
     let mut lines = Vec::with_capacity(attrs.len());
     let mut auth: Option<(Attribute, Result<Auth>)> = None;
+    let mut openapi: Option<(Attribute, Result<bool>)> = None;
 
     for attr in attrs {
+        if attr.path().is_ident("openapi") {
+            openapi = Some(match openapi {
+                None => {
+                    let read = parse_openapi(&attr);
+
+                    (attr, read)
+                }
+                Some((first, read)) => {
+                    let twice = Error::new_spanned(
+                        &attr,
+                        "an api takes one `#[openapi(...)]`: remove this one",
+                    );
+                    let error = match read {
+                        Ok(_) => twice,
+                        Err(mut error) => {
+                            error.combine(twice);
+                            error
+                        }
+                    };
+
+                    (first, Err(error))
+                }
+            });
+            continue;
+        }
+
         if attr.path().is_ident("auth") {
             auth = Some(match auth {
                 None => {
@@ -408,7 +485,7 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
         let Some(line) = line else {
             return Err(Error::new_spanned(
                 attr,
-                "an attribute is not supported here: only `///` comments are kept, and `#[auth(...)]` on a group or a route",
+                "an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, and `#[openapi(none)]` on the api",
             ));
         };
 
@@ -418,7 +495,35 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
     Ok(Attrs {
         docs: Docs(lines),
         auth,
+        openapi,
     })
+}
+
+/// What an `#[openapi(...)]` says: `none`, which leaves out the api's document. Whether the api has one.
+fn parse_openapi(attr: &Attribute) -> Result<bool> {
+    const WRITE: &str = "write `#[openapi(none)]`, which leaves out the OpenAPI document of a contract that is only called, whose types need no schema";
+
+    let Meta::List(list) = &attr.meta else {
+        return Err(Error::new_spanned(
+            attr,
+            format!("`#[openapi]` says what the api's document is: {WRITE}"),
+        ));
+    };
+    let word: Ident = syn::parse2(list.tokens.clone()).map_err(|_| {
+        Error::new_spanned(
+            &list.tokens,
+            format!("`#[openapi(...)]` takes `none`: {WRITE}"),
+        )
+    })?;
+
+    if word != "none" {
+        return Err(Error::new_spanned(
+            word,
+            format!("`#[openapi(...)]` takes `none`: {WRITE}"),
+        ));
+    }
+
+    Ok(false)
 }
 
 /// How an `#[auth(...)]` is written, which its errors say.
@@ -1570,6 +1675,76 @@ mod tests {
         assert!(twice[1].contains("`x` is not an option"), "{twice:?}");
         assert!(twice[2].contains("one `#[auth(...)]`"), "{twice:?}");
         assert!(twice[3].contains("no argument named `x`"), "{twice:?}");
+    }
+
+    #[test]
+    fn openapi_none_leaves_out_the_document_of_the_api() {
+        let with = parse(quote! {
+            /// A third-party API, only called.
+            #[openapi(none)]
+            pub api Api = "";
+        })
+        .unwrap();
+        let without = parse(quote! { pub api Api = "/api"; }).unwrap();
+
+        assert!(!with.openapi);
+        assert_eq!(with.docs.0, [" A third-party API, only called."]);
+        assert!(without.openapi);
+    }
+
+    #[test]
+    fn openapi_takes_none_on_the_api_once() {
+        for attr in [
+            quote! { #[openapi] },
+            quote! { #[openapi = "none"] },
+            quote! { #[openapi()] },
+            quote! { #[openapi(all)] },
+            quote! { #[openapi(none, none)] },
+        ] {
+            let errors = messages(quote! {
+                #attr
+                pub api Api = "/api";
+            });
+
+            assert_eq!(errors.len(), 1, "{attr}: {errors:?}");
+            assert!(errors[0].contains("write `#[openapi(none)]`"), "{errors:?}");
+        }
+
+        let twice = messages(quote! {
+            #[openapi(none)]
+            #[openapi(none)]
+            pub api Api = "/api";
+        });
+        assert!(twice[0].contains("one `#[openapi(...)]`"), "{twice:?}");
+
+        // Gathered, so that the mistakes after it are reported in the same build.
+        let elsewhere = messages(quote! {
+            pub api Api = "/api";
+            #[openapi(none)]
+            pub scheme Key = header "X-Api-Key";
+            #[openapi(none)]
+            pub group G {
+                #[openapi(none)]
+                GET "/a/{x}" => a();
+            }
+        });
+        assert_eq!(elsewhere.len(), 4, "{elsewhere:?}");
+        assert!(
+            elsewhere[0].contains("a scheme takes no `#[openapi(...)]`"),
+            "{elsewhere:?}"
+        );
+        assert!(
+            elsewhere[1].contains("a group takes no `#[openapi(...)]`"),
+            "{elsewhere:?}"
+        );
+        assert!(
+            elsewhere[2].contains("a route takes no `#[openapi(...)]`"),
+            "{elsewhere:?}"
+        );
+        assert!(
+            elsewhere[3].contains("no argument named `x`"),
+            "{elsewhere:?}"
+        );
     }
 
     #[test]

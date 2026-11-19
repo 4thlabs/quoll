@@ -1,8 +1,9 @@
 use futures_util::{StreamExt, stream};
 use quoll::rest::{self, Events, JsonLines, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Change {
     pub id: i64,
 }

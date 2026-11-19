@@ -9,7 +9,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Param, Route, snake_case};
+use crate::model::{Api, Group, Param, Route};
 use crate::path::Segment;
 use crate::scheme::scheme_type;
 use crate::{doc_attrs, route_docs};
@@ -117,7 +117,7 @@ fn group_client(api: &Api, group: &Group) -> TokenStream {
 fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
     let signature = signature(route);
     let route_static = Ident::new("__QUOLL_ROUTE", Span::mixed_site());
-    let operation_id = format!("{}_{}", snake_case(&group.name), route.name.unraw());
+    let operation_id = route.operation_id(group);
     let group_name = group.name.unraw().to_string();
     let method = Ident::new(route.method.as_str(), Span::call_site());
     let path = route.full_path(&api.prefix);

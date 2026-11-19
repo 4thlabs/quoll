@@ -35,39 +35,60 @@ pub(crate) struct ResultKind {
     pub(crate) read: &'static str,
     /// Whether the client returns the type it wraps, as the status is only the server's answer.
     pub(crate) unwrapped: bool,
+    /// The variant of `quoll::__private::openapi::Reply` that describes it.
+    pub(crate) document: &'static str,
+    /// Whether the document has the schema of the type: its own for JSON, the one it wraps for the others, none for
+    /// text and bytes.
+    pub(crate) schema: bool,
 }
 
 impl ResultKind {
     /// Any type the macro does not recognize: 200, its JSON.
-    pub(crate) const JSON: Self = Self::new("ok", "JSON", "json");
+    pub(crate) const JSON: Self = Self::new("ok", "JSON", "json", "Json", true);
     /// `Created<T>`: 201, the JSON of the `T` the client returns.
-    pub(crate) const CREATED: Self = Self::unwrapped("created");
+    pub(crate) const CREATED: Self = Self::unwrapped("created", "Created");
     /// `Accepted<T>`: 202, the JSON of the `T` the client returns.
-    pub(crate) const ACCEPTED: Self = Self::unwrapped("accepted");
+    pub(crate) const ACCEPTED: Self = Self::unwrapped("accepted", "Accepted");
     /// `Text`: 200, `text/plain` in UTF-8.
-    pub(crate) const TEXT: Self = Self::new("ok_text", "TEXT", "text");
+    pub(crate) const TEXT: Self = Self::new("ok_text", "TEXT", "text", "Text", false);
     /// `Bytes`: 200, of the content type they carry.
-    pub(crate) const BYTES: Self = Self::new("ok_bytes", "ANY", "bytes");
+    pub(crate) const BYTES: Self = Self::new("ok_bytes", "ANY", "bytes", "Bytes", false);
     /// `Events<T>`: 200, server-sent events.
-    pub(crate) const EVENTS: Self = Self::new("events", "EVENT_STREAM", "events");
+    pub(crate) const EVENTS: Self = Self::new("events", "EVENT_STREAM", "events", "Events", true);
     /// `JsonLines<T>`: 200, JSON Lines.
-    pub(crate) const JSON_LINES: Self = Self::new("json_lines", "ANY_JSON_LINES", "json_lines");
+    pub(crate) const JSON_LINES: Self = Self::new(
+        "json_lines",
+        "ANY_JSON_LINES",
+        "json_lines",
+        "JsonLines",
+        true,
+    );
 
-    const fn new(answer: &'static str, accept: &'static str, read: &'static str) -> Self {
+    const fn new(
+        answer: &'static str,
+        accept: &'static str,
+        read: &'static str,
+        document: &'static str,
+        schema: bool,
+    ) -> Self {
         Self {
             answer,
             accept,
             read,
             unwrapped: false,
+            document,
+            schema,
         }
     }
 
-    const fn unwrapped(answer: &'static str) -> Self {
+    const fn unwrapped(answer: &'static str, document: &'static str) -> Self {
         Self {
             answer,
             accept: "JSON",
             read: "json",
             unwrapped: true,
+            document,
+            schema: true,
         }
     }
 }
@@ -79,25 +100,34 @@ pub(crate) struct BodyKind {
     pub(crate) method: &'static str,
     /// Whether the client's `Call` may fail to write it, and so returns a `Result`.
     pub(crate) fallible: bool,
+    /// The variant of `quoll::__private::openapi::Body` that describes it.
+    pub(crate) document: &'static str,
+    /// Whether the document has the schema of the type: its own for JSON, the `T` of a `Form<T>`, none for text and
+    /// bytes.
+    pub(crate) schema: bool,
 }
 
 impl BodyKind {
     /// Any type the macro does not recognize: its JSON, `application/json`.
-    pub(crate) const JSON: Self = Self::fallible("json");
+    pub(crate) const JSON: Self = Self::fallible("json", "Json", true);
     /// `Form<T>`: `application/x-www-form-urlencoded`.
-    pub(crate) const FORM: Self = Self::fallible("form");
+    pub(crate) const FORM: Self = Self::fallible("form", "Form", true);
     /// `Text`: `text/plain`, UTF-8, which is always written.
     pub(crate) const TEXT: Self = Self {
         method: "text",
         fallible: false,
+        document: "Text",
+        schema: false,
     };
     /// `Bytes`: any content type but the three a browser sends to another site without asking.
-    pub(crate) const BYTES: Self = Self::fallible("bytes");
+    pub(crate) const BYTES: Self = Self::fallible("bytes", "Bytes", false);
 
-    const fn fallible(method: &'static str) -> Self {
+    const fn fallible(method: &'static str, document: &'static str, schema: bool) -> Self {
         Self {
             method,
             fallible: true,
+            document,
+            schema,
         }
     }
 }

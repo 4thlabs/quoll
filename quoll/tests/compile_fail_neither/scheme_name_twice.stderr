@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: the schemes `Bearer` and `Token` of the api `Api` have one `NAME`, which names a scheme in the OpenAPI document: give each scheme its own, and name a scheme by one path throughout the api
+  --> tests/compile_fail_neither/scheme_name_twice.rs:25:21
+   |
+25 |     #[auth(Bearer | Token)]
+   |                     ^^^^^ evaluation of `_` failed here

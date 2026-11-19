@@ -3,6 +3,7 @@
 mod client;
 mod known;
 mod model;
+mod openapi;
 mod path;
 mod scheme;
 mod server;
@@ -42,8 +43,9 @@ use crate::syntax::Contract;
 ///
 /// A mistake in the contract is a compile error on the token at fault. The api becomes its type, with its comments;
 /// with the feature `server` of `quoll`, a server trait per group, `ApiServices` and `Api::router` come too; with the
-/// feature `client`, a trait per group, its client, `ApiClient`, `Api::client` and `Api::client_with`. The OpenAPI
-/// document comes in a later change.
+/// feature `client`, a trait per group, its client, `ApiClient`, `Api::client` and `Api::client_with`. Whatever the
+/// features, `Api::openapi` gives the OpenAPI 3.1 document, for which each type the contract names implements
+/// `schemars::JsonSchema`.
 #[proc_macro]
 pub fn api(input: TokenStream) -> TokenStream {
     match syn::parse::<Contract>(input) {
@@ -52,12 +54,13 @@ pub fn api(input: TokenStream) -> TokenStream {
     }
 }
 
-/// What a contract becomes: the api's type, the check of the types it names by their name, the server's code behind
-/// the feature `server` of `quoll`, and the client's behind its feature `client`.
+/// What a contract becomes: the api's type, the check of the types it names, its OpenAPI document, the server's code
+/// behind the feature `server` of `quoll`, and the client's behind its feature `client`.
 fn expand(api: &Api) -> proc_macro2::TokenStream {
     let api_type = api_type(api);
     let schemes = scheme::expand(api);
     let known = known_types(api);
+    let openapi = openapi::expand(api);
     let server = server::expand(api);
     let client = client::expand(api);
 
@@ -65,15 +68,17 @@ fn expand(api: &Api) -> proc_macro2::TokenStream {
         #api_type
         #schemes
         #known
+        #openapi
         #server
         #client
     }
 }
 
-/// Checks that each type of quoll's the contract names, which the macro recognizes by its name, is the crate's, and
-/// that each scheme of the application's it names is a scheme. The types are the contract's tokens, so that the
-/// user's import names them; and the check is written whatever the features of `quoll`, so that the import is used,
-/// and the type checked, with neither of them.
+/// Checks that each type of quoll's the contract names, which the macro recognizes by its name, is the crate's, that
+/// each scheme of the application's it names is a scheme, and that each scheme has a name of its own, which the
+/// OpenAPI document names it by. The types are the contract's tokens, so that the user's
+/// import names them; and the check is written whatever the features of `quoll`, so that the import is used, and the
+/// type checked, with neither of them.
 fn known_types(api: &Api) -> proc_macro2::TokenStream {
     let mut checks = scheme::checks(api);
 
@@ -92,6 +97,8 @@ fn known_types(api: &Api) -> proc_macro2::TokenStream {
             checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::#check::<#ty>(); });
         }
     }
+
+    checks.extend(openapi::checks(api));
 
     if checks.is_empty() {
         return proc_macro2::TokenStream::new();

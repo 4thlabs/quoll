@@ -1,10 +1,11 @@
 use quoll::rest;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 // An `Accepted` of the application's own, which the contract reads as quoll's.
 pub struct Accepted<T>(pub T);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Job {
     pub id: u64,
 }

@@ -1,10 +1,11 @@
 use quoll::rest;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 // A `Created` of the application's own, which the contract reads as quoll's.
 pub struct Created<T>(pub T);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Note {
     pub id: i64,
 }

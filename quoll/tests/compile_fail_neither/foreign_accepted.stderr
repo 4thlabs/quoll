@@ -1,13 +1,13 @@
 error[E0277]: `Accepted<Job>` is not quoll's `Accepted`, which a result named `Accepted` is read as
-  --> tests/compile_fail_neither/foreign_accepted.rs:16:52
+  --> tests/compile_fail_neither/foreign_accepted.rs:17:52
    |
-16 |         POST "/exports" => export(name: String) -> Accepted<Job>;
+17 |         POST "/exports" => export(name: String) -> Accepted<Job>;
    |                                                    ^^^^^^^^^^^^^ not `quoll::rest::Accepted`
    |
 help: the trait `quoll::__private::known::IsAccepted` is not implemented for `Accepted<Job>`
-  --> tests/compile_fail_neither/foreign_accepted.rs:5:1
+  --> tests/compile_fail_neither/foreign_accepted.rs:6:1
    |
- 5 | pub struct Accepted<T>(pub T);
+ 6 | pub struct Accepted<T>(pub T);
    | ^^^^^^^^^^^^^^^^^^^^^^
    = note: bring quoll's into scope, `use quoll::rest::Accepted;`, or name a type of your own otherwise
 help: the trait `quoll::__private::known::IsAccepted` is implemented for `quoll::rest::Accepted<T>`

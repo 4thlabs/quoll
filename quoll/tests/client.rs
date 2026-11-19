@@ -11,27 +11,28 @@ use http::Extensions;
 use quoll::rest::{self, Created, Error, Result, Route};
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder, Next};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Note {
     id: i64,
     title: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct NewNote {
     title: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum Shelf {
     KitchenTop,
     Office,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Found {
     contains: Option<String>,
     page: Option<u32>,
@@ -428,7 +429,7 @@ async fn a_call_that_gets_no_response_has_no_status() -> Result<()> {
 }
 
 /// The error shape of an API that does not answer problems.
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize, JsonSchema)]
 struct Teapot {
     message: String,
     code: u32,

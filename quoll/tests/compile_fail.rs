@@ -5,7 +5,8 @@
 //! wrong signature, in `tests/compile_fail_client/`, which builds with the feature `client`. A type the contract names
 //! `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events` or `JsonLines` that is not quoll's is in
 //! `tests/compile_fail_neither/`, built with neither feature: the server's code and the client's each repeat its
-//! message.
+//! message. So are the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call
+//! to the document of a contract that has none.
 
 #[test]
 fn a_mistake_is_an_error_on_the_token_at_fault() {

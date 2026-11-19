@@ -1,7 +1,8 @@
 use quoll::rest;
+use schemars::JsonSchema;
 
 // A `Bytes` of the application's own, which the contract reads as quoll's as a result too.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, JsonSchema)]
 pub struct Bytes(pub Vec<u8>);
 
 rest::api! {

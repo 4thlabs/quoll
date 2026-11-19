@@ -6,11 +6,12 @@
 use quoll::rest::{self, Bytes, Form, Result, Text};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_TYPE, HeaderValue};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// A filter whose keys may all be missing: `Default` is for callers, which fill the keys they need.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct NoteFilter {
     contains: Option<String>,
     page: Option<u32>,
@@ -19,26 +20,26 @@ struct NoteFilter {
 }
 
 /// A query struct without `Default`, whose key is needed.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Paging {
     page: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum Shelf {
     KitchenTop,
     Office,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Seen {
     page: u32,
     last: Option<String>,
     shelf: Option<Shelf>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Login {
     user: String,
     password: String,
@@ -47,19 +48,19 @@ struct Login {
 }
 
 /// A struct, which is not read from one piece of text.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Point {
     x: i32,
 }
 
 /// What the handler of a `Bytes` body got: the bytes and their content type.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Upload {
     content_type: String,
     bytes: Vec<u8>,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Mixed {
     id: i64,
     tag: String,

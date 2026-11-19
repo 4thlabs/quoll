@@ -5,15 +5,16 @@
 use std::collections::BTreeMap;
 
 use quoll::rest::{self, Created, Error, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Note {
     id: i64,
     title: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct NewNote {
     title: String,
 }

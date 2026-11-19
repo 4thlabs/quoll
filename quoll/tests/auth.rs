@@ -14,18 +14,19 @@ use quoll::rest::{self, Authenticate, Bearer, Created, Error, Result, Route};
 use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, WWW_AUTHENTICATE};
 use reqwest_middleware::{ClientBuilder, Next};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 struct Note {
     id: i64,
     owner: String,
     title: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct NewNote {
     title: String,
 }

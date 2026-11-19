@@ -61,6 +61,11 @@
 //! A route that takes a query scheme, `scheme Token = query "token";`, reads no other value of its key: the macro
 //! refuses `token={...}` in the route's string, but cannot see the fields of a query struct, none of which is to be
 //! named `token`.
+//!
+//! Whatever the features, `Api::openapi()` gives the contract's OpenAPI 3.1 document, which [`openapi`] describes, so
+//! that each type a contract names, as a parameter, a body or a result, implements `schemars::JsonSchema`. A contract
+//! of a third-party API that is only called, whose models may come from crates that do not implement it, says so on
+//! its api with `#[openapi(none)]`: it has no document, and its types need serde alone.
 
 mod accepted;
 mod auth;
@@ -69,6 +74,7 @@ mod body;
 pub mod client;
 mod created;
 pub(crate) mod error;
+pub mod openapi;
 mod problem;
 mod route;
 pub(crate) mod stream;

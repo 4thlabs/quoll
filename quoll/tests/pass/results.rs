@@ -1,7 +1,8 @@
 use quoll::rest::{self, Accepted, Bytes, Text};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Job {
     pub id: u64,
 }

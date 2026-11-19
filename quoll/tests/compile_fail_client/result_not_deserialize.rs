@@ -1,8 +1,9 @@
 use quoll::rest::{self, JsonLines};
+use schemars::JsonSchema;
 use serde::Serialize;
 
 // Written by the server, but never read by the client.
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
 pub struct Note {
     pub id: i64,
 }

@@ -1,7 +1,8 @@
 use quoll::rest::{self, Created};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Note {
     pub id: i64,
 }

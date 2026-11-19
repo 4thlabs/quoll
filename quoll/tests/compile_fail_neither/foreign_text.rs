@@ -1,7 +1,8 @@
 use quoll::rest;
+use schemars::JsonSchema;
 
 // A `Text` of the application's own, which the contract reads as quoll's.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, JsonSchema)]
 pub struct Text {
     pub body: String,
 }

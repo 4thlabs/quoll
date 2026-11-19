@@ -1,4 +1,5 @@
 use quoll::rest;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 // A `Form` of the application's own, which the contract reads as quoll's.
@@ -8,7 +9,7 @@ mod forms {
 
 use forms::Form;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct Login {
     pub user: String,
 }

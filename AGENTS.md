@@ -29,6 +29,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps --all-features                     # the docs, with their links checked
 cargo expand -p <crate> --test <test>                              # what the macro writes (cargo install cargo-expand)
 TRYBUILD=overwrite cargo test -p quoll --test compile_fail         # to accept a new or changed error message
+SNAPSHOT=overwrite cargo test -p notes-api --test openapi          # to accept a changed OpenAPI document of the example
 ```
 
 ## Layout

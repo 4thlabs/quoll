@@ -1,0 +1,286 @@
+{
+  "components": {
+    "responses": {
+      "BadRequest": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A parameter or the body is missing, or does not read as its type."
+      },
+      "Problem": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "An error, as an RFC 9457 problem."
+      },
+      "Unauthorized": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The request carries no valid credential of a scheme the route takes.",
+        "headers": {
+          "WWW-Authenticate": {
+            "description": "A challenge per scheme the route takes, in the order it takes them.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The body does not have the content type the route reads."
+      }
+    },
+    "schemas": {
+      "NewNote": {
+        "description": "A note to write: what a note holds, but its id.",
+        "properties": {
+          "body": {
+            "description": "Its text.",
+            "type": "string"
+          },
+          "title": {
+            "description": "Its title.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "body"
+        ],
+        "type": "object"
+      },
+      "Note": {
+        "description": "A note, as it is read back.",
+        "properties": {
+          "body": {
+            "description": "Its text.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The note's id, given by the server.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "description": "Its title.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "body"
+        ],
+        "type": "object"
+      },
+      "Problem": {
+        "description": "An RFC 9457 problem: what went wrong with a request, the body of every error, as `application/problem+json`.",
+        "properties": {
+          "detail": {
+            "description": "What went wrong with this request.",
+            "type": "string"
+          },
+          "instance": {
+            "description": "A URI naming this occurrence of the problem.",
+            "format": "uri-reference",
+            "type": "string"
+          },
+          "status": {
+            "description": "The status of the answer.",
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "title": {
+            "description": "A short summary of the kind of problem.",
+            "type": "string"
+          },
+          "type": {
+            "default": "about:blank",
+            "description": "A URI naming the kind of problem: `about:blank` for a problem that says no more than its status.",
+            "format": "uri-reference",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "Bearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Notes, kept per user.",
+    "title": "notes-api",
+    "version": "0.0.0"
+  },
+  "openapi": "3.1.1",
+  "paths": {
+    "/api/notes": {
+      "post": {
+        "operationId": "notes_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewNote"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "Location": {
+                "description": "Where the created resource is read, when the server says.",
+                "schema": {
+                  "format": "uri-reference",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "tags": [
+          "Notes"
+        ]
+      }
+    },
+    "/api/notes/{id}": {
+      "delete": {
+        "operationId": "notes_remove",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "tags": [
+          "Notes"
+        ]
+      },
+      "get": {
+        "operationId": "notes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "tags": [
+          "Notes"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "The signed-in user's notes.",
+      "name": "Notes"
+    }
+  ]
+}
