@@ -267,14 +267,22 @@ impl BodyKind {
 
 /// What a route answers, and so its status and its body.
 #[derive(Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per route, built once as the macro runs: its size costs nothing"
+)]
 pub(crate) enum Reply {
     /// No `->`: 204, no body.
     None,
     /// `T`: 200, JSON.
     Json(Type),
-    /// `Created<T>`: 201, JSON. The type is the whole `Created<T>`, as the contract writes it, which the server's trait
-    /// returns; [`Reply::value`] gives the `T`, which the client returns.
-    Created(Type),
+    /// `Created<T>`: 201, JSON.
+    Created {
+        /// The whole `Created<T>`, as the contract writes it, which the server's trait returns.
+        outer: Type,
+        /// The `T`, which the client returns.
+        inner: Type,
+    },
 }
 
 impl Reply {
@@ -282,13 +290,7 @@ impl Reply {
     pub(crate) fn value(&self) -> Option<&Type> {
         match self {
             Self::None => None,
-            Self::Json(ty) => Some(ty),
-            Self::Created(ty) => Some(
-                created_inner(ty)
-                    .ok()
-                    .flatten()
-                    .expect("`Reply::read` checked that the type is a `Created<T>`"),
-            ),
+            Self::Json(ty) | Self::Created { inner: ty, .. } => Some(ty),
         }
     }
 }
@@ -358,8 +360,14 @@ impl Route {
         } = decl;
         let template = Template::parse(&path)?;
 
+        // A route's attribute replaces its group's.
+        let auth = match auth.or(group_auth) {
+            Some(Auth::Scheme(scheme)) => Some(scheme),
+            Some(Auth::None) | None => None,
+        };
+
         check_names_unique(&args)?;
-        let params = match_args(method, &path, &template, args)?;
+        let params = match_args(method, &path, &template, auth, args)?;
         let path_order = template
             .path_names()
             .map(|path_name| {
@@ -370,11 +378,6 @@ impl Route {
             })
             .collect();
         let reply = Reply::read(method, reply)?;
-        // A route's attribute replaces its group's.
-        let auth = match auth.or(group_auth) {
-            Some(Auth::Scheme(scheme)) => Some(scheme),
-            Some(Auth::None) | None => None,
-        };
 
         Ok(Self {
             docs,
@@ -411,6 +414,7 @@ fn match_args(
     method: Method,
     path: &LitStr,
     template: &Template,
+    auth: Option<Scheme>,
     args: Vec<ArgDecl>,
 ) -> Result<Vec<Param>> {
     let find = |name: &str| args.iter().find(|arg| arg.name.unraw() == name);
@@ -446,11 +450,13 @@ fn match_args(
                 ParamKind::QueryStruct
             }
             Source::Header(header) => {
-                check_header(&header, &headers)?;
+                check_header(&header, &headers, auth)?;
                 check_header_type(&ty, &header.value())?;
+
                 let kind = ParamKind::Header {
                     name: header.value(),
                 };
+
                 headers.push(header);
                 kind
             }
@@ -520,7 +526,8 @@ fn check_query_struct(
         Type::Path(path) => path.qself.is_none(),
         _ => false,
     };
-    let reserved = reserved_name(ty, NOT_TEXT).is_some();
+    let reserved = reserved_name(ty, NOT_TEXT).is_some() || reserved_name(ty, SCALARS).is_some();
+
     if is_struct && !reserved {
         return Ok(());
     }
@@ -533,8 +540,24 @@ fn check_query_struct(
     ))
 }
 
-/// A header's name is one HTTP takes, and the route reads each header once.
-fn check_header(header: &LitStr, earlier: &[LitStr]) -> Result<()> {
+/// The headers that quoll writes and reads itself, or that HTTP keeps to one connection, which no argument takes: a
+/// value given by the caller would clash with quoll's own or make the request malformed.
+const RESERVED_HEADERS: &[&str] = &[
+    "Content-Type",
+    "Content-Length",
+    "Transfer-Encoding",
+    "Host",
+    "Connection",
+    "Keep-Alive",
+    "Proxy-Connection",
+    "TE",
+    "Trailer",
+    "Upgrade",
+];
+
+/// A header's name is one HTTP takes and that quoll leaves to the route, and the route reads each header once.
+/// `Authorization` is the scheme's, on a route that takes one.
+fn check_header(header: &LitStr, earlier: &[LitStr], auth: Option<Scheme>) -> Result<()> {
     let name = header.value();
     // The `token` of RFC 9110: letters, digits and these signs.
     let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
@@ -543,7 +566,29 @@ fn check_header(header: &LitStr, earlier: &[LitStr]) -> Result<()> {
         return Err(Error::new(
             header.span(),
             format!(
-                "`{name}` is not the name of a header: a name is ASCII letters, digits and `-`, as in \"Last-Event-ID\""
+                "`{name}` is not the name of a header: a name is ASCII letters, digits and the signs ! # $ % & ' * + - . ^ _ ` | ~, as in \"Last-Event-ID\""
+            ),
+        ));
+    }
+    if let Some(reserved) = RESERVED_HEADERS
+        .iter()
+        .find(|reserved| reserved.eq_ignore_ascii_case(&name))
+    {
+        return Err(Error::new(
+            header.span(),
+            format!(
+                "the header `{reserved}` is written by quoll or by HTTP itself, so no argument takes it: read what the route needs from another header"
+            ),
+        ));
+    }
+    if let Some(scheme) = auth
+        && name.eq_ignore_ascii_case("Authorization")
+    {
+        return Err(Error::new(
+            header.span(),
+            format!(
+                "the header `Authorization` carries the credential of `{}`, which the route takes: the handler receives its caller, and the client's middleware sends it",
+                scheme.word()
             ),
         ));
     }
@@ -646,6 +691,12 @@ const NOT_TEXT: &[&str] = &[
     "Bytes",
 ];
 
+/// The types read from one piece of text, which a query struct is not.
+const SCALARS: &[&str] = &[
+    "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32",
+    "f64", "bool", "char", "str", "String", "Uuid",
+];
+
 /// Checks what the macro can see of a type read from text, `what`: a path, with none of the names of [`NOT_TEXT`]. A
 /// struct of the user's cannot be told from an enum of unit variants here: axum refuses it as the request is read.
 fn check_read_from_text(ty: &Type, what: &str) -> Result<()> {
@@ -716,8 +767,8 @@ impl Reply {
                 ),
             ));
         }
-        if created_inner(&ty)?.is_some() {
-            return Ok(Self::Created(ty));
+        if let Some(inner) = created_inner(&ty)? {
+            return Ok(Self::Created { outer: ty, inner });
         }
 
         Ok(Self::Json(ty))
@@ -740,7 +791,7 @@ fn reserved_name<'a>(ty: &Type, names: &[&'a str]) -> Option<&'a str> {
 }
 
 /// The `T` of a `Created<T>`; `None` when the type is something else, an error when `Created` has no single `T`.
-fn created_inner(ty: &Type) -> Result<Option<&Type>> {
+fn created_inner(ty: &Type) -> Result<Option<Type>> {
     let Type::Path(path) = peel(ty) else {
         return Ok(None);
     };
@@ -764,7 +815,7 @@ fn created_inner(ty: &Type) -> Result<Option<&Type>> {
         _ => None,
     });
     match (types.next(), types.next(), args.args.len()) {
-        (Some(inner), None, 1) => Ok(Some(inner)),
+        (Some(inner), None, 1) => Ok(Some(inner.clone())),
         _ => Err(Error::new_spanned(
             ty,
             "`Created` wraps one type, the body: write `Created<Note>`",

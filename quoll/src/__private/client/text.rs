@@ -5,17 +5,9 @@ use std::fmt;
 
 use serde::ser::{self, Impossible, Serialize};
 
-/// The text of `value`, or `None` when it is not written as one piece of text: a sequence, a map, a struct, `None`.
-pub(crate) fn to_text<T: Serialize + ?Sized>(value: &T) -> Option<String> {
-    match value.serialize(Text) {
-        Ok(Written::Text(text)) => Some(text),
-        Ok(Written::Nothing) | Err(NotText) => None,
-    }
-}
-
-/// The text of a header's `value`, `Some(None)` for a `None`, which leaves the header out; `None` when it is not
-/// written as one piece of text.
-pub(crate) fn to_header_text<T: Serialize + ?Sized>(value: &T) -> Option<Option<String>> {
+/// The text of `value`, `Some(None)` for a `None`; `None` when it is not written as one piece of text: a sequence, a
+/// map, a struct.
+pub(crate) fn to_text<T: Serialize + ?Sized>(value: &T) -> Option<Option<String>> {
     match value.serialize(Text) {
         Ok(Written::Text(text)) => Some(Some(text)),
         Ok(Written::Nothing) => Some(None),

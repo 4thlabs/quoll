@@ -79,7 +79,7 @@ fn method(api: &Api, route: &Route) -> TokenStream {
         .map(|Param { name, ty, .. }| quote! { #name: #ty });
     let output = match &route.reply {
         Reply::None => quote! { () },
-        Reply::Json(ty) | Reply::Created(ty) => quote! { #ty },
+        Reply::Json(ty) | Reply::Created { outer: ty, .. } => quote! { #ty },
     };
     let caller = route.auth.map(|scheme| {
         let scheme = scheme_type(scheme);
@@ -293,7 +293,7 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
     let answer = match &route.reply {
         Reply::None => quote_spanned! {route.span=> ::quoll::__private::server::no_content(#call) },
         Reply::Json(ty) => quote_spanned! {ty.span()=> ::quoll::__private::server::ok(#call) },
-        Reply::Created(ty) => {
+        Reply::Created { outer: ty, .. } => {
             quote_spanned! {ty.span()=> ::quoll::__private::server::created(#call) }
         }
     };

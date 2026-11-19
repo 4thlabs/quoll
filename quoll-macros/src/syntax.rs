@@ -265,17 +265,20 @@ impl Parse for Arg {
         } else if first == "header" && input.peek(syn::token::Paren) {
             let content;
             parenthesized!(content in input);
+
             let header: LitStr = content.parse().map_err(|error| {
                 Error::new(
                     error.span(),
                     "a header is named by a string: write `header(\"Last-Event-ID\") last: Option<String>`",
                 )
             })?;
+
             if !content.is_empty() {
                 return Err(content.error(
                     "a header takes its name alone: write `header(\"Last-Event-ID\") last: Option<String>`",
                 ));
             }
+
             let name: Ident = input.parse().map_err(|error| {
                 Error::new(
                     error.span(),
@@ -503,7 +506,9 @@ mod tests {
         assert!(matches!(&list.reply, Reply::Json(ty) if text(ty) == "Vec < Note >"));
 
         let create = &notes.routes[2];
-        assert!(matches!(&create.reply, Reply::Created(ty) if text(ty) == "Created < Note >"));
+        assert!(
+            matches!(&create.reply, Reply::Created { outer, .. } if text(outer) == "Created < Note >")
+        );
         assert_eq!(create.reply.value().map(text), Some("Note".into()));
         assert_eq!(
             create
@@ -721,6 +726,70 @@ mod tests {
     }
 
     #[test]
+    fn a_header_quoll_or_http_writes_is_no_arguments() {
+        for name in [
+            "Content-Type",
+            "content-length",
+            "HOST",
+            "Transfer-Encoding",
+            "Connection",
+            "Keep-Alive",
+            "TE",
+            "Upgrade",
+        ] {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                pub group G { POST "/a" => a(header(#name) value: String, note: Note); }
+            });
+            assert!(
+                all[0].contains("is written by quoll or by HTTP itself"),
+                "{name}: {all:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn authorization_is_the_schemes_on_a_route_that_takes_one() {
+        let bearer = messages(quote! {
+            pub api Api = "/api";
+            #[auth(Bearer)]
+            pub group G { GET "/a" => a(header("authorization") token: String); }
+        });
+        assert!(
+            bearer[0].contains("carries the credential of `Bearer`"),
+            "{bearer:?}"
+        );
+
+        let open = parse(quote! {
+            pub api Api = "/api";
+            #[auth(Bearer)]
+            pub group G {
+                #[auth(none)]
+                GET "/a" => a(header("Authorization") token: String);
+            }
+            pub group H { GET "/b" => b(header("Authorization") token: Option<String>); }
+        });
+        assert!(open.is_ok(), "{open:?}");
+    }
+
+    #[test]
+    fn a_query_struct_is_not_a_scalar() {
+        for ty in [
+            quote! { String },
+            quote! { u32 },
+            quote! { bool },
+            quote! { std::primitive::f64 },
+            quote! { uuid::Uuid },
+        ] {
+            let all = messages(quote! {
+                pub api Api = "/api";
+                pub group G { GET "/a" => a(query q: #ty); }
+            });
+            assert!(all[0].contains("a field per key"), "{ty}: {all:?}");
+        }
+    }
+
+    #[test]
     fn a_header_is_read_from_text_or_is_an_option_of_it() {
         for ty in [
             quote! { Vec<String> },
@@ -857,7 +926,7 @@ mod tests {
         })
         .unwrap();
         let reply = &api.groups[0].routes[0].reply;
-        assert!(matches!(reply, Reply::Created(_)));
+        assert!(matches!(reply, Reply::Created { .. }));
         assert_eq!(reply.value().map(text), Some("Note".into()));
 
         let events = group(quote! { Events<Note> });

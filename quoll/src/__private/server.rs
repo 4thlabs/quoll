@@ -224,14 +224,15 @@ impl Request {
     ///
     /// # Errors
     ///
-    /// A 415 when the request does not say it sends `application/x-www-form-urlencoded`, a 400 when the form does not
-    /// read as `T` or a value is not UTF-8 once decoded, and the status axum gives when the body cannot be read.
+    /// A 415 when the request does not say it sends `application/x-www-form-urlencoded`, or names a charset other than
+    /// UTF-8; a 400 when the form does not read as `T` or a value is not UTF-8 once decoded, and the status axum gives
+    /// when the body cannot be read.
     pub async fn form<F>(self) -> Result<F>
     where
         F: IsForm,
         F::Value: DeserializeOwned,
     {
-        self.check_content_type(FORM, false)?;
+        self.check_content_type(FORM, true)?;
 
         let body = self.read().await?;
 
@@ -269,9 +270,13 @@ impl Request {
     }
 
     /// A 415 unless the request's content type is `expected`, whatever its parameters, but a charset other than UTF-8
-    /// when `utf8` is set. A request without the content type it is read as is refused, as axum refuses one sent as
-    /// JSON: a browser posts a form to another site with one of the three types it sends without asking, and only
-    /// the route that reads that type takes it.
+    /// when `utf8` is set; a request without one is refused too, as axum refuses a JSON body.
+    ///
+    /// The body is read as its type says, and no other. For bytes, as for JSON, it also keeps out what a page of
+    /// another site posts: a browser sends those types to another site only once the site agrees (a CORS preflight).
+    /// A form and text are among the types it sends without asking, so the check does not keep those out: a route
+    /// whose credential the browser adds on its own, a cookie, needs a defense of its own. A Bearer token is never
+    /// added so.
     fn check_content_type(&self, expected: &str, utf8: bool) -> Result<()> {
         let refused = || {
             let charset = if utf8 { "; charset=utf-8" } else { "" };
@@ -291,6 +296,7 @@ impl Request {
         else {
             return Err(refused());
         };
+
         let mut parts = value.split(';');
         let essence = parts.next().unwrap_or_default().trim();
 

@@ -1,4 +1,4 @@
-error: `X Page` is not the name of a header: a name is ASCII letters, digits and `-`, as in "Last-Event-ID"
+error: `X Page` is not the name of a header: a name is ASCII letters, digits and the signs ! # $ % & ' * + - . ^ _ ` | ~, as in "Last-Event-ID"
  --> tests/compile_fail/header_name_invalid.rs:7:37
   |
 7 |         GET "/notes" => list(header("X Page") page: u32);
