@@ -1678,6 +1678,26 @@ mod tests {
     }
 
     #[test]
+    fn two_routes_of_one_operation_id_are_refused() {
+        let errors = messages(quote! {
+            pub api Api = "/api";
+            pub group Note {
+                GET "/a" => tags_list();
+            }
+            pub group NoteTags {
+                GET "/b" => list();
+                GET "/c" => other();
+            }
+        });
+
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("the operation id `note_tags_list` of the route `list` of `NoteTags` is already the one of the route `tags_list` of `Note`"),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
     fn openapi_none_leaves_out_the_document_of_the_api() {
         let with = parse(quote! {
             /// A third-party API, only called.

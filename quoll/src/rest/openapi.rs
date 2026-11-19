@@ -7,12 +7,16 @@
 //!
 //! - **Schemas** sit under `components/schemas`, named by schemars: `Note`, or `Note2` for a second type named
 //!   `Note` in another module, in the order the contract names them. `#[schemars(rename = "OtherNote")]` gives such a
-//!   type a name of its own. A type is described as the server reads it, as schemars does by default.
+//!   type a name of its own. A type is described as the server reads it in a parameter or a body, and as it writes
+//!   it in a result or the item of a stream. When the two differ, as for a field with `#[serde(default)]`, which a
+//!   client may leave out but always receives, the type has both, `NoteInput` and `NoteOutput`, as has a type that
+//!   holds one of them; a number follows when a type of the contract has that name already.
 //! - **Operations** are named `group_function`, `notes_get`, and tagged by their group. The first paragraph of a
 //!   route's `///` is its summary, the rest its description; a group's is the description of its tag, the api's the
 //!   document's.
-//! - **Parameters**: a query struct is unfolded, one query parameter per field. An `Option` and a `Vec` are not
-//!   required, and a parameter is never `null`.
+//! - **Parameters**: a query struct is unfolded, one query parameter per field, or is one parameter, written as a
+//!   form, when its schema is not a plain object. An `Option` and a `Vec` are not required, and a parameter is never
+//!   `null`. The key of a query scheme is the credential, which the security describes, never a parameter.
 //! - **Bodies**: JSON, a form, `text/plain`, or `application/octet-stream` for `Bytes`, which accept any media type but
 //!   the three a browser sends to another site without asking.
 //! - **Results**: 200, 201 with an optional `Location`, 202 or 204; `Bytes` as `*/*`. A stream result,
@@ -168,6 +172,14 @@ impl SecurityScheme {
     /// Whether the credential is a cookie, which a browser sends with a request a page of another site makes.
     pub(crate) fn is_cookie(&self) -> bool {
         matches!(&self.kind, Kind::ApiKey { place, .. } if *place == "cookie")
+    }
+
+    /// The query key of the credential, for a key in the query.
+    pub(crate) fn query_key(&self) -> Option<&str> {
+        match &self.kind {
+            Kind::ApiKey { place, name } if *place == "query" => Some(name),
+            _ => None,
+        }
     }
 
     fn api_key(place: &'static str, name: String) -> Self {

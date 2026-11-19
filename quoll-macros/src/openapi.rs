@@ -1,16 +1,20 @@
 //! What the OpenAPI document of a contract becomes, on both sides and whatever the features: `Api::openapi`, which
-//! hands a description of the api to `quoll::__private::openapi::document`, and the check that the schemes of the api
-//! have names of their own.
+//! hands a description of the api to `quoll::__private::openapi::document`, with the checks that the schemes of the
+//! api have names of their own, which can name them in the document.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{LitStr, Type, ext::IdentExt};
 
-use crate::model::{Api, Group, Param, ParamKind, Route, SchemeKind, is_vec, option_inner, peel};
+use crate::known::BodyKind;
+use crate::model::{
+    Api, Group, Param, ParamKind, Route, Scheme, SchemeKind, is_vec, option_inner, peel,
+};
 use crate::scheme::scheme_type;
 
-/// `Api::openapi`, unless the contract says `#[openapi(none)]`.
+/// `Api::openapi`, unless the contract says `#[openapi(none)]`. Its schemes are listed once, each type named once, so
+/// that a type that is not a scheme is one error; the checks of their names sit beside them.
 pub(crate) fn expand(api: &Api) -> TokenStream {
     if !api.openapi {
         return TokenStream::new();
@@ -19,12 +23,22 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
     let name = &api.name;
     let vis = &api.vis;
     let docs = &api.docs.0;
-    let declared = api.schemes.iter().map(|scheme| {
-        let name = &scheme.name;
+    let schemes = schemes(api);
+    let refs = schemes.iter().map(|scheme| {
+        let ty = &scheme.ty;
 
-        scheme_ref(&quote! { #name })
+        quote_spanned! {scheme.span=>
+            ::quoll::__private::openapi::SchemeRef {
+                name: <#ty as ::quoll::rest::Scheme>::NAME,
+                openapi: <#ty as ::quoll::rest::Scheme>::openapi,
+            }
+        }
     });
-    let groups = api.groups.iter().map(|group| group_description(api, group));
+    let checks = name_checks(api, &schemes);
+    let groups = api
+        .groups
+        .iter()
+        .map(|group| group_description(api, &schemes, group));
 
     quote! {
         impl #name {
@@ -32,11 +46,15 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
             /// its types, its security schemes and the problem of its errors. Its title and its version are the
             /// contract crate's.
             #vis fn openapi() -> ::quoll::rest::openapi::Document {
+                const SCHEMES: &[::quoll::__private::openapi::SchemeRef] = &[#(#refs),*];
+                const _: () = {
+                    #(#checks)*
+                };
                 static API: ::quoll::__private::openapi::Api = ::quoll::__private::openapi::Api {
                     docs: &[#(#docs),*],
                     title: ::core::env!("CARGO_PKG_NAME"),
                     version: ::core::env!("CARGO_PKG_VERSION"),
-                    schemes: &[#(#declared),*],
+                    schemes: SCHEMES,
                     groups: &[#(#groups),*],
                 };
 
@@ -46,15 +64,120 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
     }
 }
 
-/// The checks of the document, written in the api's `const _` block: no two schemes of the api, one of which is the
-/// application's, have one name. A type with no schema is an error on its name in `Api::openapi`, which names the
-/// schema of each type the contract describes.
-pub(crate) fn checks(api: &Api) -> Vec<TokenStream> {
-    if !api.openapi {
-        return Vec::new();
+/// A scheme of the api, as the document lists it.
+struct ListedScheme {
+    /// The scheme as the contract writes it, which errors show.
+    word: String,
+    /// Its type.
+    ty: TokenStream,
+    /// Whether it is a type of the application's, whose name the macro does not know.
+    foreign: bool,
+    /// Where an error about it points.
+    span: Span,
+}
+
+/// Each scheme of the api once, by its word: the declared ones, in the order the contract writes them, then the
+/// others the routes take.
+fn schemes(api: &Api) -> Vec<ListedScheme> {
+    let mut schemes: Vec<ListedScheme> = api
+        .schemes
+        .iter()
+        .map(|scheme| {
+            let name = &scheme.name;
+
+            ListedScheme {
+                word: name.unraw().to_string(),
+                ty: quote! { #name },
+                foreign: false,
+                span: name.span(),
+            }
+        })
+        .collect();
+
+    for scheme in api
+        .groups
+        .iter()
+        .flat_map(|group| &group.routes)
+        .flat_map(|route| route.schemes())
+    {
+        let word = scheme.word();
+        if schemes.iter().any(|listed| listed.word == word) {
+            continue;
+        }
+
+        schemes.push(ListedScheme {
+            word,
+            ty: scheme_type(scheme),
+            foreign: scheme.kind == SchemeKind::Foreign,
+            span: scheme.span(),
+        });
     }
 
-    name_checks(api)
+    schemes
+}
+
+/// The index of `scheme` in the api's list.
+fn index_of(schemes: &[ListedScheme], scheme: &Scheme) -> usize {
+    let word = scheme.word();
+
+    schemes
+        .iter()
+        .position(|listed| listed.word == word)
+        .unwrap_or_default()
+}
+
+/// The compile-time checks of the names of the schemes, which name them in the document's `securitySchemes`: each
+/// one is a component's name, and no two are one. The macro knows the names of `Bearer`, `Basic` and the declared
+/// schemes, which it keeps apart, so each check is about a scheme of the application's.
+fn name_checks(api: &Api, schemes: &[ListedScheme]) -> Vec<TokenStream> {
+    let mut checks = Vec::new();
+
+    for (index, second) in schemes.iter().enumerate() {
+        if second.foreign {
+            let message = LitStr::new(
+                &format!(
+                    "the scheme `{}` has a `NAME` that cannot name it in the OpenAPI document: write it with ASCII letters, digits, `.`, `-` and `_`",
+                    second.word
+                ),
+                second.span,
+            );
+
+            checks.push(quote_spanned! {second.span=>
+                ::core::assert!(
+                    ::quoll::__private::openapi::is_component_name(SCHEMES[#index].name),
+                    #message
+                );
+            });
+        }
+
+        for (first_index, first) in schemes[..index].iter().enumerate() {
+            if !first.foreign && !second.foreign {
+                continue;
+            }
+
+            let message = LitStr::new(
+                &format!(
+                    "the schemes `{}` and `{}` of the api `{}` have one `NAME`, which names a scheme in the OpenAPI document: give each scheme its own, and name a scheme by one path throughout the api",
+                    first.word,
+                    second.word,
+                    api.name.unraw()
+                ),
+                second.span,
+            );
+
+            checks.push(quote_spanned! {second.span=>
+                ::core::assert!(
+                    !::quoll::__private::openapi::same_name(
+                        SCHEMES[#first_index].name,
+                        SCHEMES[#index].name,
+                    ),
+                    #message
+                );
+            });
+        }
+    }
+
+    checks
 }
 
 /// The type a parameter's or a body's schema describes: the `T` of an `Option<T>` for a query key or a header, the
@@ -66,7 +189,9 @@ fn param_schema(param: &Param) -> Option<&Type> {
             Some(option_inner(&param.ty).unwrap_or(&param.ty))
         }
         ParamKind::Body(kind) if !kind.schema => None,
-        ParamKind::Body(kind) if kind.document == "Form" => type_argument(&param.ty),
+        ParamKind::Body(kind) if *kind == BodyKind::FORM => {
+            Some(type_argument(&param.ty).unwrap_or(&param.ty))
+        }
         ParamKind::Body(_) => Some(&param.ty),
     }
 }
@@ -95,86 +220,13 @@ fn type_argument(ty: &Type) -> Option<&Type> {
     })
 }
 
-/// A compile-time check per pair of schemes of the api that might have one name: each name is a key of the
-/// document's `securitySchemes`. The macro knows the names of `Bearer`, `Basic` and the declared schemes, which it
-/// keeps apart, so a pair holds a scheme of the application's.
-fn name_checks(api: &Api) -> Vec<TokenStream> {
-    // Each scheme once, by its word: the declared ones, then those the routes take.
-    let mut schemes: Vec<(String, TokenStream, bool)> = api
-        .schemes
-        .iter()
-        .map(|scheme| {
-            let name = &scheme.name;
-
-            (name.unraw().to_string(), quote! { #name }, false)
-        })
-        .collect();
-
-    for scheme in api
-        .groups
-        .iter()
-        .flat_map(|group| &group.routes)
-        .flat_map(|route| route.schemes())
-    {
-        let word = scheme.word();
-        if schemes.iter().any(|(seen, ..)| *seen == word) {
-            continue;
-        }
-
-        schemes.push((
-            word,
-            scheme_type(scheme),
-            scheme.kind == SchemeKind::Foreign,
-        ));
-    }
-
-    let mut checks = Vec::new();
-    for (index, (second_word, second, second_foreign)) in schemes.iter().enumerate() {
-        for (first_word, first, first_foreign) in &schemes[..index] {
-            if !first_foreign && !second_foreign {
-                continue;
-            }
-
-            let message = LitStr::new(
-                &format!(
-                    "the schemes `{first_word}` and `{second_word}` of the api `{}` have one `NAME`, which names a scheme in the OpenAPI document: give each scheme its own, and name a scheme by one path throughout the api",
-                    api.name.unraw()
-                ),
-                second.span(),
-            );
-
-            checks.push(quote_spanned! {second.span()=>
-                ::core::assert!(
-                    !::quoll::__private::openapi::same_name(
-                        <#first as ::quoll::rest::Scheme>::NAME,
-                        <#second as ::quoll::rest::Scheme>::NAME,
-                    ),
-                    #message
-                );
-            });
-        }
-    }
-
-    checks
-}
-
-/// The description of a scheme: its name and its `openapi`, which the scheme gives.
-fn scheme_ref(scheme: &TokenStream) -> TokenStream {
-    quote! {
-        ::quoll::__private::openapi::SchemeRef {
-            name: <#scheme as ::quoll::rest::Scheme>::NAME,
-            openapi: <#scheme as ::quoll::rest::Scheme>::openapi,
-        }
-    }
-}
-
-fn group_description(api: &Api, group: &Group) -> TokenStream {
+fn group_description(api: &Api, schemes: &[ListedScheme], group: &Group) -> TokenStream {
     let name = group.name.unraw().to_string();
     let docs = &group.docs.0;
     let routes = group
         .routes
         .iter()
-        .map(|route| route_description(api, group, route));
+        .map(|route| route_description(api, schemes, group, route));
 
     quote! {
         ::quoll::__private::openapi::Group {
@@ -185,7 +237,12 @@ fn group_description(api: &Api, group: &Group) -> TokenStream {
     }
 }
 
-fn route_description(api: &Api, group: &Group, route: &Route) -> TokenStream {
+fn route_description(
+    api: &Api,
+    schemes: &[ListedScheme],
+    group: &Group,
+    route: &Route,
+) -> TokenStream {
     let id = route.operation_id(group);
     let method = route.method.as_str().to_ascii_lowercase();
     let path = route.full_path(&api.prefix);
@@ -194,13 +251,11 @@ fn route_description(api: &Api, group: &Group, route: &Route) -> TokenStream {
     let body = match route.body() {
         Some((param, kind)) => {
             let variant = syn::Ident::new(kind.document, proc_macro2::Span::call_site());
-            let schema = param_schema(param).map(schema_fn);
 
-            match schema {
+            match param_schema(param).map(schema_fn) {
                 Some(schema) => quote! { ::core::option::Option::Some(
                     ::quoll::__private::openapi::Body::#variant(#schema)
                 ) },
-                None if kind.schema => quote! { ::core::option::Option::None },
                 None => quote! { ::core::option::Option::Some(
                     ::quoll::__private::openapi::Body::#variant
                 ) },
@@ -226,16 +281,13 @@ fn route_description(api: &Api, group: &Group, route: &Route) -> TokenStream {
     let auth = match &route.auth {
         None => quote! { ::core::option::Option::None },
         Some(auth) => {
-            let schemes = auth
-                .schemes
-                .iter()
-                .map(|scheme| scheme_ref(&scheme_type(scheme)));
+            let indices = auth.schemes.iter().map(|scheme| index_of(schemes, scheme));
             let optional = auth.optional;
             let scopes = &auth.scopes;
 
             quote! {
                 ::core::option::Option::Some(::quoll::__private::openapi::Auth {
-                    schemes: &[#(#schemes),*],
+                    schemes: &[#(#indices),*],
                     optional: #optional,
                     scopes: &[#(#scopes),*],
                 })
@@ -312,9 +364,8 @@ mod tests {
 
     fn expansion(contract: TokenStream) -> String {
         let Contract(api) = syn::parse2(contract).expect("the contract is valid");
-        let checks = checks(&api);
 
-        format!("{} {}", expand(&api), quote! { #(#checks)* })
+        expand(&api).to_string()
     }
 
     #[test]
@@ -359,20 +410,54 @@ mod tests {
             #[auth(Bearer | crate::auth::Hmac)]
             pub group Notes {
                 GET "/notes" => list() -> Vec<Note>;
+                #[auth(crate::auth::Hmac)]
+                GET "/stats" => stats() -> u64;
             }
         });
 
+        // Each scheme once, in the order: declared, then taken by the routes.
+        assert_eq!(
+            tokens
+                .matches("< crate :: auth :: Hmac as :: quoll :: rest :: Scheme > :: NAME")
+                .count(),
+            1,
+            "{tokens}"
+        );
+        assert!(tokens.contains("schemes : & [1usize , 2usize]"), "{tokens}");
+        assert!(tokens.contains("schemes : & [2usize]"), "{tokens}");
         assert!(
-            tokens.contains("< Key as :: quoll :: rest :: Scheme > :: NAME , < crate :: auth :: Hmac as :: quoll :: rest :: Scheme > :: NAME"),
+            tokens.contains("is_component_name (SCHEMES [2usize] . name)"),
             "{tokens}"
         );
         assert!(
-            tokens.contains("< :: quoll :: rest :: Bearer as :: quoll :: rest :: Scheme > :: NAME , < crate :: auth :: Hmac as :: quoll :: rest :: Scheme > :: NAME"),
+            tokens.contains("same_name (SCHEMES [0usize] . name , SCHEMES [2usize] . name ,)"),
             "{tokens}"
         );
         assert!(
-            !tokens.contains("same_name (< Key as :: quoll :: rest :: Scheme > :: NAME , < :: quoll :: rest :: Bearer"),
+            tokens.contains("same_name (SCHEMES [1usize] . name , SCHEMES [2usize] . name ,)"),
+            "{tokens}"
+        );
+        assert!(
+            !tokens.contains("same_name (SCHEMES [0usize] . name , SCHEMES [1usize] . name ,)"),
             "the macro keeps its own schemes apart: {tokens}"
         );
+        assert!(
+            !tokens.contains("is_component_name (SCHEMES [0usize]"),
+            "the macro checks its own names: {tokens}"
+        );
+    }
+
+    #[test]
+    fn a_contract_with_openapi_none_has_no_document() {
+        let tokens = expansion(quote! {
+            #[openapi(none)]
+            pub api Api = "";
+
+            pub group Repos {
+                GET "/repos" => list() -> Vec<Repo>;
+            }
+        });
+
+        assert!(tokens.is_empty(), "{tokens}");
     }
 }

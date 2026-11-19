@@ -74,13 +74,17 @@ fn expand(api: &Api) -> proc_macro2::TokenStream {
     }
 }
 
-/// Checks that each type of quoll's the contract names, which the macro recognizes by its name, is the crate's, that
-/// each scheme of the application's it names is a scheme, and that each scheme has a name of its own, which the
-/// OpenAPI document names it by. The types are the contract's tokens, so that the user's
-/// import names them; and the check is written whatever the features of `quoll`, so that the import is used, and the
-/// type checked, with neither of them.
+/// Checks that each type of quoll's the contract names, which the macro recognizes by its name, is the crate's, and,
+/// for a contract with no OpenAPI document, whose `Api::openapi` checks it, that each scheme of the application's it
+/// names is a scheme. The types are the contract's tokens, so that the user's import names them; and the check is
+/// written whatever the features of `quoll`, so that the import is used, and the type checked, with neither of them.
 fn known_types(api: &Api) -> proc_macro2::TokenStream {
-    let mut checks = scheme::checks(api);
+    // With a document, `Api::openapi` names each scheme once, which checks it.
+    let mut checks = if api.openapi {
+        Vec::new()
+    } else {
+        scheme::checks(api)
+    };
 
     for route in api.groups.iter().flat_map(|group| &group.routes) {
         let result = route
@@ -97,8 +101,6 @@ fn known_types(api: &Api) -> proc_macro2::TokenStream {
             checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::#check::<#ty>(); });
         }
     }
-
-    checks.extend(openapi::checks(api));
 
     if checks.is_empty() {
         return proc_macro2::TokenStream::new();
