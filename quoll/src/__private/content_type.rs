@@ -34,6 +34,16 @@ pub const TEXT: &str = "text/plain";
 /// Text as quoll sends it, which names its charset.
 pub const TEXT_UTF8: &str = "text/plain; charset=utf-8";
 
+/// Server-sent events.
+#[cfg_attr(
+    not(feature = "client"),
+    expect(dead_code, reason = "on the server, axum's `Sse` writes it")
+)]
+pub const EVENT_STREAM: &str = "text/event-stream";
+
+/// JSON Lines, a JSON value per line.
+pub const JSON_LINES: &str = "application/jsonl";
+
 /// Bytes of no known type, what a `Bytes` is unless it says otherwise.
 pub const OCTET_STREAM: &str = "application/octet-stream";
 

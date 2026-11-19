@@ -930,11 +930,12 @@ mod tests {
         assert_eq!(reply.value().map(text), Some("Note".into()));
 
         let events = group(quote! { Events<Note> });
-        let all = messages(quote! {
+        let api = parse(quote! {
             pub api Api = "/api";
             pub group G { GET "/x" => f() -> #events; }
-        });
-        assert!(all[0].contains("`Events` is not supported"), "{all:?}");
+        })
+        .unwrap();
+        assert!(matches!(api.groups[0].routes[0].reply, Reply::Events(_)));
 
         let form = group(quote! { Form<Login> });
         let api = parse(quote! {
@@ -1034,16 +1035,6 @@ mod tests {
             auth[0].contains("the scheme `Basic` is not supported yet"),
             "{auth:?}"
         );
-
-        let events = messages(quote! {
-            pub api Api = "/api";
-            pub group G { GET "/a" => f() -> Events<Note>; }
-        });
-        assert!(
-            events[0]
-                .contains("nothing (no `->`), `T`, `Created<T>`, `Accepted<T>`, `Text` or `Bytes`"),
-            "{events:?}"
-        );
     }
 
     #[test]
@@ -1056,6 +1047,8 @@ mod tests {
                 GET "/readme" => readme() -> Text;
                 GET "/logo" => logo() -> rest::Bytes;
                 GET "/texts" => texts() -> Vec<Text>;
+                GET "/events" => events() -> Events<Note>;
+                POST "/lines" => lines() -> rest::JsonLines<Note>;
             }
         })
         .unwrap();
@@ -1081,6 +1074,63 @@ mod tests {
 
         // Only the result's own type is read so: a `Vec` of text is JSON, which does not compile later.
         assert!(matches!(&routes[3].reply, Reply::Json(_)));
+
+        // A stream is the same type on both sides: the client returns it as the server's trait does.
+        assert!(matches!(&routes[4].reply, Reply::Events(ty) if text(ty) == "Events < Note >"));
+        assert_eq!(
+            routes[4].reply.value().map(text),
+            Some("Events < Note >".into())
+        );
+        assert!(
+            matches!(&routes[5].reply, Reply::JsonLines(ty) if text(ty) == "rest :: JsonLines < Note >")
+        );
+        assert_eq!(
+            routes[5].reply.served().map(text),
+            Some("rest :: JsonLines < Note >".into())
+        );
+    }
+
+    #[test]
+    fn a_stream_wraps_the_type_of_one_item() {
+        for wrapper in ["Events", "JsonLines"] {
+            let name = Ident::new(wrapper, proc_macro2::Span::call_site());
+            let bare = messages(quote! {
+                pub api Api = "/api";
+                pub group G { GET "/x" => f() -> #name; }
+            });
+            assert!(
+                bare[0].contains(&format!(
+                    "`{wrapper}` wraps the type of each item: write `{wrapper}<Note>`"
+                )),
+                "{bare:?}"
+            );
+
+            let two = messages(quote! {
+                pub api Api = "/api";
+                pub group G { GET "/x" => f() -> #name<Note, Job>; }
+            });
+            assert!(
+                two[0].contains(&format!("`{wrapper}` wraps one type, each item")),
+                "{two:?}"
+            );
+
+            let body = messages(quote! {
+                pub api Api = "/api";
+                pub group G { POST "/x" => f(notes: #name<Note>); }
+            });
+            assert!(
+                body[0].contains(&format!(
+                    "`{wrapper}` is what a route answers, not a body it reads"
+                )),
+                "{body:?}"
+            );
+
+            let path = messages(quote! {
+                pub api Api = "/api";
+                pub group G { GET "/x/{id}" => f(id: #name<i64>); }
+            });
+            assert!(path[0].contains("is read from text"), "{path:?}");
+        }
     }
 
     #[test]
@@ -1112,6 +1162,8 @@ mod tests {
             quote! { Accepted<Job> },
             quote! { Text },
             quote! { Bytes },
+            quote! { Events<Note> },
+            quote! { JsonLines<Note> },
         ] {
             let all = messages(quote! {
                 pub api Api = "/api";

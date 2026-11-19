@@ -1,0 +1,105 @@
+//! The answers of a route that streams its result: server-sent events and JSON Lines, each value sent as it comes.
+
+use std::time::Duration;
+
+use axum::body::Body;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
+use futures_core::Stream;
+use futures_util::{StreamExt, stream};
+use http::{HeaderValue, header};
+use serde::Serialize;
+
+use super::answer;
+use crate::__private::content_type::JSON_LINES;
+use crate::__private::known::{IsEvents, IsJsonLines, Items};
+use crate::rest::{Error, Result};
+
+/// How long an event stream goes with nothing sent before it sends a comment, so that a proxy that closes a
+/// connection it sees idle keeps it: nginx waits 60 seconds by default.
+const KEEP_ALIVE: Duration = Duration::from_secs(15);
+
+/// A 200 with server-sent events, `text/event-stream`: each value of the handler's stream as the JSON `data` of an
+/// event, and a comment when 15 seconds pass with none.
+///
+/// # Errors
+///
+/// The handler's error. An item that fails once the answer has begun is logged, and cuts the answer short.
+pub fn events<E>(result: Result<E>) -> Result<Response>
+where
+    E: IsEvents,
+    E::Item: Serialize + 'static,
+{
+    let events = sent(result?.into_items(), |value| {
+        Event::default().json_data(value).map_err(Error::internal)
+    });
+    let keep_alive = KeepAlive::new().interval(KEEP_ALIVE);
+
+    Ok(Sse::new(events).keep_alive(keep_alive).into_response())
+}
+
+/// A 200 with JSON Lines, `application/jsonl`: each value of the handler's stream as its JSON on one line, ended by
+/// `\n`.
+///
+/// # Errors
+///
+/// The handler's error. An item that fails once the answer has begun is logged, and cuts the answer short.
+pub fn json_lines<L>(result: Result<L>) -> Result<Response>
+where
+    L: IsJsonLines,
+    L::Item: Serialize + 'static,
+{
+    let lines = sent(result?.into_items(), |value| {
+        let mut line = serde_json::to_vec(value).map_err(Error::internal)?;
+
+        line.push(b'\n');
+        Ok(line)
+    });
+    let content_type = [(header::CONTENT_TYPE, HeaderValue::from_static(JSON_LINES))];
+
+    Ok((content_type, Body::from_stream(lines)).into_response())
+}
+
+/// What the server sends of `items`: each value as `write` writes it, until the stream ends or an item fails. A
+/// failure is logged and sent as the body's error, once what came before it is written, which cuts the answer short;
+/// the stream is dropped then.
+///
+/// The stream is asked for its next value only when the body is asked for its next piece, once the connection has
+/// taken the last one; and it is dropped with the body, when the connection closes.
+fn sent<T, W, F>(items: Items<T>, write: F) -> impl Stream<Item = Result<W>> + Send + 'static
+where
+    T: 'static,
+    W: Send + 'static,
+    F: Fn(&T) -> Result<W> + Send + 'static,
+{
+    stream::unfold(Some((items, write)), |state| async move {
+        let (mut items, write) = state?;
+        let written = match items.next().await? {
+            Ok(value) => write(&value),
+            Err(error) => Err(error),
+        };
+
+        let Err(error) = written else {
+            return Some((written, Some((items, write))));
+        };
+
+        // hyper drops what it has not written yet when a body fails: a turn first lets it send what came before.
+        tokio::task::yield_now().await;
+
+        Some((Err(cut(error)), None))
+    })
+}
+
+/// Logs `error`, an item of a stream that failed once the status of its answer was sent: the answer is cut short, so
+/// that the client reads an error rather than an end it would take for the last value.
+fn cut(error: Error) -> Error {
+    let (status, detail) = answer(&error);
+
+    tracing::error!(
+        %status,
+        detail,
+        "an item of a stream failed once its answer had begun: the answer is cut short"
+    );
+
+    error
+}

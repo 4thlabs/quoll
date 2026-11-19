@@ -155,6 +155,8 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
         Reply::Json(_) | Reply::Created { .. } | Reply::Accepted { .. } => Some(quote! { JSON }),
         Reply::Text(_) => Some(quote! { TEXT }),
         Reply::Bytes(_) => Some(quote! { ANY }),
+        Reply::Events(_) => Some(quote! { EVENT_STREAM }),
+        Reply::JsonLines(_) => Some(quote! { JSON_LINES }),
     }
     .map(|media_type| quote! { .accept(::quoll::__private::client::#media_type) });
     let answer = match &route.reply {
@@ -164,6 +166,8 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
         }
         Reply::Text(ty) => quote_spanned! {ty.span()=> .text::<#ty>().await },
         Reply::Bytes(ty) => quote_spanned! {ty.span()=> .bytes::<#ty>().await },
+        Reply::Events(ty) => quote_spanned! {ty.span()=> .events::<#ty>().await },
+        Reply::JsonLines(ty) => quote_spanned! {ty.span()=> .json_lines::<#ty>().await },
     };
 
     quote! {

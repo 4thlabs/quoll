@@ -290,6 +290,10 @@ pub(crate) enum Reply {
     Text(Type),
     /// `Bytes`: 200, of the content type they carry.
     Bytes(Type),
+    /// `Events<T>`: 200, server-sent events, the JSON of a `T` in each.
+    Events(Type),
+    /// `JsonLines<T>`: 200, `application/jsonl`, the JSON of a `T` on each line.
+    JsonLines(Type),
 }
 
 impl Reply {
@@ -301,7 +305,9 @@ impl Reply {
             | Self::Created { outer: ty, .. }
             | Self::Accepted { outer: ty, .. }
             | Self::Text(ty)
-            | Self::Bytes(ty) => Some(ty),
+            | Self::Bytes(ty)
+            | Self::Events(ty)
+            | Self::JsonLines(ty) => Some(ty),
         }
     }
 
@@ -314,7 +320,9 @@ impl Reply {
             | Self::Created { inner: ty, .. }
             | Self::Accepted { inner: ty, .. }
             | Self::Text(ty)
-            | Self::Bytes(ty) => Some(ty),
+            | Self::Bytes(ty)
+            | Self::Events(ty)
+            | Self::JsonLines(ty) => Some(ty),
         }
     }
 }
@@ -714,6 +722,8 @@ const NOT_TEXT: &[&str] = &[
     "Form",
     "Text",
     "Bytes",
+    "Events",
+    "JsonLines",
 ];
 
 /// The types read from one piece of text, which a query struct is not.
@@ -759,7 +769,7 @@ fn check_body(method: Method, name: &Ident, ty: &Type, earlier: Option<&Ident>) 
             ),
         ));
     }
-    if let Some(result) = reserved_name(ty, &["Created", "Accepted"]) {
+    if let Some(result) = reserved_name(ty, &["Created", "Accepted", "Events", "JsonLines"]) {
         return Err(Error::new_spanned(
             ty,
             format!(
@@ -790,28 +800,38 @@ impl Reply {
                 "a route that returns nothing has no `->`: remove `-> ()`",
             ));
         }
-        if let Some(wrapper) = reserved_name(&ty, &["Events", "JsonLines"]) {
-            return Err(Error::new_spanned(
-                &ty,
-                format!(
-                    "`{wrapper}` is not supported as a result: a route returns nothing (no `->`), `T`, `Created<T>`, `Accepted<T>`, `Text` or `Bytes`"
-                ),
-            ));
-        }
+        let reserved = [
+            "Created",
+            "Accepted",
+            "Text",
+            "Bytes",
+            "Events",
+            "JsonLines",
+        ];
 
-        match reserved_name(&ty, &["Created", "Accepted", "Text", "Bytes"]) {
+        match reserved_name(&ty, &reserved) {
             Some("Created") => {
-                let inner = wrapped(&ty, "Created")?;
+                let inner = wrapped(&ty, "Created", "the body")?;
 
                 Ok(Self::Created { outer: ty, inner })
             }
             Some("Accepted") => {
-                let inner = wrapped(&ty, "Accepted")?;
+                let inner = wrapped(&ty, "Accepted", "the body")?;
 
                 Ok(Self::Accepted { outer: ty, inner })
             }
             Some("Text") => Ok(Self::Text(ty)),
             Some("Bytes") => Ok(Self::Bytes(ty)),
+            Some("Events") => {
+                wrapped(&ty, "Events", "each item")?;
+
+                Ok(Self::Events(ty))
+            }
+            Some("JsonLines") => {
+                wrapped(&ty, "JsonLines", "each item")?;
+
+                Ok(Self::JsonLines(ty))
+            }
             _ => Ok(Self::Json(ty)),
         }
     }
@@ -832,9 +852,9 @@ fn reserved_name<'a>(ty: &Type, names: &[&'a str]) -> Option<&'a str> {
     names.iter().copied().find(|name| last.ident == name)
 }
 
-/// The `T` of a `Created<T>` or an `Accepted<T>`, `wrapper`, whose last segment the caller has read; an error when it
-/// has no single `T`.
-fn wrapped(ty: &Type, wrapper: &str) -> Result<Type> {
+/// The `T` of a `Created<T>`, an `Accepted<T>`, an `Events<T>` or a `JsonLines<T>`, `wrapper`, whose last segment the
+/// caller has read; an error when it has no single `T`, which is `what` the wrapper sends: the body or each item.
+fn wrapped(ty: &Type, wrapper: &str, what: &str) -> Result<Type> {
     let args = match peel(ty) {
         Type::Path(path) => path.path.segments.last().map(|last| &last.arguments),
         _ => None,
@@ -842,7 +862,7 @@ fn wrapped(ty: &Type, wrapper: &str) -> Result<Type> {
     let Some(syn::PathArguments::AngleBracketed(args)) = args else {
         return Err(Error::new_spanned(
             ty,
-            format!("`{wrapper}` wraps the type of the body: write `{wrapper}<Note>`"),
+            format!("`{wrapper}` wraps the type of {what}: write `{wrapper}<Note>`"),
         ));
     };
 
@@ -854,7 +874,7 @@ fn wrapped(ty: &Type, wrapper: &str) -> Result<Type> {
         (Some(inner), None, 1) => Ok(inner.clone()),
         _ => Err(Error::new_spanned(
             ty,
-            format!("`{wrapper}` wraps one type, the body: write `{wrapper}<Note>`"),
+            format!("`{wrapper}` wraps one type, {what}: write `{wrapper}<Note>`"),
         )),
     }
 }

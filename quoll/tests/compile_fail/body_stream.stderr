@@ -1,0 +1,11 @@
+error: `Events` is what a route answers, not a body it reads: take the type it wraps as the body, without `Events`
+ --> tests/compile_fail/body_stream.rs:7:40
+  |
+7 |         POST "/events" => send(events: rest::Events<Note>);
+  |                                        ^^^^^^^^^^^^^^^^^^
+
+error: `JsonLines` is what a route answers, not a body it reads: take the type it wraps as the body, without `JsonLines`
+ --> tests/compile_fail/body_stream.rs:8:41
+  |
+8 |         POST "/lines"  => import(lines: JsonLines<Note>);
+  |                                         ^^^^^^^^^^^^^^^

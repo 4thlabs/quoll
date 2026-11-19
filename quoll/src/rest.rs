@@ -28,9 +28,13 @@
 //! bytes of any content type, which they keep. It asks for that content type with `Accept`, `*/*` for bytes, unless
 //! the route sends an `Accept` header of its own.
 //!
-//! The contract names `Created`, `Accepted`, `Form`, `Text` and `Bytes` as it names any type, so that the module that
-//! writes it imports them: `use quoll::rest::{self, Created, Form};`. A type of another crate with one of these names
-//! does not compile there.
+//! A route streams its result with [`Events`], server-sent events, or [`JsonLines`], one JSON value per line, both
+//! answered 200: the server sends the values of a stream as they come, and the client reads them as a stream of
+//! `Result<T>`. It asks for their content type with `Accept`, and an answer of another one is an error with no status.
+//!
+//! The contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events` and `JsonLines` as it names any type,
+//! so that the module that writes it imports them: `use quoll::rest::{self, Created, Form};`. A type of another crate
+//! with one of these names does not compile there.
 //!
 //! A group or a route that takes a credential says so with `#[auth(Bearer)]`, and a route of such a group that takes
 //! none with `#[auth(none)]`: the service implements [`Authenticate`], whose caller each handler receives, and the
@@ -45,6 +49,7 @@ mod created;
 pub(crate) mod error;
 mod problem;
 mod route;
+mod stream;
 #[cfg(feature = "server")]
 pub mod test;
 
@@ -56,3 +61,4 @@ pub use error::{Error, Result};
 pub use problem::Problem;
 pub use quoll_macros::api;
 pub use route::Route;
+pub use stream::{Events, JsonLines};

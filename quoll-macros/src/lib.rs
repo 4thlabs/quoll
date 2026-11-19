@@ -61,9 +61,10 @@ fn expand(api: &Api) -> proc_macro2::TokenStream {
     }
 }
 
-/// Checks that each type the contract names `Created`, `Accepted`, `Form`, `Text` or `Bytes`, which the macro reads by
-/// its name, is the crate's. The types are the contract's tokens, so that the user's import names them; and the check
-/// is written whatever the features of `quoll`, so that the import is used, and the type checked, with neither of them.
+/// Checks that each type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events` or `JsonLines`,
+/// which the macro reads by its name, is the crate's. The types are the contract's tokens, so that the user's import
+/// names them; and the check is written whatever the features of `quoll`, so that the import is used, and the type
+/// checked, with neither of them.
 fn known_types(api: &Api) -> proc_macro2::TokenStream {
     let mut checks = Vec::new();
 
@@ -74,6 +75,8 @@ fn known_types(api: &Api) -> proc_macro2::TokenStream {
             Reply::Accepted { outer, .. } => Some((outer, quote! { accepted })),
             Reply::Text(ty) => Some((ty, quote! { text })),
             Reply::Bytes(ty) => Some((ty, quote! { bytes })),
+            Reply::Events(ty) => Some((ty, quote! { events })),
+            Reply::JsonLines(ty) => Some((ty, quote! { json_lines })),
         };
         if let Some((ty, check)) = result {
             checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::#check::<#ty>(); });

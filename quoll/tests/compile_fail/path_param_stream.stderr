@@ -1,0 +1,11 @@
+error: the path parameter `id` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants
+ --> tests/compile_fail/path_param_stream.rs:7:38
+  |
+7 |         GET "/notes/{id}" => get(id: Events<i64>);
+  |                                      ^^^^^^^^^^^
+
+error: the header `X-Lines` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants, or an `Option` of one for a header that may be missing
+ --> tests/compile_fail/path_param_stream.rs:8:56
+  |
+8 |         GET "/lines" => lines(header("X-Lines") lines: JsonLines<i64>);
+  |                                                        ^^^^^^^^^^^^^^

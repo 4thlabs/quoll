@@ -303,6 +303,12 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
         Reply::Bytes(ty) => {
             quote_spanned! {ty.span()=> ::quoll::__private::server::ok_bytes(#call) }
         }
+        Reply::Events(ty) => {
+            quote_spanned! {ty.span()=> ::quoll::__private::server::events(#call) }
+        }
+        Reply::JsonLines(ty) => {
+            quote_spanned! {ty.span()=> ::quoll::__private::server::json_lines(#call) }
+        }
     };
 
     let request_pattern = if route.params.is_empty() && route.auth.is_none() {

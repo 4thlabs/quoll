@@ -1,0 +1,5 @@
+error: a HEAD answer has no body, so a HEAD route returns nothing: remove the `->` and its type
+ --> tests/compile_fail/result_json_lines_on_head.rs:7:32
+  |
+7 |         HEAD "/" => check() -> rest::JsonLines<String>;
+  |                                ^^^^^^^^^^^^^^^^^^^^^^^
