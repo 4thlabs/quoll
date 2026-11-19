@@ -1,0 +1,5 @@
+error: unexpected `GET`: a route goes inside a group: `pub group Name { ... }`
+ --> tests/compile_fail/route_outside_group.rs:5:5
+  |
+5 |     GET "/notes" => list();
+  |     ^^^

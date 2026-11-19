@@ -1,0 +1,5 @@
+error: expected `api` or `group`: an item of a contract starts with one of them
+ --> tests/compile_fail/item_not_a_word.rs:4:5
+  |
+4 |     "api" Api;
+  |     ^^^^^

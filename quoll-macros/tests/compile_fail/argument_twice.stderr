@@ -1,0 +1,5 @@
+error: the argument `id` is written twice: each argument has its own name
+ --> tests/compile_fail/argument_twice.rs:7:43
+  |
+7 |         GET "/notes/{id}" => get(id: i64, id: i64);
+  |                                           ^^

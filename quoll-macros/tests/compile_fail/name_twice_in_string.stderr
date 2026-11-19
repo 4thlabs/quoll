@@ -1,0 +1,5 @@
+error: `{id}` appears twice in the string: each argument takes one place, in the path or in the query
+ --> tests/compile_fail/name_twice_in_string.rs:7:13
+  |
+7 |         GET "/notes/{id}?id={id}" => get(id: i64);
+  |             ^^^^^^^^^^^^^^^^^^^^^

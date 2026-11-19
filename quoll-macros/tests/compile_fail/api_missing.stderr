@@ -1,0 +1,11 @@
+error: a contract names its api: write `pub api Api = "/api";`
+ --> tests/compile_fail/api_missing.rs:3:1
+  |
+3 | / rest::api! {
+4 | |     pub group Notes {
+5 | |         GET "/notes" => list();
+6 | |     }
+7 | | }
+  | |_^
+  |
+  = note: this error originates in the macro `rest::api` (in Nightly builds, run with -Z macro-backtrace for more info)

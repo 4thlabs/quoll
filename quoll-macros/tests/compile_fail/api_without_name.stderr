@@ -1,0 +1,5 @@
+error: `api` takes the name of the api's type: write `api Api = "/api";`
+ --> tests/compile_fail/api_without_name.rs:4:13
+  |
+4 |     pub api = "/api";
+  |             ^

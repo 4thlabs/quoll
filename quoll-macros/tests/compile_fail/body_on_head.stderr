@@ -1,0 +1,5 @@
+error: `note` is neither a `{note}` of the path nor a `key={note}` of the query, and HEAD takes no body: write it in the path or the query
+ --> tests/compile_fail/body_on_head.rs:7:32
+  |
+7 |         HEAD "/notes" => check(note: NewNote);
+  |                                ^^^^

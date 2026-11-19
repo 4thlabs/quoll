@@ -1,0 +1,5 @@
+error: the contract has one api, and `Api` is already it: remove this one
+ --> tests/compile_fail/api_second.rs:5:9
+  |
+5 |     pub api Other = "/other";
+  |         ^^^

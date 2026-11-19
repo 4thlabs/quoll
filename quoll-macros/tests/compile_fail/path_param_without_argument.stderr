@@ -1,0 +1,5 @@
+error: the `{id}` of the path has no argument named `id`: add `id: Type` to the arguments
+ --> tests/compile_fail/path_param_without_argument.rs:7:13
+  |
+7 |         GET "/notes/{id}" => get();
+  |             ^^^^^^^^^^^^^

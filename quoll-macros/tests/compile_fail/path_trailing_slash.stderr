@@ -1,0 +1,5 @@
+error: a path has an empty segment (`//` or a final `/`): write "/notes/{id}", not "/notes//{id}" or "/notes/"
+ --> tests/compile_fail/path_trailing_slash.rs:7:13
+  |
+7 |         GET "/notes/" => list();
+  |             ^^^^^^^^^
