@@ -139,8 +139,8 @@ pub(crate) struct Route {
     pub(crate) params: Vec<Param>,
     /// The indices in `params` of the path's parameters, in the order of the path.
     pub(crate) path_order: Vec<usize>,
-    /// What the route answers.
-    pub(crate) reply: Reply,
+    /// What the route returns: nothing, a 204 with no body, or a type.
+    pub(crate) reply: Option<Box<Returned>>,
     /// The scheme the route is authenticated with: its own attribute's, else its group's; `None` when it takes no
     /// credential.
     pub(crate) auth: Option<Scheme>,
@@ -248,16 +248,7 @@ fn body_kind(ty: &Type) -> BodyKind {
         .unwrap_or(BodyKind::JSON)
 }
 
-/// What a route answers, and so its status and its body.
-#[derive(Debug)]
-pub(crate) enum Reply {
-    /// No `->`: 204, no body.
-    None,
-    /// A type: its JSON, or a type of quoll's the macro recognizes.
-    Some(Box<Returned>),
-}
-
-/// The type a route returns.
+/// The type a route returns: its JSON, or a type of quoll's the macro recognizes as a result.
 #[derive(Debug)]
 pub(crate) struct Returned {
     /// The type as the contract writes it, which the server's trait returns.
@@ -265,35 +256,16 @@ pub(crate) struct Returned {
     /// The type the client returns: the one `served` wraps for a `Created<T>` or an `Accepted<T>`, whose status is
     /// only the server's answer, else `served`.
     pub(crate) value: Type,
-    /// How the server answers it and the client reads it.
-    pub(crate) kind: ResultKind,
-    /// The type of quoll's it is, which the generated code checks.
+    /// The type of quoll's it is, a result, which the generated code checks; `None` for JSON.
     pub(crate) known: Option<&'static Known>,
 }
 
-impl Reply {
-    /// The type the server's trait returns, as the contract writes it.
-    pub(crate) fn served(&self) -> Option<&Type> {
-        match self {
-            Self::None => None,
-            Self::Some(returned) => Some(&returned.served),
-        }
-    }
-
-    /// The type of the value the route answers, which the client returns.
-    pub(crate) fn value(&self) -> Option<&Type> {
-        match self {
-            Self::None => None,
-            Self::Some(returned) => Some(&returned.value),
-        }
-    }
-
-    /// How the server answers it and the client reads it; `None` for a route that returns nothing.
-    pub(crate) fn kind(&self) -> Option<ResultKind> {
-        match self {
-            Self::None => None,
-            Self::Some(returned) => Some(returned.kind),
-        }
+impl Returned {
+    /// How the server answers it and the client reads it.
+    pub(crate) fn kind(&self) -> ResultKind {
+        self.known
+            .and_then(|known| known.result)
+            .unwrap_or(ResultKind::JSON)
     }
 }
 
@@ -379,7 +351,7 @@ impl Route {
                     .expect("`match_args` gave each `{name}` of the path its argument")
             })
             .collect();
-        let reply = Reply::read(method, reply)?;
+        let reply = Returned::read(method, reply)?;
 
         Ok(Self {
             docs,
@@ -741,22 +713,27 @@ fn check_body(method: Method, name: &Ident, ty: &Type, earlier: Option<&Ident>) 
         && known.body.is_none()
     {
         let result = known.name;
-
-        return Err(Error::new_spanned(
-            ty,
+        let message = if known.stream {
+            format!(
+                "`{result}` is a stream a route answers, and a route does not read a stream as its body: take all the items at once, a `Vec<Note>` as JSON, or `Bytes`"
+            )
+        } else {
             format!(
                 "`{result}` is what a route answers, not a body it reads: take the type it wraps as the body, without `{result}`"
-            ),
-        ));
+            )
+        };
+
+        return Err(Error::new_spanned(ty, message));
     }
 
     Ok(())
 }
 
-impl Reply {
-    fn read(method: Method, ty: Option<Type>) -> Result<Self> {
+impl Returned {
+    /// What a route of `method` returns, `ty`: none without a `->`.
+    fn read(method: Method, ty: Option<Type>) -> Result<Option<Box<Self>>> {
         let Some(ty) = ty else {
-            return Ok(Self::None);
+            return Ok(None);
         };
 
         if method == Method::Head {
@@ -776,10 +753,9 @@ impl Reply {
         let Some((known, kind)) =
             Known::of(&ty).and_then(|known| known.result.map(|kind| (known, kind)))
         else {
-            return Ok(Self::Some(Box::new(Returned {
+            return Ok(Some(Box::new(Self {
                 value: ty.clone(),
                 served: ty,
-                kind: ResultKind::JSON,
                 known: None,
             })));
         };
@@ -793,10 +769,9 @@ impl Reply {
             _ => ty.clone(),
         };
 
-        Ok(Self::Some(Box::new(Returned {
+        Ok(Some(Box::new(Self {
             served: ty,
             value,
-            kind,
             known: Some(known),
         })))
     }
