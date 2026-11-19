@@ -1,0 +1,5 @@
+error: the scheme `Basic` is not supported yet: write `#[auth(Bearer)]`, or `#[auth(none)]` on a route that takes no credential
+ --> tests/compile_fail/auth_scheme_unsupported.rs:6:12
+  |
+6 |     #[auth(Basic)]
+  |            ^^^^^

@@ -1,13 +1,14 @@
 //! What the server side of a contract becomes: a trait per group, `ApiServices` and `Api::router`.
 //!
 //! All of it goes through `::quoll::__private::server!`, which writes it out only when `quoll` has the feature
-//! `server`. The router's code reads each argument through a helper of `quoll`, and calls the group's service.
+//! `server`. The router's code authenticates the request and reads each argument through a helper of `quoll`, and
+//! calls the group's service.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Method, Param, Reply, Route, is_vec};
+use crate::model::{Api, Group, Method, Param, Reply, Route, Scheme, is_vec};
 use crate::{doc_attrs, route_docs};
 
 /// The server's code of the api, behind the feature `server` of `quoll`.
@@ -40,14 +41,39 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
         group.docs.0.clone()
     };
     lines.extend([String::new(), usage]);
+
+    let schemes = group.schemes();
+    if !schemes.is_empty() {
+        let names: Vec<String> = schemes
+            .iter()
+            .map(|scheme| format!("`Authenticate<{}>`", scheme.name()))
+            .collect();
+        lines.push(format!(
+            " It also implements {}, which gives the caller of each route that takes it.",
+            names.join(" and "),
+        ));
+    }
+
     let docs = doc_attrs(&lines);
     let methods = group.routes.iter().map(|route| method(api, route));
+    let authenticate = schemes.into_iter().map(|scheme| {
+        let scheme = scheme_path(scheme);
+
+        quote! { + ::quoll::rest::Authenticate<#scheme> }
+    });
 
     quote! {
         #docs
-        #vis trait #name: ::core::marker::Send + ::core::marker::Sync + 'static {
+        #vis trait #name: ::core::marker::Send + ::core::marker::Sync + 'static #(#authenticate)* {
             #(#methods)*
         }
+    }
+}
+
+/// The type of a scheme the crate gives.
+fn scheme_path(scheme: Scheme) -> TokenStream {
+    match scheme {
+        Scheme::Bearer => quote! { ::quoll::rest::Bearer },
     }
 }
 
@@ -63,10 +89,17 @@ fn method(api: &Api, route: &Route) -> TokenStream {
         Reply::Json(ty) => quote! { #ty },
         Reply::Created(ty) => quote! { ::quoll::rest::Created<#ty> },
     };
+    let caller = route.auth.map(|scheme| {
+        let scheme = scheme_path(scheme);
+        // Its own hygiene, so that a route's argument may be named `caller` too.
+        let caller = Ident::new("caller", Span::mixed_site());
+
+        quote! { #caller: &<Self as ::quoll::rest::Authenticate<#scheme>>::Caller, }
+    });
 
     quote_spanned! {route.name.span()=>
         #docs
-        fn #name(&self, #(#args),*)
+        fn #name(&self, #caller #(#args),*)
             -> impl ::core::future::Future<Output = ::quoll::rest::Result<#output>> + ::core::marker::Send;
     }
 }
@@ -158,14 +191,28 @@ fn router_fn(api: &Api) -> TokenStream {
     }
 }
 
-/// `.route(method, path, handler)`: the handler reads the path, the query and the body, calls the service and answers.
+/// `.route(method, path, schemes, handler)`: the handler authenticates the request, reads the path, the query and the
+/// body, calls the service and answers.
 fn route_call(api: &Api, route: &Route) -> TokenStream {
     let service = Ident::new("service", Span::mixed_site());
     let request = Ident::new("request", Span::mixed_site());
+    let caller = Ident::new("caller", Span::mixed_site());
 
     let method = method_filter(route.method);
     let path = route.full_path(&api.prefix);
     let mut reads = Vec::new();
+
+    // Before anything else is read: a request that is not authenticated learns nothing of the route's arguments, and
+    // its body is never read.
+    let schemes: Vec<&str> = route.auth.iter().map(|scheme| scheme.name()).collect();
+    let caller_arg = route.auth.map(|scheme| {
+        let scheme = scheme_path(scheme);
+        reads.push(quote! {
+            let #caller = #request.authenticate::<#scheme, _>(&*#service).await?;
+        });
+
+        quote! { &#caller, }
+    });
 
     let path_params: Vec<&Param> = route.path_params().collect();
     if !path_params.is_empty() {
@@ -226,7 +273,7 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
 
     let function = &route.name;
     let args = route.params.iter().map(|param| &param.name);
-    let call = quote! { #service.#function(#(#args),*).await };
+    let call = quote! { #service.#function(#caller_arg #(#args),*).await };
     let answer = match &route.reply {
         Reply::None => quote_spanned! {route.span=> ::quoll::__private::server::no_content(#call) },
         Reply::Json(ty) => quote_spanned! {ty.span()=> ::quoll::__private::server::ok(#call) },
@@ -235,7 +282,7 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
         }
     };
 
-    let request_pattern = if route.params.is_empty() {
+    let request_pattern = if route.params.is_empty() && route.auth.is_none() {
         quote! { _ }
     } else if path_params.is_empty() {
         quote! { #request }
@@ -244,7 +291,7 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
     };
 
     quote! {
-        .route(#method, #path, |#service, #request_pattern| async move {
+        .route(#method, #path, &[#(#schemes),*], |#service, #request_pattern| async move {
             #(#reads)*
             #answer
         })

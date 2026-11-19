@@ -5,6 +5,7 @@
 //! pub api Api = "/api";
 //!
 //! /// The signed-in user's notes.
+//! #[auth(Bearer)]
 //! pub group Notes {
 //!     /// One note.
 //!     GET "/notes/{id}" => get(id: i64) -> Note;
@@ -19,7 +20,7 @@ use syn::{
     punctuated::Punctuated,
 };
 
-use crate::model::{Api, Docs, ErrorList, Group, Method, Route, RouteDecl};
+use crate::model::{Api, Auth, Docs, ErrorList, Group, Method, Route, RouteDecl, Scheme};
 
 /// What the macro is given: one api, with its groups.
 #[derive(Debug)]
@@ -43,7 +44,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     let mut groups = Vec::new();
 
     while !input.is_empty() {
-        let docs = parse_docs(input)?;
+        let Attrs { docs, auth } = parse_attrs(input)?;
         let vis: Visibility = input.parse()?;
         let keyword = input.call(Ident::parse_any).map_err(|error| {
             Error::new(
@@ -53,6 +54,12 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         })?;
 
         if keyword == "api" {
+            if let Some((attr, _)) = &auth {
+                errors.push(Error::new_spanned(
+                    attr,
+                    "an api takes no `#[auth(...)]`: put it on a group, or on a route",
+                ));
+            }
             let decl = ApiDecl::parse(input, docs, vis, &keyword)?;
             match &api {
                 Some(first) => errors.push(Error::new(
@@ -65,7 +72,8 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 None => api = Some(decl),
             }
         } else if keyword == "group" {
-            groups.push(parse_group(input, docs, vis, errors)?);
+            let auth = auth.and_then(|(_, auth)| keep(errors, auth));
+            groups.push(parse_group(input, docs, vis, auth, errors)?);
         } else {
             return Err(unexpected_item(&keyword));
         }
@@ -79,6 +87,11 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     };
 
     Api::new(api.docs, api.vis, api.name, &api.prefix, groups).map_err(|error| fold(errors, error))
+}
+
+/// The value of `result`, or `None` once its error is gathered.
+fn keep<T>(errors: &mut ErrorList, result: Result<T>) -> Option<T> {
+    result.map_err(|error| errors.push(error)).ok()
 }
 
 /// Moves the errors gathered so far into `error`, which they come before.
@@ -132,11 +145,13 @@ impl ApiDecl {
     }
 }
 
-/// After the `group` keyword: `Name { routes }`. A mistake in one route is gathered, the others are still read.
+/// After the `group` keyword: `Name { routes }`, whose routes take `auth` unless they say otherwise. A mistake in one
+/// route is gathered, the others are still read.
 fn parse_group(
     input: ParseStream,
     docs: Docs,
     vis: Visibility,
+    auth: Option<Auth>,
     errors: &mut ErrorList,
 ) -> Result<Group> {
     let name: Ident = input.parse().map_err(|error| {
@@ -150,7 +165,7 @@ fn parse_group(
 
     let mut routes = Vec::new();
     while !content.is_empty() {
-        match parse_route(&content) {
+        match parse_route(&content, auth) {
             Ok(Ok(route)) => routes.push(route),
             Ok(Err(error)) => errors.push(error),
             Err(error) => return Err(error),
@@ -165,10 +180,10 @@ fn parse_group(
     })
 }
 
-/// One route. The outer error is a mistake of syntax, after which nothing can be read; the inner one a mistake of the
-/// route's meaning, which leaves the next route readable.
-fn parse_route(input: ParseStream) -> Result<Result<Route>> {
-    let docs = parse_docs(input)?;
+/// One route, which takes `group_auth` unless it says otherwise. The outer error is a mistake of syntax, after which
+/// nothing can be read; the inner one a mistake of the route's meaning, which leaves the next route readable.
+fn parse_route(input: ParseStream, group_auth: Option<Auth>) -> Result<Result<Route>> {
+    let Attrs { docs, auth } = parse_attrs(input)?;
     let method = parse_method(input)?;
     let path: LitStr = input.parse().map_err(|error| {
         Error::new(error.span(), "a route's path is a string after its method: write `GET \"/notes/{id}\" => get(id: i64);`")
@@ -192,14 +207,31 @@ fn parse_route(input: ParseStream) -> Result<Result<Route>> {
     };
     input.parse::<Token![;]>()?;
 
-    Ok(Route::resolve(RouteDecl {
-        docs,
-        method,
-        path,
-        name,
-        args: args.into_iter().map(|arg| (arg.name, arg.ty)).collect(),
-        reply,
-    }))
+    let (auth, auth_error) = match auth.map(|(_, auth)| auth).transpose() {
+        Ok(auth) => (auth, None),
+        Err(error) => (None, Some(error)),
+    };
+    let route = Route::resolve(
+        RouteDecl {
+            docs,
+            method,
+            path,
+            name,
+            args: args.into_iter().map(|arg| (arg.name, arg.ty)).collect(),
+            reply,
+            auth,
+        },
+        group_auth,
+    );
+
+    let Some(mut error) = auth_error else {
+        return Ok(route);
+    };
+    if let Err(other) = route {
+        error.combine(other);
+    }
+
+    Ok(Err(error))
 }
 
 fn parse_method(input: ParseStream) -> Result<Method> {
@@ -238,12 +270,32 @@ impl Parse for Arg {
     }
 }
 
-/// The `///` comments before an item. Any other attribute is refused: only the comments are read.
-fn parse_docs(input: ParseStream) -> Result<Docs> {
+/// The attributes before an item: its `///` comments, and its `#[auth(...)]` with what it says, or the mistake in it.
+struct Attrs {
+    docs: Docs,
+    auth: Option<(Attribute, Result<Auth>)>,
+}
+
+/// The attributes before an item. A second `#[auth(...)]`, or any attribute other than a comment or `#[auth(...)]`,
+/// is refused.
+fn parse_attrs(input: ParseStream) -> Result<Attrs> {
     let attrs = input.call(Attribute::parse_outer)?;
     let mut lines = Vec::with_capacity(attrs.len());
+    let mut auth: Option<(Attribute, Result<Auth>)> = None;
 
-    for attr in &attrs {
+    for attr in attrs {
+        if attr.path().is_ident("auth") {
+            if auth.is_some() {
+                return Err(Error::new_spanned(
+                    &attr,
+                    "an item takes one `#[auth(...)]`: remove this one",
+                ));
+            }
+            let read = parse_auth(&attr);
+            auth = Some((attr, read));
+            continue;
+        }
+
         let line = match &attr.meta {
             Meta::NameValue(meta) if meta.path.is_ident("doc") => match &meta.value {
                 Expr::Lit(expr) => match &expr.lit {
@@ -257,13 +309,69 @@ fn parse_docs(input: ParseStream) -> Result<Docs> {
         let Some(line) = line else {
             return Err(Error::new_spanned(
                 attr,
-                "an attribute is not supported here: only `///` comments are kept, on an api, a group or a route",
+                "an attribute is not supported here: only `///` comments are kept, and `#[auth(...)]` on a group or a route",
             ));
         };
         lines.push(line);
     }
 
-    Ok(Docs(lines))
+    Ok(Attrs {
+        docs: Docs(lines),
+        auth,
+    })
+}
+
+/// What an `#[auth(...)]` says: `Bearer`, or `none`. What comes later, another scheme, alternatives, `optional` and
+/// scopes, is refused with a message saying so.
+fn parse_auth(attr: &Attribute) -> Result<Auth> {
+    const WRITE: &str =
+        "write `#[auth(Bearer)]`, or `#[auth(none)]` on a route that takes no credential";
+
+    let Meta::List(list) = &attr.meta else {
+        return Err(Error::new_spanned(
+            attr,
+            format!("`#[auth]` takes a scheme: {WRITE}"),
+        ));
+    };
+
+    list.parse_args_with(|input: ParseStream| {
+        let word = input.call(Ident::parse_any).map_err(|error| {
+            Error::new(error.span(), format!("`#[auth]` takes a scheme: {WRITE}"))
+        })?;
+        let auth = if word == "none" {
+            Auth::None
+        } else if word == "Bearer" {
+            Auth::Scheme(Scheme::Bearer)
+        } else {
+            return Err(Error::new(
+                word.span(),
+                format!("the scheme `{word}` is not supported yet: {WRITE}"),
+            ));
+        };
+
+        if input.peek(Token![|]) {
+            let bar: Token![|] = input.parse()?;
+            return Err(Error::new_spanned(
+                bar,
+                format!("alternatives of schemes are not supported yet: a route takes one scheme, {WRITE}"),
+            ));
+        }
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+            let option = input.call(Ident::parse_any).map_err(|error| {
+                Error::new(error.span(), format!("`#[auth]` takes a scheme alone: {WRITE}"))
+            })?;
+            return Err(Error::new(
+                option.span(),
+                format!("`{option}` is not supported yet in `#[auth(...)]`: {WRITE}"),
+            ));
+        }
+        if !input.is_empty() {
+            return Err(input.error(format!("`#[auth]` takes a scheme alone: {WRITE}")));
+        }
+
+        Ok(auth)
+    })
 }
 
 #[cfg(test)]
@@ -510,7 +618,7 @@ mod tests {
             pub group G {
                 GET "/a/{x}" => a();
             }
-            #[auth(Bearer)]
+            #[derive(Debug)]
             pub group H { }
         });
         assert_eq!(all.len(), 2, "{all:?}");
@@ -568,10 +676,13 @@ mod tests {
     fn what_is_left_for_later_says_what_is_supported() {
         let auth = messages(quote! {
             pub api Api = "/api";
-            #[auth(Bearer)]
+            #[auth(Basic)]
             pub group G { GET "/a" => f(); }
         });
-        assert!(auth[0].contains("only `///` comments"), "{auth:?}");
+        assert!(
+            auth[0].contains("the scheme `Basic` is not supported yet"),
+            "{auth:?}"
+        );
 
         let events = messages(quote! {
             pub api Api = "/api";
@@ -581,5 +692,130 @@ mod tests {
             events[0].contains("nothing (no `->`), `T` or `Created<T>`"),
             "{events:?}"
         );
+    }
+
+    fn schemes(api: &Api) -> Vec<Vec<Option<Scheme>>> {
+        api.groups
+            .iter()
+            .map(|group| group.routes.iter().map(|route| route.auth).collect())
+            .collect()
+    }
+
+    #[test]
+    fn a_route_takes_its_groups_authentication_unless_it_says_otherwise() {
+        let api = parse(quote! {
+            pub api Api = "/api";
+
+            #[auth(Bearer)]
+            pub group Notes {
+                GET "/notes/{id}" => get(id: i64) -> Note;
+                /// Open to all.
+                #[auth(none)]
+                GET "/notes/public" => public() -> Vec<Note>;
+            }
+
+            pub group Auth {
+                POST "/token" => token(login: Login) -> String;
+                #[auth(Bearer)]
+                DELETE "/token" => revoke();
+            }
+
+            #[auth(none)]
+            pub group Health {
+                GET "/health" => health();
+            }
+        })
+        .unwrap();
+
+        let bearer = Some(Scheme::Bearer);
+        assert_eq!(
+            schemes(&api),
+            [vec![bearer, None], vec![None, bearer], vec![None]]
+        );
+        assert_eq!(api.groups[0].routes[1].docs.0, [" Open to all."]);
+        assert_eq!(api.groups[0].schemes(), [Scheme::Bearer]);
+        assert_eq!(api.groups[1].schemes(), [Scheme::Bearer]);
+        assert!(api.groups[2].schemes().is_empty());
+    }
+
+    #[test]
+    fn what_auth_does_not_take_yet_says_so() {
+        let cases = [
+            (
+                quote! { #[auth(Key)] },
+                "the scheme `Key` is not supported yet",
+            ),
+            (
+                quote! { #[auth(Bearer | Key)] },
+                "alternatives of schemes are not supported yet",
+            ),
+            (
+                quote! { #[auth(Bearer, optional)] },
+                "`optional` is not supported yet",
+            ),
+            (
+                quote! { #[auth(Bearer, scopes("repo"))] },
+                "`scopes` is not supported yet",
+            ),
+            (quote! { #[auth(Bearer Key)] }, "takes a scheme alone"),
+            (quote! { #[auth()] }, "`#[auth]` takes a scheme"),
+            (quote! { #[auth] }, "`#[auth]` takes a scheme"),
+            (quote! { #[auth = "Bearer"] }, "`#[auth]` takes a scheme"),
+            (quote! { #[auth("Bearer")] }, "`#[auth]` takes a scheme"),
+        ];
+
+        for (attr, message) in cases {
+            let on_group = messages(quote! {
+                pub api Api = "/api";
+                #attr
+                pub group G { GET "/a" => f(); }
+            });
+            let on_route = messages(quote! {
+                pub api Api = "/api";
+                pub group G {
+                    #attr
+                    GET "/a" => f();
+                }
+            });
+
+            assert!(on_group[0].contains(message), "{attr}: {on_group:?}");
+            assert!(on_route[0].contains(message), "{attr}: {on_route:?}");
+        }
+    }
+
+    #[test]
+    fn a_mistake_in_auth_leaves_the_rest_read() {
+        let all = messages(quote! {
+            pub api Api = "/api";
+            #[auth(Key)]
+            pub group G {
+                #[auth(Basic)]
+                GET "/a/{x}" => a();
+                GET "/b/{y}" => b();
+            }
+        });
+
+        assert_eq!(all.len(), 4, "{all:?}");
+        assert!(all[0].contains("`Key`"), "{all:?}");
+        assert!(all[1].contains("`Basic`"), "{all:?}");
+        assert!(all[2].contains("no argument named `x`"), "{all:?}");
+        assert!(all[3].contains("no argument named `y`"), "{all:?}");
+    }
+
+    #[test]
+    fn auth_is_on_a_group_or_a_route_and_once() {
+        let api = messages(quote! {
+            #[auth(Bearer)]
+            pub api Api = "/api";
+        });
+        assert!(api[0].contains("an api takes no `#[auth(...)]`"), "{api:?}");
+
+        let twice = messages(quote! {
+            pub api Api = "/api";
+            #[auth(Bearer)]
+            #[auth(none)]
+            pub group G { }
+        });
+        assert!(twice[0].contains("one `#[auth(...)]`"), "{twice:?}");
     }
 }

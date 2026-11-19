@@ -20,11 +20,15 @@ use crate::syntax::Contract;
 ///     /// Notes, kept per user.
 ///     pub api Api = "/api";
 ///
+///     #[auth(Bearer)]
 ///     pub group Notes {
 ///         GET "/notes/{id}" => get(id: i64) -> Note;
 ///     }
 /// }
 /// ```
+///
+/// A group or a route takes a credential with `#[auth(Bearer)]`, and a route takes none with `#[auth(none)]`, which
+/// replaces its group's.
 ///
 /// A mistake in the contract is a compile error on the token at fault. The api becomes its type, with its comments;
 /// with the feature `server` of `quoll`, a server trait per group, `ApiServices` and `Api::router` come too; with the
@@ -58,9 +62,12 @@ pub(crate) fn doc_attrs(lines: &[String]) -> proc_macro2::TokenStream {
 }
 
 /// The comments of a route's method, on the server's trait and the client's: the contract's, then the method and the
-/// path, `GET /api/notes/{id}`.
+/// path, `GET /api/notes/{id}`, and the scheme it takes.
 pub(crate) fn route_docs(api: &Api, route: &Route) -> proc_macro2::TokenStream {
-    let line = format!(" `{} {}`", route.method.as_str(), shown_path(api, route));
+    let mut line = format!(" `{} {}`", route.method.as_str(), shown_path(api, route));
+    if let Some(scheme) = route.auth {
+        line.push_str(&format!(", authenticated with `{}`", scheme.name()));
+    }
     let mut lines = route.docs.0.clone();
     if !lines.is_empty() {
         lines.push(String::new());
@@ -198,6 +205,30 @@ mod tests {
 
         assert!(
             tokens.contains(r#""admin_tools_match" , "AdminTools" , :: quoll :: __private :: client :: Method :: GET , "/api/admin/{service}""#),
+            "{tokens}"
+        );
+    }
+
+    #[test]
+    fn a_route_carries_the_schemes_it_takes() {
+        let tokens = expansion(quote! {
+            pub api Api = "/api";
+
+            #[auth(Bearer)]
+            pub group Notes {
+                GET "/notes/{id}" => get(id: i64) -> String;
+                #[auth(none)]
+                GET "/public" => public() -> String;
+            }
+        });
+
+        assert!(
+            tokens.contains(r#""/api/notes/{id}" , & ["Bearer"]"#),
+            "{tokens}"
+        );
+        assert!(tokens.contains(r#""/api/public" , & []"#), "{tokens}");
+        assert!(
+            tokens.contains("trait NotesServer : :: core :: marker :: Send + :: core :: marker :: Sync + 'static + :: quoll :: rest :: Authenticate < :: quoll :: rest :: Bearer >"),
             "{tokens}"
         );
     }
