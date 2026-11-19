@@ -13,6 +13,10 @@ pub use reqwest_middleware;
 #[cfg(any(feature = "server", feature = "client"))]
 pub use serde;
 
+mod auth;
+
+pub use auth::Given;
+
 #[cfg(feature = "server")]
 pub mod server;
 

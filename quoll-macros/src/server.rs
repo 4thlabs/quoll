@@ -8,8 +8,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Method, Param, Reply, Route, Scheme, is_vec};
-use crate::{doc_attrs, route_docs};
+use crate::model::{Api, Group, Method, Param, Reply, Route, is_vec};
+use crate::{doc_attrs, route_docs, scheme_type};
 
 /// The server's code of the api, behind the feature `server` of `quoll`.
 pub(crate) fn expand(api: &Api) -> TokenStream {
@@ -46,7 +46,7 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     if !schemes.is_empty() {
         let names: Vec<String> = schemes
             .iter()
-            .map(|scheme| format!("`Authenticate<{}>`", scheme.name()))
+            .map(|scheme| format!("`Authenticate<{}>`", scheme.word()))
             .collect();
         lines.push(format!(
             " It also implements {}, which gives the caller of each route that takes it.",
@@ -57,7 +57,7 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     let docs = doc_attrs(&lines);
     let methods = group.routes.iter().map(|route| method(api, route));
     let authenticate = schemes.into_iter().map(|scheme| {
-        let scheme = scheme_path(scheme);
+        let scheme = scheme_type(scheme);
 
         quote! { + ::quoll::rest::Authenticate<#scheme> }
     });
@@ -67,13 +67,6 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
         #vis trait #name: ::core::marker::Send + ::core::marker::Sync + 'static #(#authenticate)* {
             #(#methods)*
         }
-    }
-}
-
-/// The type of a scheme the crate gives.
-fn scheme_path(scheme: Scheme) -> TokenStream {
-    match scheme {
-        Scheme::Bearer => quote! { ::quoll::rest::Bearer },
     }
 }
 
@@ -90,7 +83,7 @@ fn method(api: &Api, route: &Route) -> TokenStream {
         Reply::Created(ty) => quote! { ::quoll::rest::Created<#ty> },
     };
     let caller = route.auth.map(|scheme| {
-        let scheme = scheme_path(scheme);
+        let scheme = scheme_type(scheme);
         // Its own hygiene, so that a route's argument may be named `caller` too.
         let caller = Ident::new("caller", Span::mixed_site());
 
@@ -191,8 +184,8 @@ fn router_fn(api: &Api) -> TokenStream {
     }
 }
 
-/// `.route(method, path, schemes, handler)`: the handler authenticates the request, reads the path, the query and the
-/// body, calls the service and answers.
+/// `.route::<Schemes, _, _>(method, path, handler)`: the handler authenticates the request, reads the path, the query
+/// and the body, calls the service and answers; a 401 carries the challenges of `Schemes`.
 fn route_call(api: &Api, route: &Route) -> TokenStream {
     let service = Ident::new("service", Span::mixed_site());
     let request = Ident::new("request", Span::mixed_site());
@@ -200,13 +193,14 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
 
     let method = method_filter(route.method);
     let path = route.full_path(&api.prefix);
+    let challenges = route.auth.map_or_else(|| quote! { () }, scheme_type);
     let mut reads = Vec::new();
 
     // Before anything else is read: a request that is not authenticated learns nothing of the route's arguments, and
     // its body is never read.
-    let schemes: Vec<&str> = route.auth.iter().map(|scheme| scheme.name()).collect();
     let caller_arg = route.auth.map(|scheme| {
-        let scheme = scheme_path(scheme);
+        let scheme = scheme_type(scheme);
+
         reads.push(quote! {
             let #caller = #request.authenticate::<#scheme, _>(&*#service).await?;
         });
@@ -291,7 +285,7 @@ fn route_call(api: &Api, route: &Route) -> TokenStream {
     };
 
     quote! {
-        .route(#method, #path, &[#(#schemes),*], |#service, #request_pattern| async move {
+        .route::<#challenges, _, _>(#method, #path, |#service, #request_pattern| async move {
             #(#reads)*
             #answer
         })

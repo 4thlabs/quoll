@@ -240,6 +240,12 @@ async fn a_request_without_a_valid_token_is_refused_before_its_handler() {
                 .header(AUTHORIZATION, "Bearer ana-token"),
         ),
         (
+            "a token beside another scheme's header",
+            get()
+                .header(AUTHORIZATION, "Bearer ana-token")
+                .header(AUTHORIZATION, "Basic YW5hOnB3"),
+        ),
+        (
             "an unknown token",
             get().header(AUTHORIZATION, "Bearer someone-else"),
         ),
@@ -503,17 +509,21 @@ async fn the_middleware_sends_the_token_to_the_routes_that_take_it_only() -> Res
 }
 
 #[tokio::test]
-async fn a_token_that_is_not_a_header_value_fails_the_call_without_showing_it() -> Result<()> {
+async fn a_token_that_is_not_a_b64token_fails_the_call_without_showing_it() -> Result<()> {
     let served = serve().await;
-    let api = client(&served.url, "secret\ntoken")?;
 
-    let error = api.notes().get(1).await.expect_err("no valid header");
-    let open = api.open().open().await?;
+    for token in ["secret\ntoken", "secret token", "secret,token"] {
+        let api = client(&served.url, token)?;
 
-    let shown = format!("{error} {error:?}");
-    assert_eq!(error.status(), None);
-    assert!(!shown.contains("secret"), "{shown}");
-    assert_eq!(open, "open");
-    assert_eq!(served.handled(), 1);
+        let error = api.notes().get(1).await.expect_err("not a b64token");
+        let open = api.open().open().await?;
+
+        let shown = format!("{error} {error:?}");
+        assert_eq!(error.status(), None, "{token:?}: {shown}");
+        assert!(!shown.contains("secret"), "{shown}");
+        assert_eq!(open, "open");
+    }
+
+    assert_eq!(served.handled(), 3);
     Ok(())
 }

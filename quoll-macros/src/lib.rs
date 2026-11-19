@@ -10,7 +10,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::ext::IdentExt;
 
-use crate::model::{Api, Route};
+use crate::model::{Api, Route, Scheme};
 use crate::syntax::Contract;
 
 /// Reads a REST contract and checks it.
@@ -56,6 +56,13 @@ fn expand(api: &Api) -> proc_macro2::TokenStream {
     }
 }
 
+/// The type of a scheme the crate gives, by which the generated code names it.
+pub(crate) fn scheme_type(scheme: Scheme) -> proc_macro2::TokenStream {
+    match scheme {
+        Scheme::Bearer => quote! { ::quoll::rest::Bearer },
+    }
+}
+
 /// `#[doc = ...]` attributes, one per line.
 pub(crate) fn doc_attrs(lines: &[String]) -> proc_macro2::TokenStream {
     quote! { #(#[doc = #lines])* }
@@ -66,12 +73,14 @@ pub(crate) fn doc_attrs(lines: &[String]) -> proc_macro2::TokenStream {
 pub(crate) fn route_docs(api: &Api, route: &Route) -> proc_macro2::TokenStream {
     let mut line = format!(" `{} {}`", route.method.as_str(), shown_path(api, route));
     if let Some(scheme) = route.auth {
-        line.push_str(&format!(", authenticated with `{}`", scheme.name()));
+        line.push_str(&format!(", authenticated with `{}`", scheme.word()));
     }
+
     let mut lines = route.docs.0.clone();
     if !lines.is_empty() {
         lines.push(String::new());
     }
+
     lines.push(line);
 
     doc_attrs(&lines)
@@ -223,10 +232,15 @@ mod tests {
         });
 
         assert!(
-            tokens.contains(r#""/api/notes/{id}" , & ["Bearer"]"#),
+            tokens.contains(r#""/api/notes/{id}" , & [< :: quoll :: rest :: Bearer as :: quoll :: __private :: Given > :: NAME]"#),
             "{tokens}"
         );
         assert!(tokens.contains(r#""/api/public" , & []"#), "{tokens}");
+        assert!(
+            tokens.contains(". route :: < :: quoll :: rest :: Bearer , _ , _ >"),
+            "{tokens}"
+        );
+        assert!(tokens.contains(". route :: < () , _ , _ >"), "{tokens}");
         assert!(
             tokens.contains("trait NotesServer : :: core :: marker :: Send + :: core :: marker :: Sync + 'static + :: quoll :: rest :: Authenticate < :: quoll :: rest :: Bearer >"),
             "{tokens}"

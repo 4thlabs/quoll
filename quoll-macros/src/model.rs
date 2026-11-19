@@ -50,8 +50,9 @@ pub(crate) enum Scheme {
 }
 
 impl Scheme {
-    /// The scheme's name, as the contract writes it and `rest::Route::schemes` gives it.
-    pub(crate) const fn name(self) -> &'static str {
+    /// The word the contract writes for the scheme, which the docs of what is generated show. The name on the wire,
+    /// which `rest::Route::schemes` gives, is the crate's: the generated code takes it from the scheme's type.
+    pub(crate) const fn word(self) -> &'static str {
         match self {
             Self::Bearer => "Bearer",
         }

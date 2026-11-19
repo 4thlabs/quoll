@@ -9,6 +9,8 @@ use crate::rest::Result;
 mod bearer;
 
 pub use bearer::Bearer;
+#[cfg(feature = "client")]
+pub(crate) use bearer::is_b64token;
 
 /// How a credential travels in a request: the server reads it with [`read`](Scheme::read), and gives it to the
 /// service's [`Authenticate`].
