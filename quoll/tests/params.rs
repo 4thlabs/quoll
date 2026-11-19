@@ -46,6 +46,12 @@ struct Login {
     scopes: Vec<String>,
 }
 
+/// A struct, which is not read from one piece of text.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct Point {
+    x: i32,
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct Mixed {
     id: i64,
@@ -68,6 +74,11 @@ rest::api! {
             header("Last-Event-ID") last: Option<String>,
             header("X-Shelf") shelf: Option<Shelf>,
         ) -> Seen;
+    }
+
+    /// A path parameter of a struct type, which the macro cannot tell from a unit enum.
+    group Points {
+        GET "/points/{point}" => point(point: Point) -> String;
     }
 
     group Bodies {
@@ -94,6 +105,12 @@ impl SearchServer for App {
 impl HeadersServer for App {
     async fn read(&self, page: u32, last: Option<String>, shelf: Option<Shelf>) -> Result<Seen> {
         Ok(Seen { page, last, shelf })
+    }
+}
+
+impl PointsServer for App {
+    async fn point(&self, point: Point) -> Result<String> {
+        unreachable!("a struct is never read from the path: {point:?}")
     }
 }
 
@@ -128,6 +145,7 @@ async fn served() -> (String, ApiClient) {
     let router = Api::router(ApiServices {
         search: App,
         headers: App,
+        points: App,
         bodies: App,
     });
     let url = rest::test::spawn(router).await;
@@ -568,5 +586,35 @@ async fn every_kind_of_argument_goes_together() {
             filter,
             text: "a note".into(),
         }
+    );
+}
+
+#[tokio::test]
+async fn a_path_parameter_of_a_struct_type_is_refused_when_it_is_called() {
+    let (url, api) = served().await;
+
+    // The server cannot read it: a 500, logged, with no detail sent.
+    let response = reqwest::get(format!("{url}/api/points/x"))
+        .await
+        .expect("the server answers");
+    let status = response.status();
+    let problem: Value = response.json().await.expect("the body is JSON");
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(problem.get("detail"), None);
+
+    // The client cannot write it: an error with no status, before anything is sent.
+    let error = api
+        .points()
+        .point(Point { x: 1 })
+        .await
+        .expect_err("a struct is not a segment");
+
+    assert_eq!(error.status(), None);
+    assert!(
+        error
+            .to_string()
+            .contains("the path parameter `point` of `points_point` is not written as text"),
+        "{error}"
     );
 }
