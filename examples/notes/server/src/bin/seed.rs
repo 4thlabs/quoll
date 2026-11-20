@@ -1,9 +1,3 @@
-//! Adds a user or an operator to `notes.db`, in the directory it runs in, which the server serves from.
-//!
-//! - `seed user <name>` adds a user, whose password is read from `NOTES_PASSWORD`, which keeps it out of the command
-//!   line and of the shell's history.
-//! - `seed operator <name>` adds an operator, and prints their key, which is shown once: the store keeps its hash.
-
 use anyhow::{Context, bail};
 use notes_server::Store;
 
@@ -19,6 +13,7 @@ async fn main() -> anyhow::Result<()> {
 
     match kind.as_str() {
         "user" => {
+            // From the environment, which keeps it out of the shell's history.
             let password = std::env::var("NOTES_PASSWORD")
                 .context("the password of the user is read from NOTES_PASSWORD")?;
             let user = store.add_user(name, password).await?;

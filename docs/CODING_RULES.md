@@ -11,6 +11,8 @@ Quoll is a Rust library, edition 2024, built with the latest stable Rust. The ru
   with `#[expect(clippy::..., reason = "...")]`, never for the whole crate.
 - The workspace's lints in `Cargo.toml` hold `unsafe_code = "forbid"` and `missing_docs = "warn"`. Each crate
   inherits them with `[lints] workspace = true`.
+- The examples set their own lints, `unsafe_code = "forbid"` without `missing_docs`, so that they show only the
+  comments a reader needs.
 - `rust-version` in `Cargo.toml` states the minimum Rust, set at the first release and raised only in a minor version.
 
 ## Crates and modules

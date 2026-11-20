@@ -1,7 +1,3 @@
-//! The command line of the notes example: signs in as `NOTES_USER` with `NOTES_PASSWORD` on the server at
-//! `NOTES_URL`, writes a note, searches for it, reads a note that is not there, then prints the changes of its note
-//! until it is removed.
-
 use futures::StreamExt;
 use notes_api::{Api, Auth, Login, NewNote, NoteFilter, Notes};
 use quoll::client;
