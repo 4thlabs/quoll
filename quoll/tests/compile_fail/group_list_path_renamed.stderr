@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: the path of the route `Files::remove` is the one of the route `Notes::get`, with `{key}` written for `{id}`: a router takes them for one path, so name the parameter `{id}` in both
+  --> tests/compile_fail/group_list_path_renamed.rs:24:49
+   |
+24 |     pub api Api = "/api" { notes::Notes, files::Files };
+   |                                                 ^^^^^ evaluation of `_::_` failed here

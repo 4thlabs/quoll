@@ -62,6 +62,12 @@
 //! refuses `token={...}` in the route's string, but cannot see the fields of a query struct, none of which is to be
 //! named `token`.
 //!
+//! A large contract splits into [`group!`] blocks, one group in each, in a module of its own, which an api lists by
+//! their paths: `pub api Api = "/api" { auth::Auth, notes::Notes };`. Each group becomes its items in its module, and
+//! the api serves, calls and describes their routes under its prefix, checking them at compile time against its own
+//! and its other groups'. A group names a scheme its api declares by its path or an import, `#[auth(crate::Key)]`, and
+//! may be listed by two apis.
+//!
 //! Whatever the features, `Api::openapi()` gives the contract's OpenAPI 3.1 document, which [`openapi`] describes, so
 //! that each type a contract names, as a parameter, a body or a result, implements `schemars::JsonSchema`. A contract
 //! of a third-party API that is only called, whose models may come from crates that do not implement it, says so on
@@ -83,6 +89,6 @@ pub use body::{Bytes, Form, Text};
 pub use created::Created;
 pub use error::{Error, Result};
 pub use problem::Problem;
-pub use quoll_macros::api;
+pub use quoll_macros::{api, group};
 pub use route::Route;
 pub use stream::{Events, JsonLines};

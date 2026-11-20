@@ -36,7 +36,10 @@ pub(crate) struct Api {
     pub(crate) prefix: String,
     /// The schemes the contract declares, in the order they are written.
     pub(crate) schemes: Vec<DeclaredScheme>,
-    /// The groups, in the order they are written.
+    /// The groups of other blocks the api lists, `{ auth::Auth, notes::Notes }`, by their paths, in the order of the
+    /// list.
+    pub(crate) listed: Vec<syn::Path>,
+    /// The groups the block writes, in the order they are written.
     pub(crate) groups: Vec<Group>,
     /// Whether the api has an OpenAPI document, `Api::openapi`: not with `#[openapi(none)]`, for a contract of a
     /// third-party API that is only called, whose types need no schema.
@@ -864,6 +867,7 @@ impl Api {
         name: Ident,
         prefix: &LitStr,
         schemes: Vec<DeclaredScheme>,
+        listed: Vec<syn::Path>,
         groups: Vec<Group>,
     ) -> Result<Self> {
         let mut errors = ErrorList::default();
@@ -877,6 +881,7 @@ impl Api {
             name,
             prefix,
             schemes,
+            listed,
             groups,
             openapi: true,
         };
@@ -886,9 +891,71 @@ impl Api {
         errors.finish().map(|()| api)
     }
 
+    /// The group of a `rest::group!`, checked as the api of a block of its own would check it: its routes, its
+    /// names and its schemes, none of which it declares. The api is a stand-in, which nothing generates.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::new`], for the one group.
+    pub(crate) fn alone(group: Group) -> Result<Self> {
+        let mut errors = ErrorList::default();
+        let mut api = Self {
+            docs: Docs::default(),
+            vis: Visibility::Inherited,
+            name: Ident::new("__QuollAlone", Span::call_site()),
+            prefix: String::new(),
+            schemes: Vec::new(),
+            listed: Vec::new(),
+            groups: vec![group],
+            openapi: true,
+        };
+        api.check_unique(&mut errors);
+        auth::resolve(&mut api, &mut errors);
+
+        errors.finish().map(|()| api)
+    }
+
+    /// The name a group of the list goes by, the last segment of its path, which gives its field and the names of its
+    /// items.
+    pub(crate) fn listed_name(path: &syn::Path) -> &Ident {
+        &path
+            .segments
+            .last()
+            .expect("a path of the list has a segment, as the syntax reads it")
+            .ident
+    }
+
     fn check_unique(&self, errors: &mut ErrorList) {
         let mut groups: Vec<&Ident> = vec![&self.name];
         let mut fields: Vec<(String, &Ident)> = Vec::new();
+
+        // The groups of the list live in other modules, beside items of their own: their names meet the api's only in
+        // its fields, and in the names of its other groups.
+        for path in &self.listed {
+            let name = Self::listed_name(path);
+
+            if let Some(first) = groups[1..].iter().find(|first| same_name(first, name)) {
+                errors.push(Error::new(
+                    name.span(),
+                    format!(
+                        "the group `{first}` is already listed: an api lists a group once, and each of its groups has its own name"
+                    ),
+                ));
+            } else {
+                let group = Group {
+                    docs: Docs::default(),
+                    vis: Visibility::Inherited,
+                    name: name.clone(),
+                    routes: Vec::new(),
+                };
+
+                if let Err(error) = check_field(&group, &fields) {
+                    errors.push(error);
+                }
+            }
+            groups.push(name);
+            fields.push((snake_case(name), name));
+        }
         let mut seen: Vec<Seen> = Vec::new();
         let mut names = Names::new(self);
         let mut ids: Vec<(String, &Ident, &Ident)> = Vec::new();
@@ -1062,9 +1129,17 @@ impl Names {
     }
 }
 
+/// A path as the contract writes it: `notes::Notes`.
+pub(crate) fn shown_path(path: &syn::Path) -> String {
+    quote::quote!(#path)
+        .to_string()
+        .replace(" :: ", "::")
+        .replace(":: ", "::")
+}
+
 /// How far a visibility reaches: private, a module's, the crate's, everyone's. `pub(super)` and `pub(in path)` are
 /// counted as a module's, without comparing their paths.
-fn reach(vis: &Visibility) -> u8 {
+pub(crate) fn reach(vis: &Visibility) -> u8 {
     match vis {
         Visibility::Inherited => 0,
         Visibility::Public(_) => 3,
@@ -1101,7 +1176,7 @@ fn check_visibility(api: &Api, group: &Group) -> Result<()> {
 }
 
 /// A visibility as the contract writes it: `pub`, `pub(crate)`.
-fn shown_vis(vis: &Visibility) -> String {
+pub(crate) fn shown_vis(vis: &Visibility) -> String {
     quote::quote!(#vis)
         .to_string()
         .replace("pub (", "pub(")

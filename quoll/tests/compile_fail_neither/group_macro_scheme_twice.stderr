@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: `Key` and `schemes::Key` have one `NAME`, which names one scheme: an alternative takes each scheme once, so remove one of them
+  --> tests/compile_fail_neither/group_macro_scheme_twice.rs:16:18
+   |
+16 |     #[auth(Key | schemes::Key)]
+   |                  ^^^^^^^ evaluation of `_` failed here

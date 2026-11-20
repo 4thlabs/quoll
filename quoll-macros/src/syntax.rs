@@ -43,6 +43,88 @@ impl Parse for Contract {
     }
 }
 
+/// What `rest::group!` is given: one group, from which the api that lists it builds its router, its client and its
+/// document.
+#[derive(Debug)]
+pub(crate) struct GroupContract(pub(crate) Api);
+
+impl Parse for GroupContract {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut errors = ErrorList::default();
+
+        match read_group(input, &mut errors) {
+            Ok(api) => errors.finish().map(|()| Self(api)),
+            Err(error) => Err(errors.fail(error)),
+        }
+    }
+}
+
+/// Reads the one group of a `rest::group!`, which may say `#[openapi(none)]`.
+fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
+    let mut group: Option<(Group, bool)> = None;
+
+    while !input.is_empty() {
+        let Attrs {
+            docs,
+            auth,
+            openapi,
+        } = parse_attrs(input)?;
+        let vis: Visibility = input.parse()?;
+        let keyword = input.call(Ident::parse_any).map_err(|error| {
+            Error::new(
+                error.span(),
+                "expected `group`: a `rest::group!` holds one group, `pub group Notes { ... }`",
+            )
+        })?;
+
+        if keyword == "api" {
+            return Err(Error::new(
+                keyword.span(),
+                "a `rest::group!` holds a group, which an api lists: write the api in a `rest::api!`, as `pub api Api = \"/api\" { notes::Notes };`",
+            ));
+        }
+        if keyword == "scheme" {
+            return Err(Error::new(
+                keyword.span(),
+                "a scheme is declared in the `rest::api!` of the api: name it here by its path, as `#[auth(crate::Key)]`, or import it",
+            ));
+        }
+        if keyword != "group" {
+            return Err(unexpected_item(&keyword));
+        }
+
+        let document = match openapi {
+            Some((_, read)) => keep(errors, read).is_none_or(|document| document),
+            None => true,
+        };
+        let auth = auth.and_then(|(_, auth)| keep(errors, auth));
+        let read = parse_group(input, docs, vis, auth.as_ref(), errors)?;
+
+        match &group {
+            Some((first, _)) => errors.push(Error::new(
+                read.name.span(),
+                format!(
+                    "a `rest::group!` holds one group, and `{}` is already it: put `{}` in a `rest::group!` of its own",
+                    first.name, read.name
+                ),
+            )),
+            None => group = Some((read, document)),
+        }
+    }
+
+    let Some((group, document)) = group else {
+        return Err(Error::new(
+            proc_macro2::Span::call_site(),
+            "a `rest::group!` holds a group: write `pub group Notes { ... }`",
+        ));
+    };
+
+    let mut api = Api::alone(group).map_err(|error| fold(errors, error))?;
+    api.openapi = document;
+
+    Ok(api)
+}
+
 /// Reads every item. A mistake of syntax ends the reading, and the caller adds what was gathered before it; a mistake
 /// of meaning is gathered and the reading goes on.
 fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
@@ -117,8 +199,16 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     };
 
     let openapi = api.openapi;
-    let mut api = Api::new(api.docs, api.vis, api.name, &api.prefix, schemes, groups)
-        .map_err(|error| fold(errors, error))?;
+    let mut api = Api::new(
+        api.docs,
+        api.vis,
+        api.name,
+        &api.prefix,
+        schemes,
+        api.listed,
+        groups,
+    )
+    .map_err(|error| fold(errors, error))?;
     api.openapi = openapi;
 
     Ok(api)
@@ -167,10 +257,12 @@ struct ApiDecl {
     openapi: bool,
     name: Ident,
     prefix: LitStr,
+    listed: Vec<syn::Path>,
 }
 
 impl ApiDecl {
-    /// After the `api` keyword: `Name = "/prefix";`.
+    /// After the `api` keyword: `Name = "/prefix";`, or `Name = "/prefix" { notes::Notes, ... };` with the groups of
+    /// other blocks it lists.
     fn parse(
         input: ParseStream,
         docs: Docs,
@@ -193,6 +285,11 @@ impl ApiDecl {
                 "the api takes its prefix as a string: write `api Api = \"/api\";`",
             )
         })?;
+        let listed = if input.peek(syn::token::Brace) {
+            parse_list(input)?
+        } else {
+            Vec::new()
+        };
         input.parse::<Token![;]>()?;
 
         Ok(Self {
@@ -201,8 +298,31 @@ impl ApiDecl {
             openapi,
             name,
             prefix,
+            listed,
         })
     }
+}
+
+/// The groups an api lists, `{ auth::Auth, notes::Notes }`: each a path to the group a `rest::group!` writes.
+fn parse_list(input: ParseStream) -> Result<Vec<syn::Path>> {
+    const WRITE: &str = "an api lists the groups of `rest::group!` blocks by their paths: write `pub api Api = \"/api\" { auth::Auth, notes::Notes };`";
+
+    let content;
+    let braces = braced!(content in input);
+    let paths = Punctuated::<syn::Path, Token![,]>::parse_terminated_with(&content, |input| {
+        input
+            .call(syn::Path::parse_mod_style)
+            .map_err(|error| Error::new(error.span(), WRITE))
+    })?;
+
+    if paths.is_empty() {
+        return Err(Error::new(
+            braces.span.join(),
+            format!("the list of groups is empty: remove the braces, or {WRITE}"),
+        ));
+    }
+
+    Ok(paths.into_iter().collect())
 }
 
 /// After the `scheme` keyword: `Name = kind "value";`. The outer error is a mistake of syntax, after which nothing can

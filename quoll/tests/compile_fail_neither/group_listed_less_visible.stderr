@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: the group `Notes` is less visible than the api `Api`, whose router and client name the group's items: write `pub group Notes`
+  --> tests/compile_fail_neither/group_listed_less_visible.rs:14:35
+   |
+14 |     pub api Api = "/api" { notes::Notes };
+   |                                   ^^^^^ evaluation of `_::_` failed here

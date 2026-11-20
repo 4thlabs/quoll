@@ -6,7 +6,9 @@
 //! `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events` or `JsonLines` that is not quoll's is in
 //! `tests/compile_fail_neither/`, built with neither feature: the server's code and the client's each repeat its
 //! message. So are the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call
-//! to the document of a contract that has none.
+//! to the document of a contract that has none; and the mistakes of a group of another block that each side adds an
+//! error or a warning of its own to: a group listed and not in scope, or not a group, a group or a scheme less visible
+//! than what names it, and a scheme twice in an alternative.
 
 #[test]
 fn a_mistake_is_an_error_on_the_token_at_fault() {

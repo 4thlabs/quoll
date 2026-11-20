@@ -151,30 +151,3 @@ pub(crate) fn schemes_type(schemes: &[Scheme]) -> TokenStream {
         }
     }
 }
-
-/// Checks that each scheme of the application's the contract names is a scheme, whatever the features of `quoll`, so
-/// that a type that is not one is an error on its name.
-pub(crate) fn checks(api: &Api) -> Vec<TokenStream> {
-    let mut seen: Vec<String> = Vec::new();
-    let mut checks = Vec::new();
-
-    for scheme in api
-        .groups
-        .iter()
-        .flat_map(|group| &group.routes)
-        .flat_map(|route| route.schemes())
-    {
-        if scheme.kind != SchemeKind::Foreign || seen.contains(&scheme.word()) {
-            continue;
-        }
-
-        seen.push(scheme.word());
-
-        let path = &scheme.path;
-        checks.push(
-            quote_spanned! {scheme.span()=> ::quoll::__private::auth::is_scheme::<#path>(); },
-        );
-    }
-
-    checks
-}

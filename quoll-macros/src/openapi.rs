@@ -1,19 +1,38 @@
-//! What the OpenAPI document of a contract becomes, on both sides and whatever the features: `Api::openapi`, which
-//! hands a description of the api to `quoll::__private::openapi::document`, with the checks that the schemes of the
-//! api have names of their own, which can name them in the document.
+//! What the OpenAPI document of a contract becomes, on both sides and whatever the features: the document of each
+//! group, `GroupDocument` on its descriptor, and `Api::openapi`, which hands the api's description and its groups' to
+//! `quoll::__private::openapi::document`, with the checks that the schemes the block sees have names of their own,
+//! which can name them in the document.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{LitStr, Type, ext::IdentExt};
 
+use crate::descriptor::{Cx, below_prefix, descriptor_name};
 use crate::model::{
     Api, DeclaredKind, Group, Param, ParamKind, Route, SchemeKind, is_vec, option_inner,
 };
 use crate::scheme::scheme_type;
 
-/// `Api::openapi`, unless the contract says `#[openapi(none)]`. Its schemes are listed once, each type named once, so
-/// that a type that is not a scheme is one error; the checks of their names sit beside them.
+/// The document of a group, on its descriptor, unless it has none.
+pub(crate) fn group(cx: &Cx) -> TokenStream {
+    if !cx.openapi {
+        return TokenStream::new();
+    }
+
+    let group = cx.group;
+    let descriptor = descriptor_name(&group.name);
+    let description = group_description(group);
+
+    quote! {
+        impl ::quoll::__private::openapi::GroupDocument for #descriptor {
+            const GROUP: ::quoll::__private::openapi::Group = #description;
+        }
+    }
+}
+
+/// `Api::openapi`, unless the contract says `#[openapi(none)]`. Its schemes are the declared ones; the others come
+/// with the routes of its groups. The checks of the names of the schemes the block sees sit beside them.
 pub(crate) fn expand(api: &Api) -> TokenStream {
     if !api.openapi {
         return TokenStream::new();
@@ -23,25 +42,36 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
     let shown = name.unraw().to_string();
     let vis = &api.vis;
     let docs = &api.docs.0;
+    let prefix = &api.prefix;
     let listed = listed(api);
-    let refs = listed.schemes.iter().map(|scheme| {
-        let ty = &scheme.ty;
-        let checks_origin = scheme.checks_origin;
+    let checks = name_checks(api, &listed);
+    let declared = api.schemes.iter().map(|scheme| {
+        let name = &scheme.name;
+        let checks_origin = matches!(scheme.kind, DeclaredKind::Cookie(_));
 
-        quote_spanned! {scheme.span=>
-            ::quoll::__private::openapi::SchemeRef {
-                name: <#ty as ::quoll::rest::Scheme>::NAME,
-                openapi: <#ty as ::quoll::rest::Scheme>::openapi,
-                checks_origin: #checks_origin,
-            }
+        scheme_ref(&quote! { #name }, checks_origin, name.span())
+    });
+    let groups = api.refs().into_iter().map(|group| {
+        let descriptor = group.descriptor();
+
+        quote_spanned! {group.span()=>
+            &<#descriptor as ::quoll::__private::openapi::GroupDocument>::GROUP
         }
     });
-    let checks = name_checks(api, &listed.schemes);
-    let groups = api
-        .groups
-        .iter()
-        .zip(&listed.routes)
-        .map(|(group, indices)| group_description(api, group, indices));
+    let names = listed.iter().map(|scheme| {
+        let ty = &scheme.ty;
+
+        quote_spanned! {scheme.span=> <#ty as ::quoll::rest::Scheme>::NAME }
+    });
+    let checks = (!checks.is_empty()).then(|| {
+        quote! {
+            const _: () = {
+                const NAMES: &[&str] = &[#(#names),*];
+
+                #(#checks)*
+            };
+        }
+    });
 
     quote! {
         impl #name {
@@ -49,11 +79,9 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
             /// its types, its security schemes and the problem of its errors. Its title and its version are the
             /// contract crate's, as Cargo gives them; built otherwise, the api's name and `0.0.0`.
             #vis fn openapi() -> ::quoll::rest::openapi::Document {
-                const SCHEMES: &[::quoll::__private::openapi::SchemeRef] = &[#(#refs),*];
-                const _: () = {
-                    #(#checks)*
-                };
+                #checks
                 static API: ::quoll::__private::openapi::Api = ::quoll::__private::openapi::Api {
+                    name: #shown,
                     docs: &[#(#docs),*],
                     title: match ::core::option_env!("CARGO_PKG_NAME") {
                         ::core::option::Option::Some(name) => name,
@@ -63,7 +91,8 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
                         ::core::option::Option::Some(version) => version,
                         ::core::option::Option::None => "0.0.0",
                     },
-                    schemes: SCHEMES,
+                    prefix: #prefix,
+                    schemes: &[#(#declared),*],
                     groups: &[#(#groups),*],
                 };
 
@@ -73,7 +102,20 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
     }
 }
 
-/// A scheme of the api, as the document lists it.
+/// A scheme of type `ty`, as the document refers to it.
+fn scheme_ref(ty: &TokenStream, checks_origin: bool, span: Span) -> TokenStream {
+    quote_spanned! {span=>
+        ::quoll::__private::openapi::SchemeRef {
+            name: <#ty as ::quoll::rest::Scheme>::NAME,
+            openapi: <#ty as ::quoll::rest::Scheme>::openapi,
+            checks_origin: #checks_origin,
+            type_id: ::core::any::TypeId::of::<#ty>,
+            type_name: ::core::any::type_name::<#ty>,
+        }
+    }
+}
+
+/// A scheme the block sees, as its checks list it.
 struct ListedScheme {
     /// The scheme as the contract writes it, which errors show.
     word: String,
@@ -81,22 +123,13 @@ struct ListedScheme {
     ty: TokenStream,
     /// Whether it is a type of the application's, whose name the macro does not know.
     foreign: bool,
-    /// Whether it refuses a request from another origin that changes things, with a 403: a declared cookie scheme.
-    checks_origin: bool,
     /// Where an error about it points.
     span: Span,
 }
 
-/// The schemes of the api, each once, and the indices of those each route takes.
-struct Listed {
-    /// Each scheme once, by its word: the declared ones, in the order the contract writes them, then the others the
-    /// routes take.
-    schemes: Vec<ListedScheme>,
-    /// For each group, for each of its routes, the indices in `schemes` of those the route takes, in its order.
-    routes: Vec<Vec<Vec<usize>>>,
-}
-
-fn listed(api: &Api) -> Listed {
+/// The schemes the block sees, each once by its word: the declared ones, in the order the contract writes them, then
+/// the others the routes of its groups take.
+fn listed(api: &Api) -> Vec<ListedScheme> {
     let mut schemes: Vec<ListedScheme> = api
         .schemes
         .iter()
@@ -107,46 +140,37 @@ fn listed(api: &Api) -> Listed {
                 word: name.unraw().to_string(),
                 ty: quote! { #name },
                 foreign: false,
-                checks_origin: matches!(scheme.kind, DeclaredKind::Cookie(_)),
                 span: name.span(),
             }
         })
         .collect();
-    let mut routes = Vec::with_capacity(api.groups.len());
 
-    for group in &api.groups {
-        let mut indices = Vec::with_capacity(group.routes.len());
-
-        for route in &group.routes {
-            let taken = route
-                .schemes()
-                .map(|scheme| {
-                    let word = scheme.word();
-                    if let Some(index) = schemes.iter().position(|listed| listed.word == word) {
-                        return index;
-                    }
-
-                    schemes.push(ListedScheme {
-                        word,
-                        ty: scheme_type(scheme),
-                        foreign: scheme.kind == SchemeKind::Foreign,
-                        checks_origin: false,
-                        span: scheme.span(),
-                    });
-                    schemes.len() - 1
-                })
-                .collect();
-            indices.push(taken);
+    for scheme in api
+        .groups
+        .iter()
+        .flat_map(|group| &group.routes)
+        .flat_map(Route::schemes)
+    {
+        let word = scheme.word();
+        if schemes.iter().any(|listed| listed.word == word) {
+            continue;
         }
-        routes.push(indices);
+
+        schemes.push(ListedScheme {
+            word,
+            ty: scheme_type(scheme),
+            foreign: scheme.kind == SchemeKind::Foreign,
+            span: scheme.span(),
+        });
     }
 
-    Listed { schemes, routes }
+    schemes
 }
 
-/// The compile-time checks of the names of the schemes, which name them in the document's `securitySchemes`: each
-/// one is a component's name, and no two are one. The macro knows the names of `Bearer`, `Basic` and the declared
-/// schemes, which it keeps apart, so each check is about a scheme of the application's.
+/// The compile-time checks of the names of the schemes the block sees, which name them in the document's
+/// `securitySchemes`: each one is a component's name, and no two are one. The macro knows the names of `Bearer`,
+/// `Basic` and the declared schemes, which it keeps apart, so each check is about a scheme of the application's. The
+/// schemes of the groups of other blocks are checked as the document is built.
 fn name_checks(api: &Api, schemes: &[ListedScheme]) -> Vec<TokenStream> {
     let mut checks = Vec::new();
 
@@ -162,7 +186,7 @@ fn name_checks(api: &Api, schemes: &[ListedScheme]) -> Vec<TokenStream> {
 
             checks.push(quote_spanned! {second.span=>
                 ::core::assert!(
-                    ::quoll::__private::openapi::is_component_name(SCHEMES[#index].name),
+                    ::quoll::__private::openapi::is_component_name(NAMES[#index]),
                     #message
                 );
             });
@@ -185,10 +209,7 @@ fn name_checks(api: &Api, schemes: &[ListedScheme]) -> Vec<TokenStream> {
 
             checks.push(quote_spanned! {second.span=>
                 ::core::assert!(
-                    !::quoll::__private::openapi::same_name(
-                        SCHEMES[#first_index].name,
-                        SCHEMES[#index].name,
-                    ),
+                    !::quoll::__private::openapi::same_name(NAMES[#first_index], NAMES[#index]),
                     #message
                 );
             });
@@ -211,14 +232,13 @@ fn param_schema(param: &Param) -> Option<&Type> {
     }
 }
 
-fn group_description(api: &Api, group: &Group, indices: &[Vec<usize>]) -> TokenStream {
+fn group_description(group: &Group) -> TokenStream {
     let name = group.name.unraw().to_string();
     let docs = &group.docs.0;
     let routes = group
         .routes
         .iter()
-        .zip(indices)
-        .map(|(route, indices)| route_description(api, group, route, indices));
+        .map(|route| route_description(group, route));
 
     quote! {
         ::quoll::__private::openapi::Group {
@@ -229,10 +249,10 @@ fn group_description(api: &Api, group: &Group, indices: &[Vec<usize>]) -> TokenS
     }
 }
 
-fn route_description(api: &Api, group: &Group, route: &Route, indices: &[usize]) -> TokenStream {
+fn route_description(group: &Group, route: &Route) -> TokenStream {
     let id = route.operation_id(group);
     let method = route.method.as_str().to_ascii_lowercase();
-    let path = route.full_path(&api.prefix);
+    let path = below_prefix(route);
     let docs = &route.docs.0;
     let params = route.params.iter().filter_map(param_description);
     let body = match route.body() {
@@ -270,10 +290,14 @@ fn route_description(api: &Api, group: &Group, route: &Route, indices: &[usize])
         Some(auth) => {
             let optional = auth.optional;
             let scopes = &auth.scopes;
+            let schemes = auth
+                .schemes
+                .iter()
+                .map(|scheme| scheme_ref(&scheme_type(scheme), false, scheme.span()));
 
             quote! {
                 ::core::option::Option::Some(::quoll::__private::openapi::Auth {
-                    schemes: &[#(#indices),*],
+                    schemes: &[#(#schemes),*],
                     optional: #optional,
                     scopes: &[#(#scopes),*],
                 })
@@ -355,15 +379,23 @@ mod tests {
     use super::*;
     use crate::syntax::Contract;
 
+    /// `Api::openapi` alone.
     fn expansion(contract: TokenStream) -> String {
         let Contract(api) = syn::parse2(contract).expect("the contract is valid");
 
         expand(&api).to_string()
     }
 
+    /// The whole contract, with the documents of its groups.
+    fn whole(contract: TokenStream) -> String {
+        let Contract(api) = syn::parse2(contract).expect("the contract is valid");
+
+        crate::expand(&api).to_string()
+    }
+
     #[test]
     fn each_route_is_described_with_its_parameters() {
-        let tokens = expansion(quote! {
+        let tokens = whole(quote! {
             pub api Api = "/api";
 
             #[auth(Bearer, optional)]
@@ -375,7 +407,7 @@ mod tests {
         });
 
         for expected in [
-            r#"id : "notes_get" , method : "get" , path : "/api/notes/{id}""#,
+            r#"id : "notes_get" , method : "get" , path : "/notes/{id}""#,
             r#"name : "id" , place : :: quoll :: __private :: openapi :: Place :: Path , schema : :: quoll :: __private :: openapi :: schema :: < i64 >"#,
             r#"name : "page" , place : :: quoll :: __private :: openapi :: Place :: Query { required : false } , schema : :: quoll :: __private :: openapi :: schema :: < u32 >"#,
             r#"name : "X-Trace" , place : :: quoll :: __private :: openapi :: Place :: Header { required : true }"#,
@@ -409,33 +441,28 @@ mod tests {
         });
 
         // Each scheme once, in the order: declared, then taken by the routes.
-        assert_eq!(
-            tokens
-                .matches("< crate :: auth :: Hmac as :: quoll :: rest :: Scheme > :: NAME")
-                .count(),
-            1,
-            "{tokens}"
-        );
-        assert!(tokens.contains("schemes : & [1usize , 2usize]"), "{tokens}");
-        assert!(tokens.contains("schemes : & [2usize]"), "{tokens}");
         assert!(
-            tokens.contains("is_component_name (SCHEMES [2usize] . name)"),
+            tokens.contains("const NAMES : & [& str] = & [< Key as :: quoll :: rest :: Scheme > :: NAME , < :: quoll :: rest :: Bearer as :: quoll :: rest :: Scheme > :: NAME , < crate :: auth :: Hmac as :: quoll :: rest :: Scheme > :: NAME]"),
             "{tokens}"
         );
         assert!(
-            tokens.contains("same_name (SCHEMES [0usize] . name , SCHEMES [2usize] . name ,)"),
+            tokens.contains("is_component_name (NAMES [2usize])"),
             "{tokens}"
         );
         assert!(
-            tokens.contains("same_name (SCHEMES [1usize] . name , SCHEMES [2usize] . name ,)"),
+            tokens.contains("same_name (NAMES [0usize] , NAMES [2usize])"),
             "{tokens}"
         );
         assert!(
-            !tokens.contains("same_name (SCHEMES [0usize] . name , SCHEMES [1usize] . name ,)"),
+            tokens.contains("same_name (NAMES [1usize] , NAMES [2usize])"),
+            "{tokens}"
+        );
+        assert!(
+            !tokens.contains("same_name (NAMES [0usize] , NAMES [1usize])"),
             "the macro keeps its own schemes apart: {tokens}"
         );
         assert!(
-            !tokens.contains("is_component_name (SCHEMES [0usize]"),
+            !tokens.contains("is_component_name (NAMES [0usize]"),
             "the macro checks its own names: {tokens}"
         );
     }
@@ -475,13 +502,14 @@ mod tests {
             1,
             "{tokens}"
         );
+        // The declared schemes alone: a route's scheme is found among them by its name.
         assert_eq!(
             tokens.matches("checks_origin : false").count(),
-            2,
+            1,
             "{tokens}"
         );
         assert!(
-            tokens.find("checks_origin : true") < tokens.find("< Key as"),
+            tokens.find("checks_origin : true") < tokens.find("TypeId :: of :: < Key >"),
             "the first is the cookie's: {tokens}"
         );
     }
