@@ -40,6 +40,8 @@ Planned, from the spec:
 - `quoll-macros/`: the proc macro behind `quoll::rest::api!`, re-exported by `quoll`, which users never name.
 - `examples/notes/`: the spec's complete example, split into the contract, its server, its command line and its page.
   It is built and tested with the workspace.
+- `examples/docker/`: a contract of the Docker Engine API, which it only calls, and a command line on it, built and
+  tested with the workspace; its test against a real daemon is skipped where none answers, but in CI.
 - `docs/`: `spec.md` and the coding rules. Guides for users come with the code they describe.
 
 What the macro generates is never written to disk: `cargo expand` shows it. The TypeScript that orval writes is
@@ -53,9 +55,11 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
 - CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`: `cargo fmt --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` and
   `cargo doc --workspace --no-deps`, the last three once per feature combination of `quoll`: none, `server`, `client`
-  and both. Those leave the example out, `--exclude 'notes-*'`: its crates turn `quoll`'s features on, and cargo would
-  unify them into the whole build, so a local `cargo test --workspace` builds `quoll` with both. The example has its
-  own run of the three, `--package 'notes-*'`. Warnings are errors, in rustc and in rustdoc.
+  and both. Those leave the examples out, `--exclude 'notes-*' --exclude 'docker-*'`: their crates turn `quoll`'s
+  features on, and cargo would unify them into the whole build, so a local `cargo test --workspace` builds `quoll`
+  with both. The examples have their own run of the three, `--package 'notes-*' --package 'docker-*'`, whose tests
+  set `DOCKER_CLI_TEST_DAEMON=required`, so that the Docker example's test fails when the runner's daemon does not
+  answer. Warnings are errors, in rustc and in rustdoc.
 - The `ci` job gathers all of them and is the one check `main` requires: a new job goes in its `needs`. The branch must
   be up to date with `main`, and every review thread resolved, before the merge.
 - A pull request is merged with a rebase, and its branch deleted. Closing its issue is done in its description with

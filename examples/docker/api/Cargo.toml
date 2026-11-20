@@ -1,0 +1,16 @@
+[package]
+name = "docker-api"
+description = "The contract of the Docker example: the part of the Docker Engine API its command line calls"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+client = ["quoll/client"]
+
+[dependencies]
+quoll = { path = "../../../quoll" }
+serde = { version = "1", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "forbid"
