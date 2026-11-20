@@ -1,21 +1,20 @@
-//! Serves the notes from memory on port 8080, until Ctrl-C, or `SIGTERM` on Unix, with one session open, whose token
-//! it prints: the store has no login of its own.
-
-use notes_server::User;
+//! Serves the notes from `notes.db`, in the directory it runs in, on port 8080, until Ctrl-C, or `SIGTERM` on Unix.
+//!
+//! The users and the operators are added with the `seed` binary: `NOTES_PASSWORD=... cargo run -p notes-server --bin
+//! seed -- user ana`, and `cargo run -p notes-server --bin seed -- operator ops`, which prints the operator's key.
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let app = notes_server::App::in_memory();
-    let token = app.sessions.open(User {
-        id: 1,
-        name: "demo".into(),
-    });
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
 
-    println!(
-        "serving the notes on http://127.0.0.1:8080, as the user demo with the bearer token {token}"
-    );
+    let app = notes_server::App {
+        store: notes_server::Store::open("notes.db").await?,
+        sessions: notes_server::Sessions::default(),
+    };
 
+    // Until Ctrl-C or SIGTERM, then up to 5 s for the requests it serves.
     notes_server::server()
-        .serve("127.0.0.1:8080", notes_server::router(app))
-        .await
+        .serve("0.0.0.0:8080", notes_server::router(app))
+        .await?;
+    Ok(())
 }

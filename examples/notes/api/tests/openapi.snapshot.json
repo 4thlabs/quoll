@@ -51,11 +51,29 @@
       }
     },
     "schemas": {
+      "Login": {
+        "description": "A user's name and password, traded for a token.",
+        "properties": {
+          "password": {
+            "description": "Their password.",
+            "type": "string"
+          },
+          "user": {
+            "description": "The user's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "password"
+        ],
+        "type": "object"
+      },
       "NewNote": {
         "description": "A note to write: what a note holds, but its id.",
         "properties": {
           "body": {
-            "description": "Its text.",
+            "description": "Its text, where a `#word` tags it.",
             "type": "string"
           },
           "title": {
@@ -73,7 +91,7 @@
         "description": "A note, as it is read back.",
         "properties": {
           "body": {
-            "description": "Its text.",
+            "description": "Its text, where a `#word` tags it.",
             "type": "string"
           },
           "id": {
@@ -92,6 +110,44 @@
           "body"
         ],
         "type": "object"
+      },
+      "NoteEvent": {
+        "description": "A change of a note, as it happens.",
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Note",
+            "description": "The note was written again: as it is now.",
+            "properties": {
+              "kind": {
+                "const": "edited",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The note was removed: the last event of its stream.",
+            "properties": {
+              "id": {
+                "description": "The id of the note.",
+                "format": "int64",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "removed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "Problem": {
         "description": "An RFC 9457 problem: what went wrong with a request, the body of every error, as `application/problem+json`.",
@@ -123,12 +179,53 @@
           }
         },
         "type": "object"
+      },
+      "Stats": {
+        "description": "What the server holds, for its operators.",
+        "properties": {
+          "notes": {
+            "description": "How many notes they keep, all users together.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "users": {
+            "description": "How many users can sign in.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "users",
+          "notes"
+        ],
+        "type": "object"
+      },
+      "TokenResponse": {
+        "description": "The token a login gives, which the routes of the notes take as a bearer token.",
+        "properties": {
+          "access_token": {
+            "description": "The token, sent as `Authorization: Bearer <token>`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
       "Bearer": {
         "scheme": "bearer",
         "type": "http"
+      },
+      "Key": {
+        "description": "The key of an operator's scripts.",
+        "in": "header",
+        "name": "X-Api-Key",
+        "type": "apiKey"
       }
     }
   },
@@ -139,7 +236,105 @@
   },
   "openapi": "3.1.1",
   "paths": {
+    "/api/admin/stats": {
+      "get": {
+        "operationId": "admin_stats",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stats"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "Key": []
+          }
+        ],
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
     "/api/notes": {
+      "get": {
+        "operationId": "notes_search",
+        "parameters": [
+          {
+            "description": "Notes whose title or text holds this, whatever the case of its ASCII letters.",
+            "in": "query",
+            "name": "contains",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "The page, of 20 notes in the order they were written, from 1, the first when it is missing.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Notes tagged so, by a `#word` of their title or their text, with or without its `#`.",
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Note"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Notes matching the filter, a page at a time.",
+        "tags": [
+          "Notes"
+        ]
+      },
       "post": {
         "operationId": "notes_create",
         "requestBody": {
@@ -274,13 +469,164 @@
         "tags": [
           "Notes"
         ]
+      },
+      "put": {
+        "operationId": "notes_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewNote"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "tags": [
+          "Notes"
+        ]
+      }
+    },
+    "/api/notes/{id}/events": {
+      "get": {
+        "operationId": "notes_events",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "x-item": {
+                  "$ref": "#/components/schemas/NoteEvent"
+                }
+              }
+            },
+            "description": "Server-sent events, the data of each the JSON of an item, whose schema is `x-item`. A failure ends the stream with an event `problem`, whose data is a `Problem`."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "The changes of a note, as they happen.",
+        "tags": [
+          "Notes"
+        ]
+      }
+    },
+    "/api/token": {
+      "post": {
+        "operationId": "auth_token",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Login"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "summary": "Trades a login for a token.",
+        "tags": [
+          "Auth"
+        ]
       }
     }
   },
   "tags": [
     {
+      "name": "Auth"
+    },
+    {
       "description": "The signed-in user's notes.",
       "name": "Notes"
+    },
+    {
+      "name": "Admin"
     }
   ]
 }

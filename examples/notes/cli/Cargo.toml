@@ -1,0 +1,22 @@
+[package]
+name = "notes-cli"
+description = "The command line of the notes example: signs in, writes a note, searches, and watches it"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = "1"
+futures = "0.3"
+notes-api = { path = "../api", features = ["client"] }
+quoll = { path = "../../../quoll" }
+reqwest = { version = "0.13", default-features = false }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+axum = { version = "0.8", default-features = false }
+notes-server = { path = "../server" }
+tokio = { version = "1", features = ["process", "sync", "time"] }
+
+[lints]
+workspace = true
