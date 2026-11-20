@@ -2,7 +2,7 @@
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let app = notes_server::App::default();
+    let app = notes_server::App::in_memory();
     let password = notes_server::random_hex();
 
     app.store.add_user("demo", &password).await?;

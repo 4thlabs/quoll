@@ -565,10 +565,19 @@ use quoll::server;
 
 use crate::{Sessions, Store};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct App {
     pub store: Store,
     pub sessions: Sessions,
+}
+
+impl App {
+    pub fn in_memory() -> Self {
+        Self {
+            store: Store::in_memory(),
+            sessions: Sessions::default(),
+        }
+    }
 }
 
 pub fn router(app: App) -> axum::Router {
@@ -724,7 +733,7 @@ impl AdminServer for App {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let app = notes_server::App::default();
+    let app = notes_server::App::in_memory();
     let password = notes_server::random_hex();
 
     app.store.add_user("demo", &password).await?;
@@ -755,7 +764,7 @@ fn served(app: notes_server::App) -> axum::Router {
 
 #[tokio::test]
 async fn a_created_note_reads_back() -> anyhow::Result<()> {
-    let app = notes_server::App::default();
+    let app = notes_server::App::in_memory();
     let token = app.sessions.open(User {
         id: 1,
         name: "ana".into(),
@@ -780,7 +789,7 @@ async fn a_created_note_reads_back() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
-    let url = quoll::test::spawn(served(notes_server::App::default())).await;
+    let url = quoll::test::spawn(served(notes_server::App::in_memory())).await;
     let api = Api::client(&url)?;
 
     let error = api.notes().get(1).await.unwrap_err();

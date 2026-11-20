@@ -5,10 +5,19 @@ use quoll::server;
 
 use crate::{Sessions, Store};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct App {
     pub store: Store,
     pub sessions: Sessions,
+}
+
+impl App {
+    pub fn in_memory() -> Self {
+        Self {
+            store: Store::in_memory(),
+            sessions: Sessions::default(),
+        }
+    }
 }
 
 pub fn router(app: App) -> axum::Router {
