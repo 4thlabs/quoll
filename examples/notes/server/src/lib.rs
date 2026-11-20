@@ -9,7 +9,7 @@ use quoll::server;
 
 mod store;
 
-pub use store::{PAGE_SIZE, Sessions, Store, StoreError};
+pub use store::{PAGE_SIZE, SESSION_LIFETIME, Sessions, Store, StoreError};
 
 /// Who a request comes from, once its token is checked. Never sent: the server alone builds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +67,17 @@ impl AuthServer for App {
 
 impl NotesServer for App {
     async fn search(&self, user: &User, filter: NoteFilter) -> Result<Vec<Note>> {
+        // Refused before the query, so that a pattern past SQLite's limit is the caller's error, not the database's.
+        if filter
+            .contains
+            .as_ref()
+            .is_some_and(|text| text.chars().count() > CONTAINS_LIMIT)
+        {
+            return Err(Error::bad_request(format!(
+                "`contains` holds more than {CONTAINS_LIMIT} characters"
+            )));
+        }
+
         self.store
             .notes(user.id, &filter)
             .await
@@ -111,7 +122,8 @@ impl NotesServer for App {
             .store
             .watch(user.id, id)
             .await
-            .map_err(Error::internal)?;
+            .map_err(Error::internal)?
+            .ok_or_else(|| Error::not_found("no such note"))?;
 
         Ok(Events::new(changes))
     }

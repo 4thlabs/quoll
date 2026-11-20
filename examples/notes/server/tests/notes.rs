@@ -1,10 +1,13 @@
 //! The notes server, served on a free port and called by the contract's client.
 
+use std::time::Duration;
+
 use futures_util::StreamExt;
 use notes_api::{
-    Admin, Api, ApiClient, Auth, Key, Login, NewNote, Note, NoteEvent, NoteFilter, Notes, Stats,
+    Admin, Api, ApiClient, Auth, CONTAINS_LIMIT, Key, Login, NewNote, Note, NoteEvent, NoteFilter,
+    Notes, Stats, TokenResponse,
 };
-use notes_server::{PAGE_SIZE, Sessions, Store, User};
+use notes_server::{PAGE_SIZE, SESSION_LIFETIME, Sessions, Store, User};
 use quoll::client;
 use quoll::rest::{self, Form};
 use reqwest::StatusCode;
@@ -294,6 +297,91 @@ async fn a_search_by_tag_reads_the_hash_words() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn an_empty_key_of_a_search_is_no_key() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+
+    api.notes().create(written("Milk", "#shopping")).await?;
+    api.notes().create(titled("Bread")).await?;
+
+    let notes = api
+        .notes()
+        .search(NoteFilter {
+            contains: Some(String::new()),
+            tag: Some(String::new()),
+            page: None,
+        })
+        .await?;
+    // A lone `#`, or a tag that cuts to nothing, is no tag either.
+    let hash = api
+        .notes()
+        .search(NoteFilter {
+            tag: Some("#".into()),
+            ..Default::default()
+        })
+        .await?;
+
+    assert_eq!(titles(&notes), ["Milk", "Bread"]);
+    assert_eq!(titles(&hash), ["Milk", "Bread"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_tag_of_a_search_is_cut_as_the_tags_of_a_note() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+
+    api.notes()
+        .create(written("Milk", "#milk, two litres"))
+        .await?;
+    api.notes().create(titled("Bread")).await?;
+
+    let notes = api
+        .notes()
+        .search(NoteFilter {
+            tag: Some("#Milk,".into()),
+            ..Default::default()
+        })
+        .await?;
+
+    assert_eq!(titles(&notes), ["Milk"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_contains_past_its_limit_is_refused() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+    let contains = |text: String| NoteFilter {
+        contains: Some(text),
+        ..Default::default()
+    };
+
+    // The limit counts characters, not bytes: 1000 of two bytes each are taken.
+    let at_limit = api
+        .notes()
+        .search(contains("é".repeat(CONTAINS_LIMIT)))
+        .await?;
+    let past_limit = api
+        .notes()
+        .search(contains("a".repeat(CONTAINS_LIMIT + 1)))
+        .await
+        .unwrap_err();
+    // Past SQLite's own limit on a pattern of `LIKE`, 50,000 bytes, too, which would fail the query.
+    let far_past = api
+        .notes()
+        .search(contains("a".repeat(50_001)))
+        .await
+        .unwrap_err();
+
+    assert!(at_limit.is_empty());
+    assert_eq!(past_limit.status(), Some(StatusCode::BAD_REQUEST));
+    assert_eq!(
+        past_limit.problem().and_then(|problem| problem.detail()),
+        Some("`contains` holds more than 1000 characters")
+    );
+    assert_eq!(far_past.status(), Some(StatusCode::BAD_REQUEST));
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_search_by_tag_follows_an_update() -> anyhow::Result<()> {
     let api = Served::start().await.client_as(ana())?;
     let note = api.notes().create(written("Milk", "#shopping")).await?;
@@ -426,12 +514,22 @@ async fn a_removed_note_tells_its_watchers_and_ends_their_streams() -> anyhow::R
 }
 
 #[tokio::test]
-async fn the_events_of_a_missing_note_end_at_once() -> anyhow::Result<()> {
+async fn the_events_of_a_missing_note_are_not_found() -> anyhow::Result<()> {
     let api = Served::start().await.client_as(ana())?;
+    let removed = api.notes().create(titled("Milk")).await?;
 
-    let mut events = api.notes().events(999).await?;
+    api.notes().remove(removed.id).await?;
 
-    assert!(events.next().await.is_none());
+    for id in [999, removed.id] {
+        let error = api.notes().events(id).await.unwrap_err();
+
+        assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
+        assert_eq!(
+            error.problem().and_then(|problem| problem.detail()),
+            Some("no such note")
+        );
+    }
+
     Ok(())
 }
 
@@ -499,7 +597,7 @@ async fn a_note_of_another_user_is_neither_seen_nor_changed() -> anyhow::Result<
         .update(created.id, titled("Beer"))
         .await
         .unwrap_err();
-    let mut bob_events = bob_api.notes().events(created.id).await?;
+    let watched = bob_api.notes().events(created.id).await.unwrap_err();
     let found = bob_api
         .notes()
         .search(NoteFilter {
@@ -512,7 +610,7 @@ async fn a_note_of_another_user_is_neither_seen_nor_changed() -> anyhow::Result<
 
     assert_eq!(read.status(), Some(StatusCode::NOT_FOUND));
     assert_eq!(updated.status(), Some(StatusCode::NOT_FOUND));
-    assert!(bob_events.next().await.is_none());
+    assert_eq!(watched.status(), Some(StatusCode::NOT_FOUND));
     assert!(found.is_empty());
     assert_eq!(ana_api.notes().get(created.id).await?, created);
 
@@ -595,30 +693,35 @@ async fn the_stats_are_refused_without_an_operators_key() -> anyhow::Result<()> 
 
 #[tokio::test]
 async fn a_store_on_a_file_keeps_its_users_and_notes() -> anyhow::Result<()> {
-    // One file per run of the tests, which no other test opens.
-    let path = std::env::temp_dir().join(format!("notes-{}.db", std::process::id()));
-    let written = async {
-        let store = Store::open(&path).await?;
-        let user = store.add_user("ana", "correct horse").await?;
-        let note = store.add(user.id, titled("Milk")).await?;
+    // A directory of its own, removed when the guard is dropped, whether the test passes, fails or panics.
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("notes.db");
 
-        drop(store);
+    let store = Store::open(&path).await?;
+    let user = store.add_user("ana", "correct horse").await?;
+    let note = store.add(user.id, titled("Milk")).await?;
 
-        let store = Store::open(&path).await?;
-        let signed_in = store.check_password("ana", "correct horse").await?;
-        let read = store.note(user.id, note.id).await?;
+    drop(store);
 
-        anyhow::Ok((user, signed_in, note, read))
-    }
-    .await;
+    let store = Store::open(&path).await?;
 
-    std::fs::remove_file(&path)?;
-
-    let (user, signed_in, note, read) = written?;
-
-    assert_eq!(signed_in, Some(user));
-    assert_eq!(read, Some(note));
+    assert_eq!(
+        store.check_password("ana", "correct horse").await?,
+        Some(user.clone())
+    );
+    assert_eq!(store.note(user.id, note.id).await?, Some(note));
     Ok(())
+}
+
+#[test]
+fn a_login_and_a_token_show_no_secret() {
+    let login = login("ana", "correct horse").0;
+    let token = TokenResponse {
+        access_token: "t0k3n".into(),
+    };
+
+    assert_eq!(format!("{login:?}"), r#"Login { user: "ana", .. }"#);
+    assert_eq!(format!("{token:?}"), "TokenResponse { .. }");
 }
 
 #[test]
@@ -635,13 +738,70 @@ fn each_session_has_its_own_token() {
 }
 
 #[test]
+fn a_session_past_its_lifetime_is_refused_and_dropped() {
+    let sessions = Sessions::with_lifetime(Duration::ZERO);
+    let token = sessions.open(ana());
+
+    assert_eq!(sessions.user(&token), None);
+    assert_eq!(
+        format!("{sessions:?}"),
+        "Sessions { lifetime: 0ns, open: 0 }"
+    );
+}
+
+#[test]
+fn opening_a_session_drops_those_past_their_lifetime() {
+    let sessions = Sessions::with_lifetime(Duration::ZERO);
+
+    sessions.open(ana());
+    sessions.open(bob());
+    sessions.open(ana());
+
+    assert_eq!(
+        format!("{sessions:?}"),
+        "Sessions { lifetime: 0ns, open: 1 }"
+    );
+}
+
+#[test]
+fn a_session_lasts_a_day() {
+    let sessions = Sessions::default();
+    let token = sessions.open(ana());
+
+    assert_eq!(SESSION_LIFETIME, Duration::from_secs(24 * 60 * 60));
+    assert_eq!(sessions.user(&token), Some(ana()));
+}
+
+#[tokio::test]
+async fn a_token_past_its_lifetime_is_refused() -> anyhow::Result<()> {
+    let app = notes_server::App {
+        store: Store::in_memory(),
+        sessions: Sessions::with_lifetime(Duration::ZERO),
+    };
+    let token = app.sessions.open(ana());
+    let url = quoll::test::spawn(served(app)).await;
+    let api = client::builder()
+        .with(client::bearer(token))
+        .build::<Api>(&url)?;
+
+    let error = api.notes().get(1).await.unwrap_err();
+
+    assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
+    assert_eq!(
+        error.problem().and_then(|problem| problem.detail()),
+        Some("unknown or expired token")
+    );
+    Ok(())
+}
+
+#[test]
 fn the_sessions_debug_shows_no_token() {
     let sessions = Sessions::default();
     let token = sessions.open(ana());
 
     let shown = format!("{sessions:?}");
 
-    assert_eq!(shown, "Sessions { open: 1 }");
+    assert_eq!(shown, "Sessions { lifetime: 86400s, open: 1 }");
     assert!(!shown.contains(&token));
 }
 
