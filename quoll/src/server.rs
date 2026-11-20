@@ -50,7 +50,7 @@ mod timeout;
 pub(crate) mod trace;
 
 pub use body_limit::body_limit;
-pub use builder::{Builder, builder};
+pub use builder::{Address, Builder, builder};
 pub use compression::compression;
 pub use cors::{InvalidOrigin, cors};
 pub use request_id::{RequestId, request_id};
