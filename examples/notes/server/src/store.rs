@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use tokio::task::JoinError;
 
-use crate::utils::{Passwords, hex, lock, random_hex};
+use crate::utils::{Passwords, contains_ignoring_ascii_case, hex, lock, random_hex};
 use crate::{Operator, User};
 
 pub const PAGE_SIZE: usize = 20;
@@ -28,8 +28,8 @@ struct Inner {
     users: HashMap<String, Account>,
     /// By the SHA-256 of their key.
     operators: HashMap<String, Operator>,
-    /// By id, the order they were written in.
-    notes: BTreeMap<i64, Stored>,
+    /// By owner and id: a user's notes side by side, in the order they were written in.
+    notes: BTreeMap<(i64, i64), Stored>,
     watchers: HashMap<i64, broadcast::Sender<NoteEvent>>,
     last_user: i64,
     /// Never given again, so that a removed note's id names no other.
@@ -43,24 +43,21 @@ struct Account {
 }
 
 struct Stored {
-    owner: i64,
     note: Note,
     tags: BTreeSet<String>,
 }
 
 impl Stored {
-    fn new(owner: i64, note: Note) -> Self {
+    fn new(note: Note) -> Self {
         Self {
-            owner,
             tags: tags(&note),
             note,
         }
     }
 
-    fn contains(&self, lowercase: &str) -> bool {
-        [&self.note.title, &self.note.body]
-            .into_iter()
-            .any(|text| text.to_ascii_lowercase().contains(lowercase))
+    fn contains(&self, part: &str) -> bool {
+        contains_ignoring_ascii_case(&self.note.title, part)
+            || contains_ignoring_ascii_case(&self.note.body, part)
     }
 }
 
@@ -75,7 +72,7 @@ pub enum StoreError {
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NameTaken => f.write_str("a user of this name exists"),
+            Self::NameTaken => f.write_str("the name is taken"),
             Self::Hashing(_) => f.write_str("a password could not be hashed"),
             Self::StoredHash(_) => f.write_str("the stored hash of a password cannot be checked"),
             Self::Task(_) => f.write_str("the hash of a password did not end"),
@@ -153,12 +150,22 @@ impl Store {
         Ok(account.filter(|_| verified).map(|account| account.user))
     }
 
-    pub fn add_operator(&self, name: impl Into<String>) -> String {
-        let key = random_hex();
-        let operator = Operator { name: name.into() };
+    pub fn add_operator(&self, name: impl Into<String>) -> Result<String, StoreError> {
+        let name = name.into();
+        let mut inner = lock(&self.inner);
 
-        lock(&self.inner).operators.insert(key_hash(&key), operator);
-        key
+        if inner
+            .operators
+            .values()
+            .any(|operator| operator.name == name)
+        {
+            return Err(StoreError::NameTaken);
+        }
+
+        let key = random_hex();
+
+        inner.operators.insert(key_hash(&key), Operator { name });
+        Ok(key)
     }
 
     pub fn operator(&self, key: &str) -> Option<Operator> {
@@ -175,21 +182,28 @@ impl Store {
     }
 
     pub fn notes(&self, owner: i64, filter: &NoteFilter) -> Vec<Note> {
-        let contains = filter
-            .contains
-            .as_deref()
-            .filter(|text| !text.is_empty())
-            .map(str::to_ascii_lowercase);
-        let tag = filter
+        let contains = filter.contains.as_deref().filter(|text| !text.is_empty());
+        let tag = match filter
             .tag
             .as_deref()
-            .and_then(|tag| tag_of(tag.strip_prefix('#').unwrap_or(tag)));
+            .map(|tag| tag.strip_prefix('#').unwrap_or(tag))
+        {
+            None | Some("") => None,
+            Some(tag) => {
+                // A tag that cuts to nothing, as `!` or `,`, is no note's.
+                let Some(tag) = tag_of(tag) else {
+                    return Vec::new();
+                };
+
+                Some(tag)
+            }
+        };
         let skip = ((filter.page.unwrap_or(1).max(1) - 1) as usize).saturating_mul(PAGE_SIZE);
 
         lock(&self.inner)
             .notes
-            .values()
-            .filter(|stored| stored.owner == owner)
+            .range((owner, i64::MIN)..=(owner, i64::MAX))
+            .map(|(_, stored)| stored)
             .filter(|stored| contains.as_ref().is_none_or(|text| stored.contains(text)))
             .filter(|stored| tag.as_ref().is_none_or(|tag| stored.tags.contains(tag)))
             .skip(skip)
@@ -201,8 +215,7 @@ impl Store {
     pub fn note(&self, owner: i64, id: i64) -> Option<Note> {
         lock(&self.inner)
             .notes
-            .get(&id)
-            .filter(|stored| stored.owner == owner)
+            .get(&(owner, id))
             .map(|stored| stored.note.clone())
     }
 
@@ -219,23 +232,20 @@ impl Store {
 
         inner
             .notes
-            .insert(note.id, Stored::new(owner, note.clone()));
+            .insert((owner, note.id), Stored::new(note.clone()));
         note
     }
 
     pub fn replace(&self, owner: i64, id: i64, note: NewNote) -> Option<Note> {
         let mut inner = lock(&self.inner);
-        let stored = inner
-            .notes
-            .get_mut(&id)
-            .filter(|stored| stored.owner == owner)?;
+        let stored = inner.notes.get_mut(&(owner, id))?;
         let note = Note {
             id,
             title: note.title,
             body: note.body,
         };
 
-        *stored = Stored::new(owner, note.clone());
+        *stored = Stored::new(note.clone());
 
         if let Some(watchers) = inner.watchers.get(&id) {
             // No watcher left is no error: the next `watch` drops the sender.
@@ -248,15 +258,9 @@ impl Store {
     pub fn remove(&self, owner: i64, id: i64) {
         let mut inner = lock(&self.inner);
 
-        if inner
-            .notes
-            .get(&id)
-            .is_none_or(|stored| stored.owner != owner)
-        {
+        if inner.notes.remove(&(owner, id)).is_none() {
             return;
         }
-
-        inner.notes.remove(&id);
 
         // The sender dropped here ends each watcher's stream, once it has read the removal.
         if let Some(watchers) = inner.watchers.remove(&id) {
@@ -271,10 +275,9 @@ impl Store {
     ) -> Option<impl Stream<Item = NoteEvent> + Send + 'static> {
         let mut inner = lock(&self.inner);
 
-        inner
-            .notes
-            .get(&id)
-            .filter(|stored| stored.owner == owner)?;
+        if !inner.notes.contains_key(&(owner, id)) {
+            return None;
+        }
 
         // The senders of notes no one watches any more go, so that they do not pile up.
         inner

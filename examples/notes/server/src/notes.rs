@@ -5,7 +5,8 @@ use crate::{App, User};
 
 impl NotesServer for App {
     async fn search(&self, user: &User, filter: NoteFilter) -> Result<Vec<Note>> {
-        // The document says 1000 at most: a caller who skips its check meets the same rule here.
+        // The document says 1000 at most: a caller who skips its check meets the same rule, and a search under the
+        // store's lock stays short.
         if filter
             .contains
             .as_ref()

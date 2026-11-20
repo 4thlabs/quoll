@@ -34,6 +34,16 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .expect("no code panics while holding a lock of the server")
 }
 
+/// Compares bytes, which matches whole characters: UTF-8 never holds a character's bytes inside another's, nor an
+/// ASCII byte inside a longer character.
+pub(crate) fn contains_ignoring_ascii_case(text: &str, part: &str) -> bool {
+    part.is_empty()
+        || text
+            .as_bytes()
+            .windows(part.len())
+            .any(|window| window.eq_ignore_ascii_case(part.as_bytes()))
+}
+
 /// An Argon2 hash takes 19 MiB and a core: no more run at once than there are cores, so that a flood of logins waits
 /// rather than exhaust the memory. A permit is held to the end of the hash's task, even when its request is dropped.
 pub(crate) struct Passwords {
@@ -109,7 +119,7 @@ impl Passwords {
             #[cfg(test)]
             let running = tests::Running::start(&counts);
 
-            // Made by the first hash of all, so that the first check of a known user costs as much as an unknown one's.
+            // The first hash of all pays for it: `main` adds a user first, so that no request does.
             LazyLock::force(&UNKNOWN_USER);
 
             let hashed = hash();

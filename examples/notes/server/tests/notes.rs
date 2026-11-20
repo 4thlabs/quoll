@@ -5,7 +5,7 @@ use notes_api::{
     Admin, Api, ApiClient, Auth, CONTAINS_LIMIT, Key, Login, NewNote, Note, NoteEvent, NoteFilter,
     Notes, Stats, TokenResponse,
 };
-use notes_server::{PAGE_SIZE, SESSION_LIFETIME, Sessions, Store, User};
+use notes_server::{PAGE_SIZE, SESSION_LIFETIME, Sessions, Store, StoreError, User};
 use quoll::client;
 use quoll::rest::{self, Form};
 use reqwest::StatusCode;
@@ -197,9 +197,27 @@ async fn a_user_whose_name_is_taken_is_not_added() -> anyhow::Result<()> {
 
     store.add_user("ana", "correct horse").await?;
 
-    assert!(store.add_user("ana", "another").await.is_err());
+    assert!(matches!(
+        store.add_user("ana", "another").await,
+        Err(StoreError::NameTaken)
+    ));
     assert!(store.check_password("ana", "another").await?.is_none());
     Ok(())
+}
+
+#[test]
+fn an_operator_whose_name_is_taken_is_not_added() {
+    let store = Store::in_memory();
+    let key = store.add_operator("ops").expect("ops is added");
+
+    assert!(matches!(
+        store.add_operator("ops"),
+        Err(StoreError::NameTaken)
+    ));
+    assert_eq!(
+        store.operator(&key).map(|operator| operator.name),
+        Some("ops".into())
+    );
 }
 
 #[tokio::test]
@@ -294,7 +312,7 @@ async fn an_empty_key_of_a_search_is_no_key() -> anyhow::Result<()> {
             page: None,
         })
         .await?;
-    // A lone `#`, or a tag that cuts to nothing, is no tag either.
+    // A lone `#` is no tag either.
     let hash = api
         .notes()
         .search(NoteFilter {
@@ -305,6 +323,27 @@ async fn an_empty_key_of_a_search_is_no_key() -> anyhow::Result<()> {
 
     assert_eq!(titles(&notes), ["Milk", "Bread"]);
     assert_eq!(titles(&hash), ["Milk", "Bread"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_tag_that_cuts_to_nothing_finds_no_note() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+
+    api.notes().create(written("Milk", "#milk")).await?;
+
+    for tag in ["!", ",", "#!"] {
+        let notes = api
+            .notes()
+            .search(NoteFilter {
+                tag: Some(tag.into()),
+                ..Default::default()
+            })
+            .await?;
+
+        assert!(notes.is_empty(), "{tag}");
+    }
+
     Ok(())
 }
 
@@ -621,7 +660,7 @@ async fn an_operator_reads_the_stats_with_their_key() -> anyhow::Result<()> {
     let served = Served::start().await;
     let ana = served.store.add_user("ana", "correct horse").await?;
     let bob = served.store.add_user("bob", "battery staple").await?;
-    let key = served.store.add_operator("ops");
+    let key = served.store.add_operator("ops")?;
 
     served
         .client_as(ana)?
@@ -651,7 +690,7 @@ async fn an_operator_reads_the_stats_with_their_key() -> anyhow::Result<()> {
 #[tokio::test]
 async fn the_stats_are_refused_without_an_operators_key() -> anyhow::Result<()> {
     let served = Served::start().await;
-    let key = served.store.add_operator("ops");
+    let key = served.store.add_operator("ops")?;
     let wrong_key = client::builder()
         .with(client::key::<Key>(format!("{key}0")))
         .build::<Api>(&served.url)?;
