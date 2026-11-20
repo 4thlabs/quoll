@@ -1,0 +1,5 @@
+error: `Key` and `Legacy` both read the header `x-api-key`, so a request's credential would be both: take one of them
+  --> tests/compile_fail/alternative_same_header.rs:11:18
+   |
+11 |     #[auth(Key | Legacy)]
+   |                  ^^^^^^

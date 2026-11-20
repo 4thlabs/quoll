@@ -1,0 +1,5 @@
+error: `scopes` is written twice: put every scope in one `scopes(...)`
+ --> tests/compile_fail/auth_scopes_twice.rs:7:36
+  |
+7 |     #[auth(Bearer, scopes("repo"), scopes("admin"))]
+  |                                    ^^^^^^

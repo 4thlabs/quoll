@@ -50,8 +50,8 @@ pub(crate) fn alone_group(alone: &Api) -> TokenStream {
     })
 }
 
-/// What a group becomes: its descriptor, the check of the types it names, its OpenAPI document, its server's code and
-/// its client's.
+/// What a group becomes: its descriptor, the check of the types it names and of the challenges of its schemes, its
+/// OpenAPI document, its server's code and its client's.
 fn group(cx: &Cx) -> TokenStream {
     let descriptor = descriptor::expand(cx);
     let known = known_types(cx);
@@ -60,6 +60,7 @@ fn group(cx: &Cx) -> TokenStream {
     } else {
         TokenStream::new()
     };
+    let challenges = scheme::challenge_checks(cx.group);
     let openapi = openapi::group(cx);
     let server = server::group(cx);
     let client = client::group(cx);
@@ -68,6 +69,7 @@ fn group(cx: &Cx) -> TokenStream {
         #descriptor
         #known
         #alone
+        #challenges
         #openapi
         #server
         #client

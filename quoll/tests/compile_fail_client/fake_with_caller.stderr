@@ -1,0 +1,8 @@
+error[E0050]: method `get` has 3 parameters but the declaration in trait `Notes::get` has 2
+  --> tests/compile_fail_client/fake_with_caller.rs:17:18
+   |
+ 8 |         GET "/notes/{id}" => get(id: i64) -> String;
+   |                              ----------- trait requires 2 parameters
+...
+17 |     async fn get(&self, _user: &User, id: i64) -> Result<String> {
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected 2 parameters, found 3

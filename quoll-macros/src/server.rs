@@ -120,16 +120,18 @@ fn method(prefix: Option<&str>, bounds: &Bounds, route: &Route) -> TokenStream {
         }
     };
     let caller = bounds.caller_of(route).map(|scheme| {
+        let span = scheme.span();
         let scheme = scheme_type(scheme);
         // Its own hygiene, so that a route's argument may be named `caller` too.
-        let caller = Ident::new("caller", Span::mixed_site());
-        let ty = quote! { <Self as ::quoll::rest::Authenticate<#scheme>>::Caller };
+        let caller = Ident::new("caller", Span::mixed_site().located_at(span));
+        let ty = quote_spanned! {span=> <Self as ::quoll::rest::Authenticate<#scheme>>::Caller };
         let optional = route.auth.as_ref().is_some_and(|auth| auth.optional);
 
+        // Spanned on the scheme, as a service that does not authenticate it is the mistake an error names then.
         if optional {
-            quote! { #caller: ::core::option::Option<&#ty>, }
+            quote_spanned! {span=> #caller: ::core::option::Option<&#ty>, }
         } else {
-            quote! { #caller: &#ty, }
+            quote_spanned! {span=> #caller: &#ty, }
         }
     });
 

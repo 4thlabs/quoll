@@ -22,6 +22,7 @@ use crate::__private::content_type::{
     self, FORM, JSON, MULTIPART, OCTET_STREAM, PROBLEM, TEXT, TEXT_UTF8, media_type_value,
 };
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
+use crate::__private::read::{Deserialized, Read};
 use crate::rest::error::Repr;
 use crate::rest::{Authenticate, Error, Result, Route, Scheme, Scoped};
 use crate::server::{body_limit, trace};
@@ -342,7 +343,12 @@ impl Request {
     ///
     /// A 400 when the body is not the JSON of `T`, a 415 when the request does not say it sends JSON or names more
     /// than one content type, and the status axum gives when the body cannot be read, as a 413 for one too large.
-    pub async fn json<T: DeserializeOwned>(self) -> Result<T> {
+    pub fn json<T: Deserialized + Send + 'static>(self) -> Read<T> {
+        Read::new(self.read_json())
+    }
+
+    /// The body, read as JSON, as [`Request::json`] reads it.
+    async fn read_json<T: DeserializeOwned>(self) -> Result<T> {
         // axum reads the first `Content-Type` alone: a second one is refused here, as every other body refuses it.
         if self
             .parts
@@ -376,7 +382,16 @@ impl Request {
     /// A 415 when the request does not say it sends `application/x-www-form-urlencoded`, or names a charset other than
     /// UTF-8; a 400 when the form does not read as `T` or a value is not UTF-8 once decoded, and the status axum gives
     /// when the body cannot be read.
-    pub async fn form<F>(self) -> Result<F>
+    pub fn form<F>(self) -> Read<F>
+    where
+        F: IsForm + Send + 'static,
+        F::Value: Deserialized,
+    {
+        Read::new(self.read_form())
+    }
+
+    /// The body, read as a form, as [`Request::form`] reads it.
+    async fn read_form<F>(self) -> Result<F>
     where
         F: IsForm,
         F::Value: DeserializeOwned,
@@ -394,7 +409,12 @@ impl Request {
     ///
     /// A 415 when the request does not say it sends `text/plain`, or names a charset other than UTF-8; a 400 when the
     /// body is not UTF-8, and the status axum gives when the body cannot be read.
-    pub async fn text<T: IsText>(self) -> Result<T> {
+    pub fn text<T: IsText + Send + 'static>(self) -> Read<T> {
+        Read::new(self.read_text())
+    }
+
+    /// The body, read as text, as [`Request::text`] reads it.
+    async fn read_text<T: IsText>(self) -> Result<T> {
         self.check_content_type(TEXT, true)?;
 
         let body = self.read().await?;
@@ -410,7 +430,12 @@ impl Request {
     ///
     /// A 415 when the request names no content type, more than one, one that is not a media type, or one of the
     /// three a browser sends to another site without asking, and the status axum gives when the body cannot be read.
-    pub async fn bytes<B: IsBytes>(self) -> Result<B> {
+    pub fn bytes<B: IsBytes + Send + 'static>(self) -> Read<B> {
+        Read::new(self.read_bytes())
+    }
+
+    /// The body, read as bytes, as [`Request::bytes`] reads it.
+    async fn read_bytes<B: IsBytes>(self) -> Result<B> {
         let content_type = self.bytes_content_type()?;
         let body = self.read().await?;
 

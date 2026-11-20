@@ -19,6 +19,7 @@ use crate::__private::content_type::{
     self, FORM, JSON_LINES, OCTET_STREAM, PROBLEM, TEXT_UTF8, media_type_value,
 };
 use crate::__private::known::{IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
+use crate::__private::read::{Deserialized, Read};
 use crate::rest::{Error, Problem, Result, Route};
 
 mod redact;
@@ -478,7 +479,12 @@ impl Answer {
     /// # Errors
     ///
     /// An error with no status when the body cannot be read, or is not the JSON of `T`.
-    pub async fn json<T: DeserializeOwned>(self) -> Result<T> {
+    pub fn json<T: Deserialized + Send + 'static>(self) -> Read<T> {
+        Read::new(self.read_json())
+    }
+
+    /// The body, read as JSON, as [`Answer::json`] reads it.
+    async fn read_json<T: DeserializeOwned>(self) -> Result<T> {
         let route = self.route;
         let body = self.read().await?;
 
@@ -491,7 +497,12 @@ impl Answer {
     ///
     /// An error with no status when the answer is not `text/plain`, names a charset other than UTF-8, or its body
     /// cannot be read or is not UTF-8.
-    pub async fn text<T: IsText>(self) -> Result<T> {
+    pub fn text<T: IsText + Send + 'static>(self) -> Read<T> {
+        Read::new(self.read_text())
+    }
+
+    /// The body, read as text, as [`Answer::text`] reads it.
+    async fn read_text<T: IsText>(self) -> Result<T> {
         let route = self.route;
         let body = self.read_as(TEXT, true).await?;
         // The source is the `Utf8Error` alone: a `FromUtf8Error` would keep the whole body in the error.
@@ -508,7 +519,12 @@ impl Answer {
     /// # Errors
     ///
     /// An error with no status when the body cannot be read.
-    pub async fn bytes<B: IsBytes>(self) -> Result<B> {
+    pub fn bytes<B: IsBytes + Send + 'static>(self) -> Read<B> {
+        Read::new(self.read_bytes())
+    }
+
+    /// The body, read as bytes, as [`Answer::bytes`] reads it.
+    async fn read_bytes<B: IsBytes>(self) -> Result<B> {
         let content_type = content_type::media_type(self.response.headers())
             .map_or(Cow::Borrowed(OCTET_STREAM), |media_type| {
                 Cow::Owned(media_type.to_owned())
@@ -528,7 +544,16 @@ impl Answer {
     /// status for an event that does not read as an item; the error of an answer for an `event: problem`, with the
     /// problem's status and the problem; and an error with no status for an event or a line longer than 1 MiB, or a
     /// body that cannot be read. The stream ends after any of them but the first.
-    pub async fn events<E>(self) -> Result<E>
+    pub fn events<E>(self) -> Read<E>
+    where
+        E: IsEvents + Send + 'static,
+        E::Item: Deserialized + Send + 'static,
+    {
+        Read::new(self.read_events())
+    }
+
+    /// The body, read as server-sent events, as [`Answer::events`] reads it.
+    async fn read_events<E>(self) -> Result<E>
     where
         E: IsEvents,
         E::Item: DeserializeOwned + Send + 'static,
@@ -551,7 +576,16 @@ impl Answer {
     /// An error with no status when the answer is not `application/jsonl`, `application/x-ndjson` or
     /// `application/x-jsonlines`. Then, in the stream, an error with no status for a line that does not read as an
     /// item; and for a line longer than 1 MiB, or a body that cannot be read, after which the stream ends.
-    pub async fn json_lines<L>(self) -> Result<L>
+    pub fn json_lines<L>(self) -> Read<L>
+    where
+        L: IsJsonLines + Send + 'static,
+        L::Item: Deserialized + Send + 'static,
+    {
+        Read::new(self.read_json_lines())
+    }
+
+    /// The body, read as JSON Lines, as [`Answer::json_lines`] reads it.
+    async fn read_json_lines<L>(self) -> Result<L>
     where
         L: IsJsonLines,
         L::Item: DeserializeOwned + Send + 'static,

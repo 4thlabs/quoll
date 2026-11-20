@@ -12,15 +12,10 @@ help: the trait `Authenticate<Bearer>` is not implemented for `App`
    = note: a group or a route with `#[auth(Bearer)]` gives each handler its caller: implement `quoll::rest::Authenticate<Bearer>` for `App`, with its `type Caller` and its `async fn authenticate`
 
 error[E0277]: `App` does not implement `Authenticate<Bearer>`, which a group it serves takes
-  --> tests/compile_fail_server/service_without_authenticate.rs:3:1
+  --> tests/compile_fail_server/service_without_authenticate.rs:6:12
    |
- 3 | / rest::api! {
- 4 | |     pub api Api = "/api";
- 5 | |
- 6 | |     #[auth(Bearer)]
-...  |
-10 | | }
-   | |_^ this service authenticates no `Bearer` credential
+ 6 |     #[auth(Bearer)]
+   |            ^^^^^^ this service authenticates no `Bearer` credential
    |
 help: the trait `Authenticate<Bearer>` is not implemented for `App`
   --> tests/compile_fail_server/service_without_authenticate.rs:12:1
@@ -28,7 +23,6 @@ help: the trait `Authenticate<Bearer>` is not implemented for `App`
 12 | struct App;
    | ^^^^^^^^^^
    = note: a group or a route with `#[auth(Bearer)]` gives each handler its caller: implement `quoll::rest::Authenticate<Bearer>` for `App`, with its `type Caller` and its `async fn authenticate`
-   = note: this error originates in the macro `rest::api` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: `App` does not implement `Authenticate<Bearer>`, which a group it serves takes
   --> tests/compile_fail_server/service_without_authenticate.rs:14:22

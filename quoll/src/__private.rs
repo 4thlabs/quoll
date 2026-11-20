@@ -20,6 +20,9 @@ pub mod group;
 pub mod known;
 pub mod openapi;
 
+#[cfg(any(feature = "server", feature = "client"))]
+pub mod read;
+
 #[cfg(feature = "server")]
 pub mod server;
 
