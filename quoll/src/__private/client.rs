@@ -34,16 +34,17 @@ pub use http::HeaderName;
 /// Any content type, which a route returning `Bytes` asks for.
 pub const ANY: &str = "*/*";
 
-/// The content types of JSON Lines the client reads: its own, and the two names some APIs send it with.
+/// The content types of JSON Lines the client reads: its own, the two names some APIs send it with, and JSON, which
+/// others send it as, the Docker Engine API among them.
 const JSON_LINES_READ: &[&str] = &[
     JSON_LINES,
     "application/x-ndjson",
     "application/x-jsonlines",
+    JSON,
 ];
 
-/// What a route returning `JsonLines` asks for: JSON Lines by its own name first.
-pub const ANY_JSON_LINES: &str =
-    "application/jsonl, application/x-ndjson;q=0.9, application/x-jsonlines;q=0.9";
+/// What a route returning `JsonLines` asks for: JSON Lines by its own name first, and JSON last.
+pub const ANY_JSON_LINES: &str = "application/jsonl, application/x-ndjson;q=0.9, application/x-jsonlines;q=0.9, application/json;q=0.5";
 
 /// What a path parameter keeps as it is: the unreserved characters of RFC 3986. Every other byte is escaped, `/`, `?`
 /// and `%` included, so that a value is one segment and reads back as it was written.
@@ -573,8 +574,8 @@ impl Answer {
     ///
     /// # Errors
     ///
-    /// The read resolves to an error with no status when the answer is not `application/jsonl`, `application/x-ndjson`
-    /// or `application/x-jsonlines`. Then, in the stream, an error with no status for a line that does not read as an
+    /// The read resolves to an error with no status when the answer is not `application/jsonl`, `application/x-ndjson`,
+    /// `application/x-jsonlines` or `application/json`. Then, in the stream, an error with no status for a line that does not read as an
     /// item; and for a line longer than 1 MiB, or a body that cannot be read, after which the stream ends.
     pub fn json_lines<L>(self) -> Read<L>
     where
