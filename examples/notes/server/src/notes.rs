@@ -5,7 +5,7 @@ use crate::{App, User};
 
 impl NotesServer for App {
     async fn search(&self, user: &User, filter: NoteFilter) -> Result<Vec<Note>> {
-        // Refused before the query, so that a pattern past SQLite's limit is the caller's error, not the database's.
+        // The document says 1000 at most: a caller who skips its check meets the same rule here.
         if filter
             .contains
             .as_ref()
@@ -16,26 +16,17 @@ impl NotesServer for App {
             )));
         }
 
-        self.store
-            .notes(user.id, &filter)
-            .await
-            .map_err(Error::internal)
+        Ok(self.store.notes(user.id, &filter))
     }
 
     async fn get(&self, user: &User, id: i64) -> Result<Note> {
         self.store
             .note(user.id, id)
-            .await
-            .map_err(Error::internal)?
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
     async fn create(&self, user: &User, note: NewNote) -> Result<Created<Note>> {
-        let note = self
-            .store
-            .add(user.id, note)
-            .await
-            .map_err(Error::internal)?;
+        let note = self.store.add(user.id, note);
 
         Ok(Created::at(format!("/api/notes/{}", note.id), note))
     }
@@ -43,24 +34,18 @@ impl NotesServer for App {
     async fn update(&self, user: &User, id: i64, note: NewNote) -> Result<Note> {
         self.store
             .replace(user.id, id, note)
-            .await
-            .map_err(Error::internal)?
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
     async fn remove(&self, user: &User, id: i64) -> Result<()> {
-        self.store
-            .remove(user.id, id)
-            .await
-            .map_err(Error::internal)
+        self.store.remove(user.id, id);
+        Ok(())
     }
 
     async fn events(&self, user: &User, id: i64) -> Result<Events<NoteEvent>> {
         let changes = self
             .store
             .watch(user.id, id)
-            .await
-            .map_err(Error::internal)?
             .ok_or_else(|| Error::not_found("no such note"))?;
 
         Ok(Events::new(changes))

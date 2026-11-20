@@ -13,7 +13,7 @@ const BOUND: Duration = Duration::from_secs(60);
 
 #[tokio::test]
 async fn the_command_line_signs_in_writes_searches_and_watches() -> anyhow::Result<()> {
-    let app = notes_server::App::in_memory();
+    let app = notes_server::App::default();
     let ana = app.store.add_user("ana", "correct horse").await?;
     let store = app.store.clone();
     let sessions = app.sessions.clone();
@@ -63,7 +63,7 @@ async fn the_command_line_signs_in_writes_searches_and_watches() -> anyhow::Resu
         );
     }
 
-    let [note] = <[Note; 1]>::try_from(store.notes(ana.id, &NoteFilter::default()).await?)
+    let [note] = <[Note; 1]>::try_from(store.notes(ana.id, &NoteFilter::default()))
         .map_err(|notes| anyhow::anyhow!("the command line wrote one note, not {notes:?}"))?;
     let api = client::builder()
         .with(client::bearer(sessions.open(ana)))

@@ -1,11 +1,9 @@
 [package]
 name = "notes-server"
-description = "The server of the notes example, on SQLite"
+description = "The server of the notes example, its store in memory"
 edition.workspace = true
 license.workspace = true
 publish = false
-# `cargo run -p notes-server` serves; `--bin seed` adds a user or an operator.
-default-run = "notes-server"
 
 [dependencies]
 anyhow = "1"
@@ -15,8 +13,6 @@ futures-util = { version = "0.3", default-features = false }
 getrandom = "0.3"
 notes-api = { path = "../api", features = ["server"] }
 quoll = { path = "../../../quoll" }
-# SQLite, built from its sources, so that no system library is needed, and its counts read as `u64`.
-rusqlite = { version = "0.43", features = ["bundled", "fallible_uint"] }
 sha2 = "0.11"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 tracing-subscriber = "0.3"
@@ -24,7 +20,6 @@ tracing-subscriber = "0.3"
 [dev-dependencies]
 notes-api = { path = "../api", features = ["client"] }
 reqwest = { version = "0.13", default-features = false }
-tempfile = "3"
 
 [lints.rust]
 unsafe_code = "forbid"

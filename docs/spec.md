@@ -6,7 +6,7 @@
 
 A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI document; the OpenAPI document feeds TypeScript generators (TanStack Query, SWR, zod...). No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
 
-Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`; pagination by header comes later; the error of `authenticate` answers its own status, not always 401; a path parameter of a struct type is refused when it is called, until a `rest::PathValue` derive refuses it at compile time; a header read twice, an argument in two places, a query struct that is not a struct and a header that quoll or HTTP writes do not compile; `Bytes` carries its content type; a failure after the 200 ends an `Events` stream with an `event: problem`, and the client reads every event that has data, whatever its name; a scheme gives its name and its challenge as `Scheme::NAME` and `Scheme::CHALLENGE`, its credential is `Send`, and `openapi` comes with the OpenAPI document; `Basic` reads a `BasicCredential` and challenges with the realm `api`; a declared scheme is written with its visibility, `pub scheme Key`; in `Bearer | Key` the first credential the request carries decides; a route needs all its scopes, and `optional` with `scopes` does not compile; `key::<K>` sends any declared scheme's credential, `openid`'s included, and the client's middleware tell a route's schemes by their type; a cookie scheme refuses a request from another origin, as Go's `CrossOriginProtection` does, the server's own origin alone trusted for now; an alternative takes up to four schemes; `client::redirects(n)` follows redirects one hop at a time through the middleware after it, on a reqwest client that follows none, comes before every middleware that adds a credential, and the helpers send a credential, and `on_request` runs, on the requests of a contract to the api's own origin only; `bearer_from` takes a `client::TokenSource`, whose `token` it asks before each call and whose `refresh` once after a 401, the 401 answering when the token is the same or the body cannot be sent twice; `user_agent` and `request_id` set their header when the request has none, one id across the attempts of a call; `timeout` is a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; `Api::openapi()` returns a `rest::openapi::Document` and is written whatever the features, so that every type of a contract implements `JsonSchema`, unless the api says `#[openapi(none)]`; `Scheme::openapi` returns a `rest::openapi::SecurityScheme` and has no default; the document's `info` is the contract crate's name and version, a query struct is unfolded into its keys, `Bytes` are `application/octet-stream` as a body and `*/*` as a result, each route lists the errors quoll answers and a `default`, two types of one name take schemars' suffix, a type read and written otherwise has two schemas, operation ids are unique, two schemes of one `NAME` in an api do not compile, and the notes document is a snapshot of its tests; the server's helpers return quoll's layer types, under `server::layer`, which the example adds from the innermost to the outermost; `request_id()` keeps a caller's id of 1 to 128 bytes of printable ASCII with no space, or makes a UUID v4, which a handler reads with `RequestId::current()`, a task-local; the span of `trace()` has the method, the path without the query, the operation and the request id, and each answer is logged once, at `ERROR` for a 5xx the crate has not logged with its cause; `body_limit` replaces axum's default limit; `cors(origins)?` refuses what is not an origin with an `InvalidOrigin`, allows the methods a contract serves and any header, exposes `Location`, `WWW-Authenticate` and `X-Request-Id`, and allows no credentials, the CSRF check of a cookie scheme still trusting the server's own origin alone. On 2026-11-20: a client error's sources show its URL by origin and path, never its credentials nor its query; the helpers move to the top of the crate, `quoll::client` and `quoll::server`, and `rest::test` to `quoll::test`, with no re-export left in `quoll::rest`; `client::builder()` takes quoll's helpers and any `reqwest_middleware::Middleware` with `with`, puts quoll's own in the order they work in, `trace`, `user_agent`, `request_id`, `retry`, `timeout`, `redirects`, then the credentials and `on_request`, whatever the order they are given in, each other where it is given, tells a helper by its type, configures reqwest's client with `http(..)`, follows no redirect in reqwest's client when `redirects` is given, adds `redirects(10)` when it is given a credential, `on_request` included, and no `redirects`, and builds a contract's client with `build::<Api>(url)`, through the trait `client::Contract` the macro implements on `Api`, or a `ClientWithMiddleware` with `build_http()`; `server::builder()` takes quoll's layers and any tower layer with `with`, the first given the outermost, puts quoll's own in the order `request_id`, `trace`, `cors`, `compression`, `timeout`, `body_limit`, each other where it is given, serves a router with `serve(address, router)`, an address a `&str`, a `String` or a `SocketAddr`, or `serve_on(listener, router)` until Ctrl-C or `SIGTERM`, or the signal given to `shutdown(..)`, waits 5 s for the requests it serves, `grace(..)`, or until a second signal, and logs at `WARN` the connections it leaves open, and gives the router with its layers with `into_router(router)`; `Api::client`, `Api::client_with` and `Api::router` stay; `build::<T>` on a type that is not a contract's api does not compile. Also on 2026-11-20: a contract splits into `rest::group!` blocks, one group per block, which an api lists by their paths, the usual form, `{ auth::Auth, notes::Notes }`, a group named alone needing its module imported by glob, `use notes::*;`, and rustc's error on the name otherwise; the api reads them through a hidden descriptor, by type, and checks them against each other at compile time, inline groups going through the same generator; schemes are declared in the api alone, a `group!` naming one by its path or an import, the rule that names a declared scheme alone holding in the api's block only; a group may be listed by two apis, each serving it under its prefix; `#[openapi(none)]` goes on a `group!` too; and two schemes of different types of one `NAME` from two blocks, which the macro cannot compare, make `Api::openapi()` panic with a message saying so, which the snapshot test of the document catches.
+Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`; pagination by header comes later; the error of `authenticate` answers its own status, not always 401; a path parameter of a struct type is refused when it is called, until a `rest::PathValue` derive refuses it at compile time; a header read twice, an argument in two places, a query struct that is not a struct and a header that quoll or HTTP writes do not compile; `Bytes` carries its content type; a failure after the 200 ends an `Events` stream with an `event: problem`, and the client reads every event that has data, whatever its name; a scheme gives its name and its challenge as `Scheme::NAME` and `Scheme::CHALLENGE`, its credential is `Send`, and `openapi` comes with the OpenAPI document; `Basic` reads a `BasicCredential` and challenges with the realm `api`; a declared scheme is written with its visibility, `pub scheme Key`; in `Bearer | Key` the first credential the request carries decides; a route needs all its scopes, and `optional` with `scopes` does not compile; `key::<K>` sends any declared scheme's credential, `openid`'s included, and the client's middleware tell a route's schemes by their type; a cookie scheme refuses a request from another origin, as Go's `CrossOriginProtection` does, the server's own origin alone trusted for now; an alternative takes up to four schemes; `client::redirects(n)` follows redirects one hop at a time through the middleware after it, on a reqwest client that follows none, comes before every middleware that adds a credential, and the helpers send a credential, and `on_request` runs, on the requests of a contract to the api's own origin only; `bearer_from` takes a `client::TokenSource`, whose `token` it asks before each call and whose `refresh` once after a 401, the 401 answering when the token is the same or the body cannot be sent twice; `user_agent` and `request_id` set their header when the request has none, one id across the attempts of a call; `timeout` is a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; `Api::openapi()` returns a `rest::openapi::Document` and is written whatever the features, so that every type of a contract implements `JsonSchema`, unless the api says `#[openapi(none)]`; `Scheme::openapi` returns a `rest::openapi::SecurityScheme` and has no default; the document's `info` is the contract crate's name and version, a query struct is unfolded into its keys, `Bytes` are `application/octet-stream` as a body and `*/*` as a result, each route lists the errors quoll answers and a `default`, two types of one name take schemars' suffix, a type read and written otherwise has two schemas, operation ids are unique, two schemes of one `NAME` in an api do not compile, and the notes document is a snapshot of its tests; the server's helpers return quoll's layer types, under `server::layer`, which the example adds from the innermost to the outermost; `request_id()` keeps a caller's id of 1 to 128 bytes of printable ASCII with no space, or makes a UUID v4, which a handler reads with `RequestId::current()`, a task-local; the span of `trace()` has the method, the path without the query, the operation and the request id, and each answer is logged once, at `ERROR` for a 5xx the crate has not logged with its cause; `body_limit` replaces axum's default limit; `cors(origins)?` refuses what is not an origin with an `InvalidOrigin`, allows the methods a contract serves and any header, exposes `Location`, `WWW-Authenticate` and `X-Request-Id`, and allows no credentials, the CSRF check of a cookie scheme still trusting the server's own origin alone. On 2026-11-20: a client error's sources show its URL by origin and path, never its credentials nor its query; the helpers move to the top of the crate, `quoll::client` and `quoll::server`, and `rest::test` to `quoll::test`, with no re-export left in `quoll::rest`; `client::builder()` takes quoll's helpers and any `reqwest_middleware::Middleware` with `with`, puts quoll's own in the order they work in, `trace`, `user_agent`, `request_id`, `retry`, `timeout`, `redirects`, then the credentials and `on_request`, whatever the order they are given in, each other where it is given, tells a helper by its type, configures reqwest's client with `http(..)`, follows no redirect in reqwest's client when `redirects` is given, adds `redirects(10)` when it is given a credential, `on_request` included, and no `redirects`, and builds a contract's client with `build::<Api>(url)`, through the trait `client::Contract` the macro implements on `Api`, or a `ClientWithMiddleware` with `build_http()`; `server::builder()` takes quoll's layers and any tower layer with `with`, the first given the outermost, puts quoll's own in the order `request_id`, `trace`, `cors`, `compression`, `timeout`, `body_limit`, each other where it is given, serves a router with `serve(address, router)`, an address a `&str`, a `String` or a `SocketAddr`, or `serve_on(listener, router)` until Ctrl-C or `SIGTERM`, or the signal given to `shutdown(..)`, waits 5 s for the requests it serves, `grace(..)`, or until a second signal, and logs at `WARN` the connections it leaves open, and gives the router with its layers with `into_router(router)`; `Api::client`, `Api::client_with` and `Api::router` stay; `build::<T>` on a type that is not a contract's api does not compile. Also on 2026-11-20: a contract splits into `rest::group!` blocks, one group per block, which an api lists by their paths, the usual form, `{ auth::Auth, notes::Notes }`, a group named alone needing its module imported by glob, `use notes::*;`, and rustc's error on the name otherwise; the api reads them through a hidden descriptor, by type, and checks them against each other at compile time, inline groups going through the same generator; schemes are declared in the api alone, a `group!` naming one by its path or an import, the rule that names a declared scheme alone holding in the api's block only; a group may be listed by two apis, each serving it under its prefix; `#[openapi(none)]` goes on a `group!` too; and two schemes of different types of one `NAME` from two blocks, which the macro cannot compare, make `Api::openapi()` panic with a message saying so, which the snapshot test of the document catches. On 2026-11-20 too, the example's store is in memory, without SQLite.
 
 ## Stack and crates
 
@@ -363,7 +363,7 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 
 ## A complete example
 
-Notes kept per user: a token for a login, notes to list, read, write and watch, and statistics for operators holding a key. The web page and the command line use bearer tokens, the operators' scripts a key. The contract is one `rest::api!`, its models a file per domain, as is the server. The sessions, kept in memory, and the store, which keeps the rest in SQLite, are in the repository, `examples/notes/server/src/sessions.rs` and `store.rs` with `store/`, beside the helpers they share, `utils.rs`, and are not shown here.
+Notes kept per user: a token for a login, notes to list, read, write and watch, and statistics for operators holding a key. The web page and the command line use bearer tokens, the operators' scripts a key. The contract is one `rest::api!`, its models a file per domain, as is the server. The sessions and the store, both in memory, are in the repository, `examples/notes/server/src/sessions.rs` and `store.rs`, beside the helpers they share, `utils.rs`, the hashing of passwords included, and are not shown here.
 
 `api/Cargo.toml`
 
@@ -538,7 +538,7 @@ fn main() {
 `server/src/lib.rs`
 
 ```rust
-//! The server of the notes example, on SQLite.
+//! The server of the notes example, its store in memory.
 
 mod admin;
 mod app;
@@ -552,6 +552,7 @@ pub use app::{App, router, server};
 pub use auth::{Operator, User};
 pub use sessions::{SESSION_LIFETIME, Sessions};
 pub use store::{PAGE_SIZE, Store, StoreError};
+pub use utils::random_hex;
 ```
 
 `server/src/app.rs`
@@ -564,19 +565,10 @@ use quoll::server;
 
 use crate::{Sessions, Store};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct App {
     pub store: Store,
     pub sessions: Sessions,
-}
-
-impl App {
-    pub fn in_memory() -> Self {
-        Self {
-            store: Store::in_memory(),
-            sessions: Sessions::default(),
-        }
-    }
 }
 
 pub fn router(app: App) -> axum::Router {
@@ -647,8 +639,6 @@ impl Authenticate<Key> for App {
     async fn authenticate(&self, key: String) -> Result<Operator> {
         self.store
             .operator(&key)
-            .await
-            .map_err(Error::internal)?
             .ok_or_else(|| Error::unauthorized("unknown key"))
     }
 }
@@ -664,7 +654,7 @@ use crate::{App, User};
 
 impl NotesServer for App {
     async fn search(&self, user: &User, filter: NoteFilter) -> Result<Vec<Note>> {
-        // Refused before the query, so that a pattern past SQLite's limit is the caller's error, not the database's.
+        // The document says 1000 at most: a caller who skips its check meets the same rule here.
         if filter
             .contains
             .as_ref()
@@ -675,26 +665,17 @@ impl NotesServer for App {
             )));
         }
 
-        self.store
-            .notes(user.id, &filter)
-            .await
-            .map_err(Error::internal)
+        Ok(self.store.notes(user.id, &filter))
     }
 
     async fn get(&self, user: &User, id: i64) -> Result<Note> {
         self.store
             .note(user.id, id)
-            .await
-            .map_err(Error::internal)?
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
     async fn create(&self, user: &User, note: NewNote) -> Result<Created<Note>> {
-        let note = self
-            .store
-            .add(user.id, note)
-            .await
-            .map_err(Error::internal)?;
+        let note = self.store.add(user.id, note);
 
         Ok(Created::at(format!("/api/notes/{}", note.id), note))
     }
@@ -702,24 +683,18 @@ impl NotesServer for App {
     async fn update(&self, user: &User, id: i64, note: NewNote) -> Result<Note> {
         self.store
             .replace(user.id, id, note)
-            .await
-            .map_err(Error::internal)?
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
     async fn remove(&self, user: &User, id: i64) -> Result<()> {
-        self.store
-            .remove(user.id, id)
-            .await
-            .map_err(Error::internal)
+        self.store.remove(user.id, id);
+        Ok(())
     }
 
     async fn events(&self, user: &User, id: i64) -> Result<Events<NoteEvent>> {
         let changes = self
             .store
             .watch(user.id, id)
-            .await
-            .map_err(Error::internal)?
             .ok_or_else(|| Error::not_found("no such note"))?;
 
         Ok(Events::new(changes))
@@ -731,13 +706,13 @@ impl NotesServer for App {
 
 ```rust
 use notes_api::{AdminServer, Stats};
-use quoll::rest::{Error, Result};
+use quoll::rest::Result;
 
 use crate::{App, Operator};
 
 impl AdminServer for App {
     async fn stats(&self, _operator: &Operator) -> Result<Stats> {
-        self.store.stats().await.map_err(Error::internal)
+        Ok(self.store.stats())
     }
 }
 ```
@@ -749,10 +724,15 @@ impl AdminServer for App {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let app = notes_server::App {
-        store: notes_server::Store::open("notes.db").await?,
-        sessions: notes_server::Sessions::default(),
-    };
+    let app = notes_server::App::default();
+    let password = notes_server::random_hex();
+
+    app.store.add_user("demo", &password).await?;
+
+    let key = app.store.add_operator("ops");
+
+    println!("sign in as demo, password {password}, at POST /api/token");
+    println!("an operator's X-Api-Key: {key}");
 
     // Until Ctrl-C or SIGTERM, then up to 5 s for the requests it serves.
     notes_server::server()
@@ -775,7 +755,7 @@ fn served(app: notes_server::App) -> axum::Router {
 
 #[tokio::test]
 async fn a_created_note_reads_back() -> anyhow::Result<()> {
-    let app = notes_server::App::in_memory();
+    let app = notes_server::App::default();
     let token = app.sessions.open(User {
         id: 1,
         name: "ana".into(),
@@ -800,7 +780,7 @@ async fn a_created_note_reads_back() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
-    let url = quoll::test::spawn(served(notes_server::App::in_memory())).await;
+    let url = quoll::test::spawn(served(notes_server::App::default())).await;
     let api = Api::client(&url)?;
 
     let error = api.notes().get(1).await.unwrap_err();

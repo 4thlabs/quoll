@@ -1,65 +1,72 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
-use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 use argon2::password_hash;
-use notes_api::Stats;
-use rusqlite::Connection;
-use tokio::task::{self, JoinError};
+use futures_util::{Stream, stream};
+use notes_api::{NewNote, Note, NoteEvent, NoteFilter, Stats};
+use sha2::{Digest, Sha256};
+use tokio::sync::broadcast;
+use tokio::task::JoinError;
 
-use crate::utils::lock;
+use crate::utils::{Passwords, hex, lock, random_hex};
+use crate::{Operator, User};
 
-mod notes;
-mod operators;
-mod users;
-mod watch;
+pub const PAGE_SIZE: usize = 20;
 
-pub use notes::PAGE_SIZE;
+const CHANGES_KEPT: usize = 16;
 
-/// `AUTOINCREMENT`, so that a removed note's id names no other. No foreign key on `owner`: the tests open sessions for
-/// users they never add.
-const SCHEMA: &str = "
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS operators (
-        id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        key_hash TEXT NOT NULL UNIQUE
-    );
-    CREATE TABLE IF NOT EXISTS notes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        owner INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        body TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS notes_by_owner ON notes (owner, id);
-    CREATE TABLE IF NOT EXISTS tags (
-        tag TEXT NOT NULL,
-        note INTEGER NOT NULL,
-        PRIMARY KEY (tag, note)
-    ) WITHOUT ROWID;
-    CREATE INDEX IF NOT EXISTS tags_by_note ON tags (note);
-";
-
-#[derive(Debug, Clone)]
+#[derive(Clone, Default)]
 pub struct Store {
     inner: Arc<Mutex<Inner>>,
-    hashes: Arc<users::Hashes>,
+    passwords: Arc<Passwords>,
 }
 
-/// One lock for both, so that a note is checked and watched, or changed and its watchers told, in one step.
-#[derive(Debug)]
+/// One lock for all, so that a note is checked and watched, or changed and its watchers told, in one step.
+#[derive(Default)]
 struct Inner {
-    connection: Connection,
-    watchers: watch::Watchers,
+    users: HashMap<String, Account>,
+    /// By the SHA-256 of their key.
+    operators: HashMap<String, Operator>,
+    /// By id, the order they were written in.
+    notes: BTreeMap<i64, Stored>,
+    watchers: HashMap<i64, broadcast::Sender<NoteEvent>>,
+    last_user: i64,
+    /// Never given again, so that a removed note's id names no other.
+    last_note: i64,
+}
+
+#[derive(Clone)]
+struct Account {
+    user: User,
+    password_hash: String,
+}
+
+struct Stored {
+    owner: i64,
+    note: Note,
+    tags: BTreeSet<String>,
+}
+
+impl Stored {
+    fn new(owner: i64, note: Note) -> Self {
+        Self {
+            owner,
+            tags: tags(&note),
+            note,
+        }
+    }
+
+    fn contains(&self, lowercase: &str) -> bool {
+        [&self.note.title, &self.note.body]
+            .into_iter()
+            .any(|text| text.to_ascii_lowercase().contains(lowercase))
+    }
 }
 
 #[derive(Debug)]
 pub enum StoreError {
-    Database(rusqlite::Error),
+    NameTaken,
     Hashing(password_hash::Error),
     StoredHash(password_hash::Error),
     Task(JoinError),
@@ -68,10 +75,10 @@ pub enum StoreError {
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Database(_) => f.write_str("the database failed"),
+            Self::NameTaken => f.write_str("a user of this name exists"),
             Self::Hashing(_) => f.write_str("a password could not be hashed"),
             Self::StoredHash(_) => f.write_str("the stored hash of a password cannot be checked"),
-            Self::Task(_) => f.write_str("a call of the store did not end"),
+            Self::Task(_) => f.write_str("the hash of a password did not end"),
         }
     }
 }
@@ -79,93 +86,265 @@ impl fmt::Display for StoreError {
 impl std::error::Error for StoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Database(error) => Some(error),
+            Self::NameTaken => None,
             Self::Hashing(error) | Self::StoredHash(error) => Some(error),
             Self::Task(error) => Some(error),
         }
     }
 }
 
-impl From<rusqlite::Error> for StoreError {
-    fn from(error: rusqlite::Error) -> Self {
-        Self::Database(error)
-    }
-}
-
-impl From<JoinError> for StoreError {
-    fn from(error: JoinError) -> Self {
-        Self::Task(error)
+/// Never shows the hashes of passwords and keys.
+impl fmt::Debug for Store {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Store").finish_non_exhaustive()
     }
 }
 
 impl Store {
-    /// Makes the unknown user's hash too, so that the first refusal takes no longer than the next.
-    pub async fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        let path = path.as_ref().to_owned();
-        let connection = task::spawn_blocking(move || Connection::open(path)).await??;
+    pub async fn add_user(
+        &self,
+        name: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Result<User, StoreError> {
+        let password_hash = self.passwords.hash(password.into()).await?;
+        let name = name.into();
+        let mut inner = lock(&self.inner);
 
-        Self::with(connection).await
+        if inner.users.contains_key(&name) {
+            return Err(StoreError::NameTaken);
+        }
+
+        inner.last_user += 1;
+
+        let user = User {
+            id: inner.last_user,
+            name: name.clone(),
+        };
+
+        inner.users.insert(
+            name,
+            Account {
+                user: user.clone(),
+                password_hash,
+            },
+        );
+        Ok(user)
     }
 
-    /// The unknown user's hash is made by the first check of one, as making it here would block.
-    pub fn in_memory() -> Self {
-        Self::in_memory_hashing(users::hashes_at_once())
+    /// The hash is checked with the lock released: it takes its time, and the other calls go on meanwhile.
+    pub async fn check_password(
+        &self,
+        name: &str,
+        password: impl Into<String>,
+    ) -> Result<Option<User>, StoreError> {
+        let account = lock(&self.inner).users.get(name).cloned();
+        let hash = account
+            .as_ref()
+            .map(|account| account.password_hash.clone());
+        let verified = self.passwords.verify(password.into(), hash).await?;
+
+        Ok(account.filter(|_| verified).map(|account| account.user))
     }
 
-    fn in_memory_hashing(at_once: usize) -> Self {
-        // A database in memory touches no file: opening it does not block, so that `App::in_memory` needs no `await`.
-        let connection = Connection::open_in_memory().expect("SQLite opens a database in memory");
+    pub fn add_operator(&self, name: impl Into<String>) -> String {
+        let key = random_hex();
+        let operator = Operator { name: name.into() };
 
-        connection
-            .execute_batch(SCHEMA)
-            .expect("the tables are created in an empty database");
-
-        Self::from_connection(connection, at_once)
+        lock(&self.inner).operators.insert(key_hash(&key), operator);
+        key
     }
 
-    async fn with(connection: Connection) -> Result<Self, StoreError> {
-        let connection = task::spawn_blocking(move || {
-            connection.execute_batch(SCHEMA)?;
-            LazyLock::force(&users::UNKNOWN_USER);
-
-            Ok::<_, rusqlite::Error>(connection)
-        })
-        .await??;
-
-        Ok(Self::from_connection(connection, users::hashes_at_once()))
+    pub fn operator(&self, key: &str) -> Option<Operator> {
+        lock(&self.inner).operators.get(&key_hash(key)).cloned()
     }
 
-    fn from_connection(connection: Connection, hashes_at_once: usize) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(Inner {
-                connection,
-                watchers: watch::Watchers::default(),
-            })),
-            hashes: Arc::new(users::Hashes::new(hashes_at_once)),
+    pub fn stats(&self) -> Stats {
+        let inner = lock(&self.inner);
+
+        Stats {
+            users: inner.users.len() as u64,
+            notes: inner.notes.len() as u64,
         }
     }
 
-    /// SQLite's calls block: they run on tokio's blocking threads.
-    async fn run<T, F>(&self, call: F) -> Result<T, StoreError>
-    where
-        T: Send + 'static,
-        F: FnOnce(&mut Inner) -> Result<T, StoreError> + Send + 'static,
-    {
-        let inner = Arc::clone(&self.inner);
+    pub fn notes(&self, owner: i64, filter: &NoteFilter) -> Vec<Note> {
+        let contains = filter
+            .contains
+            .as_deref()
+            .filter(|text| !text.is_empty())
+            .map(str::to_ascii_lowercase);
+        let tag = filter
+            .tag
+            .as_deref()
+            .and_then(|tag| tag_of(tag.strip_prefix('#').unwrap_or(tag)));
+        let skip = ((filter.page.unwrap_or(1).max(1) - 1) as usize).saturating_mul(PAGE_SIZE);
 
-        task::spawn_blocking(move || call(&mut lock(&inner))).await?
+        lock(&self.inner)
+            .notes
+            .values()
+            .filter(|stored| stored.owner == owner)
+            .filter(|stored| contains.as_ref().is_none_or(|text| stored.contains(text)))
+            .filter(|stored| tag.as_ref().is_none_or(|tag| stored.tags.contains(tag)))
+            .skip(skip)
+            .take(PAGE_SIZE)
+            .map(|stored| stored.note.clone())
+            .collect()
     }
 
-    pub async fn stats(&self) -> Result<Stats, StoreError> {
-        self.run(|inner| {
-            let (users, notes) = inner.connection.query_row(
-                "SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM notes)",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )?;
+    pub fn note(&self, owner: i64, id: i64) -> Option<Note> {
+        lock(&self.inner)
+            .notes
+            .get(&id)
+            .filter(|stored| stored.owner == owner)
+            .map(|stored| stored.note.clone())
+    }
 
-            Ok(Stats { users, notes })
-        })
-        .await
+    pub fn add(&self, owner: i64, note: NewNote) -> Note {
+        let mut inner = lock(&self.inner);
+
+        inner.last_note += 1;
+
+        let note = Note {
+            id: inner.last_note,
+            title: note.title,
+            body: note.body,
+        };
+
+        inner
+            .notes
+            .insert(note.id, Stored::new(owner, note.clone()));
+        note
+    }
+
+    pub fn replace(&self, owner: i64, id: i64, note: NewNote) -> Option<Note> {
+        let mut inner = lock(&self.inner);
+        let stored = inner
+            .notes
+            .get_mut(&id)
+            .filter(|stored| stored.owner == owner)?;
+        let note = Note {
+            id,
+            title: note.title,
+            body: note.body,
+        };
+
+        *stored = Stored::new(owner, note.clone());
+
+        if let Some(watchers) = inner.watchers.get(&id) {
+            // No watcher left is no error: the next `watch` drops the sender.
+            let _ = watchers.send(NoteEvent::Edited(note.clone()));
+        }
+
+        Some(note)
+    }
+
+    pub fn remove(&self, owner: i64, id: i64) {
+        let mut inner = lock(&self.inner);
+
+        if inner
+            .notes
+            .get(&id)
+            .is_none_or(|stored| stored.owner != owner)
+        {
+            return;
+        }
+
+        inner.notes.remove(&id);
+
+        // The sender dropped here ends each watcher's stream, once it has read the removal.
+        if let Some(watchers) = inner.watchers.remove(&id) {
+            let _ = watchers.send(NoteEvent::Removed { id });
+        }
+    }
+
+    pub fn watch(
+        &self,
+        owner: i64,
+        id: i64,
+    ) -> Option<impl Stream<Item = NoteEvent> + Send + 'static> {
+        let mut inner = lock(&self.inner);
+
+        inner
+            .notes
+            .get(&id)
+            .filter(|stored| stored.owner == owner)?;
+
+        // The senders of notes no one watches any more go, so that they do not pile up.
+        inner
+            .watchers
+            .retain(|_, watchers| watchers.receiver_count() > 0);
+
+        let changes = inner
+            .watchers
+            .entry(id)
+            .or_insert_with(|| broadcast::channel(CHANGES_KEPT).0)
+            .subscribe();
+
+        Some(stream::unfold(changes, |mut changes| async move {
+            loop {
+                match changes.recv().await {
+                    Ok(event) => return Some((event, changes)),
+                    // The oldest changes were missed: the ones that follow say the note as it is.
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        }))
+    }
+}
+
+/// A fast hash keeps 32 random bytes out of reach, and a lookup by hash compares no byte of the key.
+fn key_hash(key: &str) -> String {
+    hex(&Sha256::digest(key.as_bytes()))
+}
+
+fn tags(note: &Note) -> BTreeSet<String> {
+    [&note.title, &note.body]
+        .into_iter()
+        .flat_map(|text| text.split_whitespace())
+        .filter_map(|word| word.strip_prefix('#').and_then(tag_of))
+        .collect()
+}
+
+fn tag_of(word: &str) -> Option<String> {
+    let end = word
+        .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+        .unwrap_or(word.len());
+
+    (end > 0).then(|| word[..end].to_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tags_of_a_note_are_its_hash_words() {
+        let tags = tags(&Note {
+            id: 1,
+            title: "#Shopping list".into(),
+            body: "milk, #dairy, #2026-11 a#b # #fresh!".into(),
+        });
+
+        assert_eq!(
+            tags.into_iter().collect::<Vec<_>>(),
+            ["2026-11", "dairy", "fresh", "shopping"]
+        );
+    }
+
+    #[test]
+    fn a_tag_is_cut_at_its_first_other_character() {
+        assert_eq!(tag_of("Milk,").as_deref(), Some("milk"));
+        assert_eq!(tag_of("oat-milk_2!").as_deref(), Some("oat-milk_2"));
+        assert_eq!(tag_of(""), None);
+        assert_eq!(tag_of(",milk"), None);
+    }
+
+    #[test]
+    fn a_key_is_stored_as_its_sha_256() {
+        assert_eq!(
+            key_hash("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }
