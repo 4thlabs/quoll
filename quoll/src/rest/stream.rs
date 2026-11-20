@@ -198,6 +198,9 @@ impl<T> fmt::Debug for Events<T> {
 /// `T` is an error with no status, and the stream goes on. A line longer than 1 MiB, and a body that cannot be read,
 /// are an error with no status, and the stream ends after it.
 ///
+/// An answer of `application/json` is read so too, line by line: a document written over several lines, as a
+/// pretty-printed array, is read as broken lines, each an item that does not read as a `T`.
+///
 /// Dropping the stream closes its connection. The client does not call the route again when the stream ends.
 pub struct JsonLines<T> {
     pub(crate) items: Items<T>,
