@@ -68,6 +68,39 @@ cargo run -p notes-api --bin openapi > openapi.json
 
 The contract crate needs neither feature of `quoll`: it builds without axum and reqwest.
 
+## `cargo quoll gen`
+
+`cargo quoll`, a cargo subcommand, builds and runs that binary, writes the document, and runs the commands that follow
+it, such as orval. It is installed from git until it is published:
+
+```bash
+cargo install --git https://github.com/4thlabs/quoll quoll-cli
+```
+
+Its config is in the workspace's `Cargo.toml`, with paths from the workspace's root:
+
+```toml
+[[workspace.metadata.quoll.api]]
+package = "notes-api"
+bin = "openapi"
+output = "web/openapi.json"
+after = [["npx", "orval"]]
+
+[workspace.metadata.quoll.web]
+dir = "web"
+build = ["npm", "run", "build"]
+```
+
+- `cargo quoll gen` writes each api's `output` when its content changed, and leaves it as it is otherwise. Then it
+  runs the api's `after` commands in order, in the directory of `output`, whether the document changed or not.
+- `cargo quoll gen --check` writes nothing and runs nothing: it fails when a document on disk is not the one its
+  contract prints, or is missing. It is the check of a project that commits its document.
+- `cargo quoll build` runs `gen`, then `web.build` in `web.dir`.
+
+A command is a list of words, run with no shell: its program is found on the `PATH` as the OS does, so that `npm` is
+`npm.cmd` on Windows. Each fails with the output of the cargo build or of the command that failed, and a config that
+cannot be read names the key at fault, `workspace.metadata.quoll.api[0].output: missing`.
+
 ## What it holds
 
 - **Paths**: each route under the api's prefix, its operation named `group_function`, `notes_get`, and tagged with

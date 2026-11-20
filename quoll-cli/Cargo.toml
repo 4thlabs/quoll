@@ -1,0 +1,29 @@
+[package]
+name = "quoll-cli"
+description = "cargo quoll: the OpenAPI documents of a workspace's contracts, the commands that follow them, and its web build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Cargo runs `cargo quoll ...` as this binary, `cargo-quoll quoll ...`.
+[[bin]]
+name = "cargo-quoll"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+# The output of `cargo metadata` and of `cargo build --message-format=json`.
+serde_json = "1"
+# The key at fault in a config that cannot be read.
+serde_path_to_error = "0.1"
+# A command's program found on the PATH as the OS does, with `PATHEXT` on Windows, which `std::process` does not read.
+which = "8"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
