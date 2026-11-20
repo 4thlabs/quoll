@@ -21,8 +21,11 @@ use crate::__private::content_type::{
 use crate::__private::known::{IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
 use crate::rest::{Error, Problem, Result, Route};
 
+mod redact;
 mod stream;
 mod text;
+
+pub(crate) use redact::redacted;
 
 pub use crate::__private::content_type::{EVENT_STREAM, JSON, TEXT};
 pub use http::HeaderName;
@@ -131,11 +134,6 @@ impl fmt::Debug for Client {
             .field("url", &redacted(&self.0.base))
             .finish()
     }
-}
-
-/// An `http` or `https` URL without its credentials, its query and its fragment: `http://localhost:8080/v1`.
-fn redacted(url: &Url) -> String {
-    format!("{}{}", url.origin().ascii_serialization(), url.path())
 }
 
 /// One call of a route: its path, its query, its headers and its body, written from the route's arguments, then sent.
@@ -435,15 +433,19 @@ impl<'a> Call<'a> {
     }
 }
 
-/// The error of a call that got no answer to read: a handler that returns it answers 502.
+/// The error of a call that got no answer to read: a handler that returns it answers 502. The URL of a reqwest error
+/// it comes from keeps its origin and its path alone, so that a log of the error shows no key of a query scheme.
 fn no_answer(
     route: &Route,
     what: &str,
     error: impl Into<Box<dyn StdError + Send + Sync>>,
 ) -> Error {
+    let mut error = error.into();
+
+    redact::strip_urls(&mut *error);
     Error::failed(
         format!("the call `{}` {what}", route.operation_id),
-        Some(error.into()),
+        Some(error),
         StatusCode::BAD_GATEWAY,
     )
 }
@@ -818,14 +820,22 @@ mod tests {
     }
 
     #[test]
-    fn an_error_about_a_url_does_not_show_its_credentials() {
+    fn an_error_about_a_url_shows_neither_its_credentials_nor_its_query() {
         for url in [
             "http://ana:secret@local host/",
             "ftp://ana:secret@localhost/",
             "http://ana:secret@localhost/?page=1",
+            "http://localhost/?token=secret",
+            "http://local host/?token=secret",
         ] {
             let error = client(url).expect_err("not the url of an api");
-            let shown = format!("{error} {error:?}");
+            let mut shown = format!("{error} {error:?}");
+            let mut source = error.source();
+
+            while let Some(error) = source {
+                shown.push_str(&format!(" {error} {error:?}"));
+                source = error.source();
+            }
 
             assert!(
                 !shown.contains("secret") && !shown.contains("ana"),
