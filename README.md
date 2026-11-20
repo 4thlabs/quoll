@@ -15,6 +15,7 @@
   </p>
 
   <p>
+    <a href="docs/README.md"><strong>The guides</strong></a> ·
     <a href="docs/spec.md"><strong>The spec</strong></a> ·
     <a href="docs/spec.md#a-complete-example">A complete example</a> ·
     <a href="docs/spec.md#later">Later</a>
@@ -26,7 +27,7 @@
 An API is written once, in a macro. The server implements it, the client calls it, and a mistake on either side, a
 route without its handler, a call with the wrong arguments, does not compile.
 
-```rust
+```rust,ignore
 rest::api! {
     pub api Api = "/api";
 
@@ -47,7 +48,7 @@ rest::api! {
 <tr>
 <td>
 
-```rust
+```rust,ignore
 impl Authenticate<Bearer> for App {
     type Caller = User;
 
@@ -80,7 +81,7 @@ server::builder()
 </td>
 <td>
 
-```rust
+```rust,ignore
 let api = client::builder()
     .with(client::bearer(token))
     .with(client::retry(3))
@@ -94,6 +95,119 @@ println!("{}", note.title);
 </td>
 </tr>
 </table>
+
+## Quick start
+
+quoll is used from git until it is published. A new crate, `cargo new notes`, takes it with both features in its
+`Cargo.toml`:
+
+```toml
+[dependencies]
+quoll = { git = "https://github.com/4thlabs/quoll", features = ["server", "client"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+`src/main.rs` holds a contract, its server and its client:
+
+```rust,no_run
+use std::sync::Mutex;
+
+use quoll::rest::{self, Created, Error, Result};
+use quoll::{client, server};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Note {
+    pub id: i64,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct NewNote {
+    pub title: String,
+}
+
+rest::api! {
+    /// Notes, kept in memory.
+    pub api Api = "/api";
+
+    pub group Notes {
+        GET  "/notes/{id}" => get(id: i64) -> Note;
+        POST "/notes"      => create(note: NewNote) -> Created<Note>;
+    }
+}
+
+/// The server's state: its notes.
+#[derive(Default)]
+struct App {
+    notes: Mutex<Vec<Note>>,
+}
+
+impl NotesServer for App {
+    async fn get(&self, id: i64) -> Result<Note> {
+        let notes = self.notes.lock().expect("no handler panics while holding the lock");
+
+        notes
+            .iter()
+            .find(|note| note.id == id)
+            .cloned()
+            .ok_or_else(|| Error::not_found("no such note"))
+    }
+
+    async fn create(&self, note: NewNote) -> Result<Created<Note>> {
+        let mut notes = self.notes.lock().expect("no handler panics while holding the lock");
+        let note = Note {
+            id: notes.len() as i64 + 1,
+            title: note.title,
+        };
+
+        notes.push(note.clone());
+        Ok(Created::at(format!("/api/notes/{}", note.id), note))
+    }
+}
+
+async fn serve() -> std::io::Result<()> {
+    let router = Api::router(ApiServices {
+        notes: App::default(),
+    });
+
+    server::builder().serve("127.0.0.1:8080", router).await
+}
+
+async fn call() -> rest::Result<()> {
+    let api = client::builder().build::<Api>("http://127.0.0.1:8080")?;
+
+    let created = api
+        .notes()
+        .create(NewNote {
+            title: "Milk".into(),
+        })
+        .await?;
+    let read = api.notes().get(created.id).await?;
+
+    println!("note {}: {}", read.id, read.title);
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    match std::env::args().nth(1).as_deref() {
+        Some("serve") => serve().await?,
+        Some("openapi") => println!("{}", Api::openapi().to_json_pretty()),
+        _ => call().await?,
+    }
+
+    Ok(())
+}
+```
+
+`cargo run -- serve` serves it, on `127.0.0.1:8080`. `cargo run`, in another terminal, calls it, and prints
+`note 1: Milk`. `cargo run -- openapi` prints its OpenAPI document.
+
+[Getting started](docs/guides/getting-started.md) goes through it, and [the guides](docs/README.md) cover each part.
 
 ## What the contract gives
 
@@ -112,7 +226,8 @@ No Rust is generated on disk: the macro expands at compile time, and `cargo expa
 The contract is specified in [`docs/spec.md`](docs/spec.md), validated, and the crate implements it: its server, its
 client and its OpenAPI document. It is used from git until it is published.
 
-The API documentation is the crate's own, from `cargo doc -p quoll --all-features --open`. Two examples are built and
+The guides are in [`docs/`](docs/README.md), and the API documentation is the crate's own, from `cargo doc -p quoll
+--all-features --open`. Two examples are built and
 tested with the workspace: [`examples/notes`](examples/notes), the spec's complete example, and
 [`examples/docker`](examples/docker), a client alone of the Docker Engine API.
 

@@ -28,9 +28,9 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
-  # Every job below runs once per combination of the quoll features, none, each alone and both, with the examples left
-  # out: their crates turn quoll's features on, which cargo would unify into the whole build. The examples run on their
-  # own, with the features their crates choose.
+  # Every job below runs once per combination of the quoll features, none, each alone and both, with the examples and
+  # the guides left out: their crates turn quoll's features on, which cargo would unify into the whole build. The
+  # examples run on their own, with the features their crates choose, and the guides with them, their blocks doctests.
   clippy:
     name: clippy (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -38,11 +38,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: "" }
-          - { name: server, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: server }
-          - { name: client, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: client }
-          - { name: all, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: "server,client" }
-          - { name: examples, packages: "--package 'notes-*' --package 'docker-*'", features: "" }
+          - { name: none, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: "" }
+          - { name: server, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: server }
+          - { name: client, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: client }
+          - { name: all, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: "server,client" }
+          - { name: examples, packages: "--package 'notes-*' --package 'docker-*' --package quoll-guides", features: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -58,11 +58,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: "" }
-          - { name: server, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: server }
-          - { name: client, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: client }
-          - { name: all, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: "server,client" }
-          - { name: examples, packages: "--package 'notes-*' --package 'docker-*'", features: "" }
+          - { name: none, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: "" }
+          - { name: server, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: server }
+          - { name: client, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: client }
+          - { name: all, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: "server,client" }
+          - { name: examples, packages: "--package 'notes-*' --package 'docker-*' --package quoll-guides", features: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -80,11 +80,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: "" }
-          - { name: server, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: server }
-          - { name: client, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: client }
-          - { name: all, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*'", features: "server,client" }
-          - { name: examples, packages: "--package 'notes-*' --package 'docker-*'", features: "" }
+          - { name: none, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: "" }
+          - { name: server, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: server }
+          - { name: client, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: client }
+          - { name: all, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides", features: "server,client" }
+          - { name: examples, packages: "--package 'notes-*' --package 'docker-*' --package quoll-guides", features: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
