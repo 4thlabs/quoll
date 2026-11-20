@@ -36,7 +36,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 ///
 /// On the client, an answer with an error status is an error with that [status](Error::status), the
 /// [problem](Error::problem) when the body is one, and the [body](Error::body) as it came. A call that got no answer
-/// to read, a connection refused or an answer that is not the route's result, has no status.
+/// to read, a connection refused or an answer that is not the route's result, has no status. Its sources, reqwest's
+/// error among them, show the URL of the call by its origin and its path alone: never its credentials, nor its query,
+/// where a query scheme sends its key.
 ///
 /// A handler that returns an error its own client received answers 502, or 500 when it is the handler's own mistake,
 /// a URL that is not one: the status of another API is not passed on as this one's.

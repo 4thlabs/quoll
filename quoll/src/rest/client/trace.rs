@@ -12,6 +12,7 @@ use reqwest_tracing::{
 };
 use tracing::Span;
 
+use crate::__private::client::redacted;
 use crate::rest::Route;
 
 /// Opens a tracing span around each call, `HTTP request`, with the fields of OpenTelemetry's conventions, as
@@ -118,9 +119,4 @@ fn urls_in(error: &(dyn StdError + 'static), urls: &mut Vec<Url>) {
     if let Some(source) = error.source() {
         urls_in(source, urls);
     }
-}
-
-/// `url` without its credentials, its query and its fragment: `http://localhost:8080/api/notes`.
-fn redacted(url: &Url) -> String {
-    format!("{}{}", url.origin().ascii_serialization(), url.path())
 }
