@@ -1,14 +1,18 @@
-//! What a contract must not say: each file of `tests/compile_fail/` is one mistake, with its message beside it.
+//! What a contract must not say: each file is one mistake, with its message beside it, in a directory that says which
+//! features of `quoll` it is built with.
 //!
-//! What only the server's code checks, a route left out of a service or a handler of the wrong signature, is in
-//! `tests/compile_fail_server/`, which builds with the feature `server`; what only the client's checks, a fake of the
-//! wrong signature, in `tests/compile_fail_client/`, which builds with the feature `client`. A type the contract names
-//! `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events` or `JsonLines` that is not quoll's is in
-//! `tests/compile_fail_neither/`, built with neither feature: the server's code and the client's each repeat its
-//! message. So are the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call
-//! to the document of a contract that has none; and the mistakes of a group of another block that each side adds an
-//! error or a warning of its own to: a group listed and not in scope, or not a group, a group or a scheme less visible
-//! than what names it, and a scheme twice in an alternative.
+//! - `tests/compile_fail/`, built with each of the four feature sets, so that its messages are the same whatever the
+//!   features: the mistakes the macro finds itself.
+//! - `tests/compile_fail_server/`, built with the feature `server`: what only the server's code checks, a route left
+//!   out of a service, a handler of the wrong signature, a body that is not `Deserialize`, a service that does not
+//!   authenticate.
+//! - `tests/compile_fail_client/`, built with the feature `client`: what only the client's checks, a fake of the wrong
+//!   signature, a result that is not `Deserialize`, `build` or `key` on the wrong type.
+//! - `tests/compile_fail_neither/`, built with neither feature: what each side would repeat a message of its own for.
+//!   A type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events` or `JsonLines` that is not
+//!   quoll's; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to
+//!   the document of a contract that has none; and the mistakes of a group of another block: a group listed and not in
+//!   scope, or not a group, a group or a scheme less visible than what names it, and a scheme twice in an alternative.
 
 #[test]
 fn a_mistake_is_an_error_on_the_token_at_fault() {

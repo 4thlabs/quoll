@@ -23,7 +23,7 @@ pub type SchemaFn = fn(&mut SchemaGenerator) -> Schema;
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no schema, which the OpenAPI document of the contract describes it with",
     label = "no `schemars::JsonSchema`",
-    note = "derive `schemars::JsonSchema` for `{Self}`, or write `#[openapi(none)]` on the api of a contract that is only called, which has no document"
+    note = "derive `schemars::JsonSchema` for `{Self}`, or write `#[openapi(none)]` on the api, or on the group of a `rest::group!`, of a contract that is only called, which has no document"
 )]
 pub trait Documented: JsonSchema {}
 

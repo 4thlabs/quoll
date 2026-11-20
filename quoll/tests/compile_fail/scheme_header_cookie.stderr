@@ -1,0 +1,5 @@
+error: the header `Cookie` is read by `cookie` schemes: declare the cookie, as `pub scheme Session = cookie "session";`, or implement `quoll::rest::Scheme` for a scheme of your own
+ --> tests/compile_fail/scheme_header_cookie.rs:7:33
+  |
+7 |     pub scheme Session = header "Cookie";
+  |                                 ^^^^^^^^

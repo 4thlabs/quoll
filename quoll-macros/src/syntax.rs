@@ -667,8 +667,12 @@ fn parse_auth(attr: &Attribute) -> Result<Auth> {
 
         if first.is_ident("none") {
             if !input.is_empty() {
-                return Err(input.error(
-                    "`#[auth(none)]` takes nothing else: a route with `none` takes no credential, and no option",
+                // Spanned on all that follows `none`, which is what to remove.
+                let rest: proc_macro2::TokenStream = input.parse()?;
+
+                return Err(Error::new_spanned(
+                    rest,
+                    "`#[auth(none)]` takes nothing else: a route with `none` takes no credential, and no option, so write `#[auth(none)]` alone",
                 ));
             }
 

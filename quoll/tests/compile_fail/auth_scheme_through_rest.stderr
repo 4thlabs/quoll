@@ -1,0 +1,5 @@
+error: `rest::Bearer` names the scheme `Bearer`, which `#[auth(...)]` takes by its name alone: write `Bearer`
+ --> tests/compile_fail/auth_scheme_through_rest.rs:7:12
+  |
+7 |     #[auth(rest::Bearer)]
+  |            ^^^^^^^^^^^^

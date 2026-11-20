@@ -1,0 +1,5 @@
+error: `Basic` is a word `#[auth(...)]` already takes: name the scheme otherwise, as `Key`
+ --> tests/compile_fail/scheme_named_basic.rs:7:16
+  |
+7 |     pub scheme Basic = header "X-Login";
+  |                ^^^^^

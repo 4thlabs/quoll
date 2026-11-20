@@ -7,7 +7,7 @@ use quote::{quote, quote_spanned};
 use syn::ext::IdentExt;
 
 use crate::docs::doc_attrs;
-use crate::model::{Api, DeclaredKind, DeclaredScheme, Scheme, SchemeKind, reach};
+use crate::model::{Api, DeclaredKind, DeclaredScheme, Group, Scheme, SchemeKind, reach};
 
 /// The types of the schemes the api declares.
 pub(crate) fn expand(api: &Api) -> TokenStream {
@@ -153,5 +153,38 @@ pub(crate) fn schemes_type(schemes: &[Scheme]) -> TokenStream {
 
             quote! { (#(#types,)*) }
         }
+    }
+}
+
+/// The challenge of each scheme of the application's a group takes, evaluated in a constant: a `CHALLENGE` that is not
+/// a header's value fails as the contract compiles, whatever the features, rather than as the server is built, when
+/// the code that sends it is instantiated. The crate's schemes and the declared ones have a challenge the macro checks.
+pub(crate) fn challenge_checks(group: &Group) -> TokenStream {
+    let mut seen: Vec<String> = Vec::new();
+    let mut checks = Vec::new();
+
+    for scheme in group.routes.iter().flat_map(|route| route.schemes()) {
+        if scheme.kind != SchemeKind::Foreign || seen.contains(&scheme.word()) {
+            continue;
+        }
+
+        seen.push(scheme.word());
+
+        let ty = scheme_type(scheme);
+
+        // `forget`, as a `HeaderValue` cannot be dropped in a constant.
+        checks.push(quote_spanned! {scheme.span()=>
+            ::core::mem::forget(<#ty as ::quoll::rest::Scheme>::CHALLENGE);
+        });
+    }
+
+    if checks.is_empty() {
+        return TokenStream::new();
+    }
+
+    quote! {
+        const _: () = {
+            #(#checks)*
+        };
     }
 }

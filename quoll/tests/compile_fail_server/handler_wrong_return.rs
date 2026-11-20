@@ -10,8 +10,9 @@ rest::api! {
 
 struct App;
 
+// The handler returns another type than the route's result.
 impl NotesServer for App {
-    async fn get(&self, id: String) -> Result<String> {
+    async fn get(&self, id: i64) -> Result<i64> {
         Ok(id)
     }
 }

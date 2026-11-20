@@ -1,4 +1,4 @@
-error: the header `Authorization` is read by `Bearer` and `Basic`: take one of them, or implement `quoll::rest::Scheme` for a scheme of your own
+error: the header `Authorization` is read by `Bearer` and `Basic`: take one of them in `#[auth(...)]`, or implement `quoll::rest::Scheme` for a scheme of your own
  --> tests/compile_fail/scheme_header_authorization.rs:7:29
   |
 7 |     pub scheme Key = header "Authorization";

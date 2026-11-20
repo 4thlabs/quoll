@@ -1,0 +1,14 @@
+error[E0277]: `Result<String, quoll::rest::Error>` is not a future
+  --> tests/compile_fail_client/fake_not_async.rs:15:31
+   |
+15 |     fn get(&self, id: i64) -> Result<String> {
+   |                               ^^^^^^^^^^^^^^ `Result<String, quoll::rest::Error>` is not a future
+   |
+   = help: the trait `Future` is not implemented for `Result<String, quoll::rest::Error>`
+note: required by a bound in `Notes::get::{anon_assoc#0}`
+  --> tests/compile_fail_client/fake_not_async.rs:7:30
+   |
+ 3 | rest::api! {
+...
+ 7 |         GET "/notes/{id}" => get(id: i64) -> String;
+   |                              ^^^ required by this bound in `Notes::get::{anon_assoc#0}`

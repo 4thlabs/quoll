@@ -1,0 +1,5 @@
+error: `ApiClient`, the scheme, is already the client of the api `Api`: rename the scheme, as each item the contract writes has its own name
+ --> tests/compile_fail/scheme_named_as_generated.rs:7:16
+  |
+7 |     pub scheme ApiClient = header "X-Api-Key";
+  |                ^^^^^^^^^

@@ -1,0 +1,5 @@
+error: the header `Connection` is written by quoll or by HTTP itself, so no argument takes it: read what the route needs from another header
+ --> tests/compile_fail/header_hop_by_hop.rs:8:37
+  |
+8 |         GET "/notes" => list(header("Connection") connection: String);
+  |                                     ^^^^^^^^^^^^

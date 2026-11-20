@@ -282,18 +282,26 @@ fn check_scheme_header(value: &LitStr) -> Result<()> {
 
     let name = value.value();
     let taken = [
-        ("Authorization", "`Bearer` and `Basic`"),
-        ("Cookie", "`cookie` schemes"),
+        (
+            "Authorization",
+            "`Bearer` and `Basic`",
+            "take one of them in `#[auth(...)]`",
+        ),
+        (
+            "Cookie",
+            "`cookie` schemes",
+            "declare the cookie, as `pub scheme Session = cookie \"session\";`",
+        ),
     ];
 
-    if let Some((header, what)) = taken
+    if let Some((header, what, instead)) = taken
         .iter()
-        .find(|(header, _)| header.eq_ignore_ascii_case(&name))
+        .find(|(header, ..)| header.eq_ignore_ascii_case(&name))
     {
         return Err(Error::new(
             value.span(),
             format!(
-                "the header `{header}` is read by {what}: take one of them, or implement `quoll::rest::Scheme` for a scheme of your own"
+                "the header `{header}` is read by {what}: {instead}, or implement `quoll::rest::Scheme` for a scheme of your own"
             ),
         ));
     }
