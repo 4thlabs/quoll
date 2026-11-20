@@ -36,5 +36,9 @@ pub enum Command {
         follow: bool,
     },
     /// Writes the daemon's events as they happen, one a line.
-    Events,
+    Events {
+        /// Writes the events since this time first, in seconds since the Unix epoch.
+        #[arg(long)]
+        since: Option<i64>,
+    },
 }

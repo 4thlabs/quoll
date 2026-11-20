@@ -5,7 +5,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::args::Command;
 use crate::frames::{Demux, Output};
-use crate::utils::{docker_error, short_id};
+use crate::utils::{docker_error, error_chain, is_undecoded, short_id};
 
 /// The content type of the logs of a container with a TTY: its bytes as they are, in no frame.
 const RAW_STREAM: &str = "application/vnd.docker.raw-stream";
@@ -17,7 +17,7 @@ pub async fn run(docker: &DockerClient, command: Command) -> anyhow::Result<()> 
         Command::Start { container } => start(docker, container).await,
         Command::Stop { container, timeout } => stop(docker, container, timeout).await,
         Command::Logs { container, follow } => logs(docker, container, follow).await,
-        Command::Events => events(docker).await,
+        Command::Events { since } => events(docker, since).await,
     }
 }
 
@@ -123,11 +123,19 @@ async fn logs(docker: &DockerClient, container: String, follow: bool) -> anyhow:
     Ok(demux.finish()?)
 }
 
-async fn events(docker: &DockerClient) -> anyhow::Result<()> {
-    let mut events = docker.system().events().await.map_err(docker_error)?;
+async fn events(docker: &DockerClient, since: Option<i64>) -> anyhow::Result<()> {
+    let mut events = docker.system().events(since).await.map_err(docker_error)?;
 
     while let Some(event) = events.next().await {
-        let event = event?;
+        let event = match event {
+            Ok(event) => event,
+            // An event this command line does not read, of a kind newer than it: the stream goes on.
+            Err(error) if is_undecoded(&error) => {
+                eprintln!("warning: an event is skipped: {}", error_chain(&error));
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
         let name = event
             .actor
             .attributes

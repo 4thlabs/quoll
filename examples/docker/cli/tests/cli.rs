@@ -232,10 +232,18 @@ async fn logs(
         .into_response()
 }
 
-/// Two events, then the end: Docker before 29 sends them as `application/json`, one a line.
-async fn events() -> Response {
+/// Two events, one between them that is none the command line reads, then the end: Docker before 29 sends them as
+/// `application/json`, one a line.
+async fn events(
+    State(daemon): State<Shared>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    recorded(&daemon, "events".into(), query);
+
     let lines = concat!(
         r#"{"Type":"container","Action":"start","Actor":{"ID":"c0ffee000000000000000000","Attributes":{"image":"alpine:3","name":"web"}},"scope":"local","time":1763632800,"timeNano":1763632800000000000}"#,
+        "\n",
+        r#"{"Type":"container","scope":"local"}"#,
         "\n",
         r#"{"Type":"network","Action":"connect","Actor":{"ID":"5e7000000000000000000000","Attributes":{"name":"bridge"}},"scope":"local","time":1763632801,"timeNano":1763632801000000000}"#,
         "\n",
@@ -426,18 +434,30 @@ async fn the_logs_of_a_tty_are_written_as_they_are() {
 }
 
 #[tokio::test]
-async fn events_are_written_one_a_line() {
-    let (host, _) = on_tcp().await;
+async fn events_are_written_one_a_line_and_one_not_read_is_skipped() {
+    let (host, daemon) = on_tcp().await;
 
-    let output = succeeded(&docker_cli(&host, &["events"]).await);
+    let output = docker_cli(&host, &["events"]).await;
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(
-        output.lines().collect::<Vec<_>>(),
+        succeeded(&output).lines().collect::<Vec<_>>(),
         [
             "1763632800 container start c0ffee000000 web",
             "1763632801 network connect 5e7000000000 bridge",
         ]
     );
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    assert!(stderr.starts_with("warning: an event is skipped: the call `system_events` got an item that does not read as its type: missing field"), "{stderr}");
+
+    succeeded(&docker_cli(&host, &["events", "--since", "1763632700"]).await);
+
+    let since: Vec<_> = queries(&daemon, "events")
+        .iter()
+        .map(|query| query.get("since").cloned())
+        .collect();
+
+    assert_eq!(since, [None, Some("1763632700".to_owned())]);
 }
 
 #[cfg(unix)]

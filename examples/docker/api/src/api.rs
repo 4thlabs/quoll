@@ -33,6 +33,6 @@ rest::api! {
     pub group System {
         GET "/version" => version() -> Version;
         /// Sent as `application/jsonl` by Docker 29 and later, as `application/json` before.
-        GET "/events"  => events() -> JsonLines<Event>;
+        GET "/events?since={since}" => events(since: Option<i64>) -> JsonLines<Event>;
     }
 }
