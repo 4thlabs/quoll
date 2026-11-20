@@ -29,6 +29,12 @@ pub enum Place {
 pub trait Declared: Scheme {
     /// Where its credential travels.
     const PLACE: Place;
+
+    /// Whether it refuses a request from another origin that changes things: a cookie scheme.
+    const CHECKS_ORIGIN: bool;
+
+    /// How far its visibility reaches, as a group's: 0 private, 1 a module's, 2 the crate's, 3 everyone's.
+    const REACH: u8;
 }
 
 /// Checks, at compile time, that `S` is a scheme: the type a contract names in `#[auth(...)]`.

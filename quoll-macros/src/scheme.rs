@@ -7,7 +7,7 @@ use quote::{quote, quote_spanned};
 use syn::ext::IdentExt;
 
 use crate::doc_attrs;
-use crate::model::{Api, DeclaredKind, DeclaredScheme, Scheme, SchemeKind};
+use crate::model::{Api, DeclaredKind, DeclaredScheme, Scheme, SchemeKind, reach};
 
 /// The types of the schemes the api declares.
 pub(crate) fn expand(api: &Api) -> TokenStream {
@@ -75,6 +75,8 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
         ),
     };
     let comments = &docs.0;
+    let checks_origin = matches!(scheme.kind, DeclaredKind::Cookie(_));
+    let reach = reach(vis);
 
     let mut lines = docs.0.clone();
     if !lines.is_empty() {
@@ -119,6 +121,8 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
 
         impl ::quoll::__private::auth::Declared for #name {
             const PLACE: ::quoll::__private::auth::Place = ::quoll::__private::auth::Place::#place;
+            const CHECKS_ORIGIN: bool = #checks_origin;
+            const REACH: u8 = #reach;
         }
     }
 }

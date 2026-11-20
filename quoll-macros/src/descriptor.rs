@@ -7,9 +7,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::{Ident, LitStr, ext::IdentExt};
 
-use crate::model::{
-    Api, Group, Method, Route, SchemeKind, reach, shown_path, shown_vis, snake_case,
-};
+use crate::model::{Api, Group, Method, Route, Scheme, SchemeKind, reach, shown_vis, snake_case};
 use crate::scheme::scheme_type;
 
 /// A group as its generators see it: the group, and the api of its block when it has one.
@@ -79,6 +77,10 @@ fn route_info(group: &Group, route: &Route) -> TokenStream {
     let types = schemes
         .iter()
         .map(|scheme| quote! { ::core::any::TypeId::of::<#scheme>() });
+    let infos = route
+        .schemes()
+        .zip(&schemes)
+        .map(|(scheme, ty)| scheme_info(scheme, ty));
     let streams = route
         .reply
         .as_deref()
@@ -95,7 +97,42 @@ fn route_info(group: &Group, route: &Route) -> TokenStream {
             query: &[#(#query),*],
             schemes: &[#(#names),*],
             scheme_types: &[#(#types),*],
+            scheme_infos: &[#(#infos),*],
             streams: #streams,
+        }
+    }
+}
+
+/// What a scheme says of itself to the checks of the api that lists the group: the crate's `Bearer` and `Basic` by
+/// what the macro knows, any other by its type, through `quoll::__private::group::Probe`, which knows a declared
+/// scheme's place and visibility.
+fn scheme_info(scheme: &Scheme, ty: &TokenStream) -> TokenStream {
+    let authorization = match scheme.kind {
+        SchemeKind::Bearer => Some("Bearer"),
+        SchemeKind::Basic => Some("Basic"),
+        SchemeKind::Declared(_) | SchemeKind::Foreign => None,
+    };
+
+    if let Some(authorization) = authorization {
+        return quote! {
+            ::quoll::__private::group::SchemeInfo {
+                reads: ::core::option::Option::Some(
+                    ::quoll::__private::group::Reads::Authorization(#authorization),
+                ),
+                reach: ::core::option::Option::None,
+            }
+        };
+    }
+
+    quote! {
+        {
+            #[allow(unused_imports)]
+            use ::quoll::__private::group::Unknown as _;
+
+            ::quoll::__private::group::SchemeInfo {
+                reads: <::quoll::__private::group::Probe<#ty>>::READS,
+                reach: <::quoll::__private::group::Probe<#ty>>::REACH,
+            }
         }
     }
 }
@@ -133,14 +170,11 @@ pub(crate) fn alone_checks(cx: &Cx) -> TokenStream {
         let schemes: Vec<_> = route.schemes().collect();
 
         for (index, second) in schemes.iter().enumerate() {
-            if second.kind != SchemeKind::Foreign {
-                continue;
-            }
-
             let ty = scheme_type(second);
             let span = second.span();
+            let foreign = second.kind == SchemeKind::Foreign;
 
-            if cx.openapi && !seen.contains(&second.word()) {
+            if foreign && cx.openapi && !seen.contains(&second.word()) {
                 seen.push(second.word());
 
                 let message = LitStr::new(
@@ -159,7 +193,13 @@ pub(crate) fn alone_checks(cx: &Cx) -> TokenStream {
                 });
             }
 
+            // A pair of the crate's schemes is told apart by the macro: any pair with a scheme of the application's
+            // is checked, whichever comes first.
             for first in &schemes[..index] {
+                if !foreign && first.kind != SchemeKind::Foreign {
+                    continue;
+                }
+
                 let first_ty = scheme_type(first);
                 let message = LitStr::new(
                     &format!(
@@ -288,8 +328,7 @@ pub(crate) fn table(api: &Api, group: &GroupRef) -> TokenStream {
 }
 
 /// The compile-time checks of the groups of other blocks the api lists, which the macro does not see: each against
-/// the api, and against the groups before it and the ones the block writes. A group named alone, which a glob import
-/// brings, is checked first to be in scope.
+/// the api, and against the groups before it and the ones the block writes, after the check that it is a group.
 pub(crate) fn api_checks(api: &Api) -> TokenStream {
     if api.listed.is_empty() {
         return TokenStream::new();
@@ -299,19 +338,6 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
     let prefix = &api.prefix;
     let api_reach = reach(&api.vis);
     let shown = shown_vis(&api.vis);
-    let declared = api.schemes.iter().map(|scheme| {
-        let scheme_name = &scheme.name;
-        let shown = scheme.name.unraw().to_string();
-        let scheme_reach = reach(&scheme.vis);
-
-        quote! {
-            ::quoll::__private::group::DeclaredInfo {
-                name: #shown,
-                place: <#scheme_name as ::quoll::__private::auth::Declared>::PLACE,
-                reach: #scheme_reach,
-            }
-        }
-    });
     let refs = api.refs();
     let written: Vec<TokenStream> = refs[api.listed.len()..]
         .iter()
@@ -340,10 +366,10 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
             };
         }
     });
-    let in_scope = api.listed.iter().filter_map(in_scope);
+    let is_group = api.listed.iter().map(is_group);
 
     quote! {
-        #(#in_scope)*
+        #(#is_group)*
 
         const _: () = {
             const API: ::quoll::__private::group::ApiInfo = ::quoll::__private::group::ApiInfo {
@@ -351,7 +377,6 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
                 prefix: #prefix,
                 reach: #api_reach,
                 vis: #shown,
-                schemes: &[#(#declared),*],
             };
 
             #(#checks)*
@@ -359,41 +384,16 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
     }
 }
 
-/// For a group the list names alone, `Notes`, a check that a glob import, `use notes::*;`, brings its items: a
-/// descriptor of the same name declared in an outer block stands in for it otherwise, and the check fails with a
-/// message saying so. Nothing for a path, whose module rustc finds or reports.
-fn in_scope(path: &syn::Path) -> Option<TokenStream> {
-    let name = path.get_ident()?;
-    let descriptor = descriptor_name(name);
-    let module = snake_case(name);
-    let message = format!(
-        "the group `{name}` is not in scope: write its path, as `{module}::{name}`, or import the module of its `rest::group!`, as `use {module}::*;`, which brings its items"
-    );
-    let note = format!(
-        "an api lists a group by its path, `{module}::{name}`, or by its name alone where the items of its `rest::group!` are in scope"
-    );
-    let shown = shown_path(path);
-    let label = format!("`{shown}` is not a group in scope");
-    let span = name.span();
+/// For each group of the list, a check that its path names a group: its descriptor, named as its path names it, from
+/// where the api is, a block or a module, implements `Group`, whose message says what a group is.
+fn is_group(path: &syn::Path) -> TokenStream {
+    let group = GroupRef {
+        name: Api::listed_name(path),
+        path: Some(path),
+    };
+    let descriptor = group.descriptor();
 
-    Some(quote_spanned! {span=>
-        const _: () = {
-            #[diagnostic::on_unimplemented(message = #message, label = #label, note = #note)]
-            trait InScope {}
-
-            impl<G: ::quoll::__private::group::Group> InScope for G {}
-
-            #[allow(dead_code, non_camel_case_types)]
-            struct #descriptor;
-
-            const _: () = {
-                #[allow(unused_imports)]
-                use self::*;
-
-                const fn in_scope<G: InScope>() {}
-
-                in_scope::<#descriptor>();
-            };
-        };
-    })
+    quote_spanned! {group.span()=>
+        const _: () = ::quoll::__private::group::is_group::<#descriptor>();
+    }
 }

@@ -185,8 +185,7 @@ pub struct SchemeRef {
     /// `Scheme::openapi`.
     pub openapi: fn() -> SecurityScheme,
     /// Whether the scheme answers 403 to a request from another origin that changes things: a cookie scheme the
-    /// contract declares, which checks it as it reads its cookie. A route's scheme says `false`, and the document
-    /// finds out from the api's declared schemes.
+    /// contract declares, which checks it as it reads its cookie, and says so by its type.
     pub checks_origin: bool,
     /// The scheme's type, which tells two schemes of one name apart.
     pub type_id: fn() -> TypeId,
@@ -525,11 +524,7 @@ impl Builder {
         let reads = !route.params.is_empty() || route.body.is_some();
         let changes = !matches!(route.method, "get" | "head" | "options");
         let forbidden = route.auth.as_ref().is_some_and(|auth| {
-            let checks_origin = auth
-                .schemes
-                .iter()
-                .filter_map(|scheme| self.index(scheme))
-                .any(|index| self.refs[index].checks_origin);
+            let checks_origin = auth.schemes.iter().any(|scheme| scheme.checks_origin);
 
             !auth.scopes.is_empty() || (changes && checks_origin)
         });

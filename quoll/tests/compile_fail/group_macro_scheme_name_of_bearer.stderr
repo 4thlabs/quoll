@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: `crate::Mine` and `Bearer` have one `NAME`, which names one scheme: an alternative takes each scheme once, so remove one of them
+  --> tests/compile_fail/group_macro_scheme_name_of_bearer.rs:24:26
+   |
+24 |     #[auth(crate::Mine | Bearer)]
+   |                          ^^^^^^ evaluation of `_` failed here

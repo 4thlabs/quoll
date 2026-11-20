@@ -909,15 +909,15 @@ mod tests {
 
     #[tokio::test]
     async fn an_error_received_from_another_api_answers_502_without_its_body() {
-        static UPSTREAM: Route = crate::__private::route(
-            "upstream",
-            "Upstream",
-            http::Method::GET,
-            "/upstream",
-            &[],
-            &[],
-            false,
-        );
+        static UPSTREAM: Route = Route {
+            operation_id: "upstream",
+            group: "Upstream",
+            method: http::Method::GET,
+            path: "/upstream",
+            schemes: &[],
+            scheme_types: &[],
+            streams: false,
+        };
 
         let router = Group::new(Router::new(), ())
             .route::<(), _, _>(&UPSTREAM, |_, _| async {

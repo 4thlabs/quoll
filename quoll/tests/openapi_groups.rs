@@ -54,6 +54,15 @@ rest::api! {
     pub scheme Session = cookie "session";
 }
 
+/// An api that lists the group of notes and declares no scheme: the group's cookie scheme is the first api's.
+mod mirror {
+    use quoll::rest;
+
+    rest::api! {
+        pub api Mirror = "/mirror" { crate::notes::Notes };
+    }
+}
+
 mod clash {
     use quoll::rest;
 
@@ -85,6 +94,16 @@ fn a_cookie_scheme_the_api_declares_answers_403_on_the_routes_of_a_listed_group(
         notes["post"]["security"][0]["Session"],
         serde_json::json!([])
     );
+}
+
+#[test]
+fn a_cookie_scheme_answers_403_in_the_document_of_an_api_that_does_not_declare_it() {
+    let document: Value =
+        serde_json::from_str(&mirror::Mirror::openapi().to_json()).expect("the document is JSON");
+    let notes = &document["paths"]["/mirror/notes"];
+
+    assert!(notes["post"]["responses"]["403"].is_object(), "{notes}");
+    assert!(notes["get"]["responses"]["403"].is_null(), "{notes}");
 }
 
 #[test]
