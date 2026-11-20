@@ -13,14 +13,15 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::cargo::Workspace;
 
-/// Cargo runs `cargo quoll gen` as `cargo-quoll quoll gen`.
+// Cargo runs `cargo quoll gen` as `cargo-quoll quoll gen`.
 #[derive(Parser)]
 #[command(name = "cargo", bin_name = "cargo")]
 enum Cli {
     Quoll(Quoll),
 }
 
-/// The OpenAPI documents of the workspace's contracts, and its web side.
+/// Writes the OpenAPI documents of the workspace's contracts, runs the commands that follow them, and builds its web
+/// side, as `[workspace.metadata.quoll]` says in the workspace's Cargo.toml.
 #[derive(Args)]
 #[command(version)]
 struct Quoll {

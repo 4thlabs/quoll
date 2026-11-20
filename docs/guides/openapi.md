@@ -94,8 +94,16 @@ build = ["npm", "run", "build"]
 - `cargo quoll gen` writes each api's `output` when its content changed, and leaves it as it is otherwise. Then it
   runs the api's `after` commands in order, in the directory of `output`, whether the document changed or not.
 - `cargo quoll gen --check` writes nothing and runs nothing: it fails when a document on disk is not the one its
-  contract prints, or is missing. It is the check of a project that commits its document.
+  contract prints, or is missing. It is the check of a project that commits its document. Cargo builds the contract
+  with `--locked`, so that the check does not update the `Cargo.lock` either.
 - `cargo quoll build` runs `gen`, then `web.build` in `web.dir`.
+
+A document compares with its line endings read as LF, so that a checkout with `core.autocrlf` is not stale. A
+committed document is best kept as the contract prints it, with LF, in `.gitattributes`:
+
+```text
+web/openapi.json text eol=lf
+```
 
 A command is a list of words, run with no shell: its program is found on the `PATH` as the OS does, so that `npm` is
 `npm.cmd` on Windows. Each fails with the output of the cargo build or of the command that failed, and a config that

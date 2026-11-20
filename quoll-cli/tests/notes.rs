@@ -33,6 +33,7 @@ fn gen_writes_the_document_of_the_notes_example() {
 
     let read = |path: &str| -> Value {
         let text = std::fs::read_to_string(root.join(path)).expect("the document is there");
+
         serde_json::from_str(&text).expect("the document is JSON")
     };
     // Compared as JSON, as the snapshot test of the example does: the order of the keys is serde_json's.
