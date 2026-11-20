@@ -6,7 +6,7 @@ use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::ext::IdentExt;
 
-use crate::doc_attrs;
+use crate::docs::doc_attrs;
 use crate::model::{Api, DeclaredKind, DeclaredScheme, Scheme, SchemeKind, reach};
 
 /// The types of the schemes the api declares.

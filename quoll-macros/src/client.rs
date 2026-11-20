@@ -10,9 +10,9 @@ use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::descriptor::{Cx, descriptor_name, table};
+use crate::docs::{doc_attrs, route_docs};
 use crate::model::{Api, Param, Route};
 use crate::path::Segment;
-use crate::{doc_attrs, route_docs};
 
 /// The client's code of a group, behind the feature `client` of `quoll`: its trait, its client, and the function of
 /// its descriptor that builds the client.

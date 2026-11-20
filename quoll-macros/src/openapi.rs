@@ -398,7 +398,7 @@ mod tests {
     fn whole(contract: TokenStream) -> String {
         let Contract(api) = syn::parse2(contract).expect("the contract is valid");
 
-        crate::expand(&api).to_string()
+        crate::expand::api(&api).to_string()
     }
 
     #[test]
