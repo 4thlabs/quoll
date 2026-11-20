@@ -6,7 +6,7 @@
 
 A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI document; the OpenAPI document feeds TypeScript generators (TanStack Query, SWR, zod...). No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
 
-Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`; pagination by header comes later; the error of `authenticate` answers its own status, not always 401; a path parameter of a struct type is refused when it is called, until a `rest::PathValue` derive refuses it at compile time; a header read twice, an argument in two places, a query struct that is not a struct and a header that quoll or HTTP writes do not compile; `Bytes` carries its content type; a failure after the 200 ends an `Events` stream with an `event: problem`, and the client reads every event that has data, whatever its name; a scheme gives its name and its challenge as `Scheme::NAME` and `Scheme::CHALLENGE`, its credential is `Send`, and `openapi` comes with the OpenAPI document; `Basic` reads a `BasicCredential` and challenges with the realm `api`; a declared scheme is written with its visibility, `pub scheme Key`; in `Bearer | Key` the first credential the request carries decides; a route needs all its scopes, and `optional` with `scopes` does not compile; `key::<K>` sends any declared scheme's credential, `openid`'s included, and the client's middleware tell a route's schemes by their type; a cookie scheme refuses a request from another origin, as Go's `CrossOriginProtection` does, the server's own origin alone trusted for now; an alternative takes up to four schemes; `client::redirects(n)` follows redirects one hop at a time through the middleware after it, on a reqwest client that follows none, comes before every middleware that adds a credential, and the helpers send a credential, and `on_request` runs, on the requests of a contract to the api's own origin only; `bearer_from` takes a `client::TokenSource`, whose `token` it asks before each call and whose `refresh` once after a 401, the 401 answering when the token is the same or the body cannot be sent twice; `user_agent` and `request_id` set their header when the request has none, one id across the attempts of a call; `timeout` is a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; `Api::openapi()` returns a `rest::openapi::Document` and is written whatever the features, so that every type of a contract implements `JsonSchema`, unless the api says `#[openapi(none)]`; `Scheme::openapi` returns a `rest::openapi::SecurityScheme` and has no default; the document's `info` is the contract crate's name and version, a query struct is unfolded into its keys, `Bytes` are `application/octet-stream` as a body and `*/*` as a result, each route lists the errors quoll answers and a `default`, two types of one name take schemars' suffix, a type read and written otherwise has two schemas, operation ids are unique, two schemes of one `NAME` in an api do not compile, and the notes document is a snapshot of its tests; the server's helpers return quoll's layer types, under `server::layer`, which the example adds from the innermost to the outermost; `request_id()` keeps a caller's id of 1 to 128 bytes of printable ASCII with no space, or makes a UUID v4, which a handler reads with `RequestId::current()`, a task-local; the span of `trace()` has the method, the path without the query, the operation and the request id, and each answer is logged once, at `ERROR` for a 5xx the crate has not logged with its cause; `body_limit` replaces axum's default limit; `cors(origins)?` refuses what is not an origin with an `InvalidOrigin`, allows the methods a contract serves and any header, exposes `Location`, `WWW-Authenticate` and `X-Request-Id`, and allows no credentials, the CSRF check of a cookie scheme still trusting the server's own origin alone. On 2026-11-20: a client error's sources show its URL by origin and path, never its credentials nor its query; the helpers move to the top of the crate, `quoll::client` and `quoll::server`, and `rest::test` to `quoll::test`, with no re-export left in `quoll::rest`; `client::builder()` takes quoll's helpers and any `reqwest_middleware::Middleware` with `with`, puts quoll's own in the order they work in, `trace`, `user_agent`, `request_id`, `retry`, `timeout`, `redirects`, then the credentials and `on_request`, whatever the order they are given in, each other where it is given, tells a helper by its type, configures reqwest's client with `http(..)`, follows no redirect in reqwest's client when `redirects` is given, adds `redirects(10)` when it is given a credential, `on_request` included, and no `redirects`, and builds a contract's client with `build::<Api>(url)`, through the trait `client::Contract` the macro implements on `Api`, or a `ClientWithMiddleware` with `build_http()`; `server::builder()` takes quoll's layers and any tower layer with `with`, the first given the outermost, puts quoll's own in the order `request_id`, `trace`, `cors`, `compression`, `timeout`, `body_limit`, each other where it is given, serves a router with `serve(address, router)`, an address a `&str`, a `String` or a `SocketAddr`, or `serve_on(listener, router)` until Ctrl-C or `SIGTERM`, or the signal given to `shutdown(..)`, waits 5 s for the requests it serves, `grace(..)`, or until a second signal, and logs at `WARN` the connections it leaves open, and gives the router with its layers with `into_router(router)`; `Api::client`, `Api::client_with` and `Api::router` stay; `build::<T>` on a type that is not a contract's api does not compile. Also on 2026-11-20: a contract splits into `rest::group!` blocks, one group per block, which an api lists by their paths, the usual form, `{ auth::Auth, notes::Notes }`, a group named alone needing its module imported by glob, `use notes::*;`, and rustc's error on the name otherwise; the api reads them through a hidden descriptor, by type, and checks them against each other at compile time, inline groups going through the same generator; schemes are declared in the api alone, a `group!` naming one by its path or an import, the rule that names a declared scheme alone holding in the api's block only; a group may be listed by two apis, each serving it under its prefix; `#[openapi(none)]` goes on a `group!` too; and two schemes of different types of one `NAME` from two blocks, which the macro cannot compare, make `Api::openapi()` panic with a message saying so, which the snapshot test of the document catches. On 2026-11-20 too, the example's store is in memory, without SQLite. And for the example of the Docker Engine API, on 2026-11-20: the client reads a `JsonLines` sent as `application/json` too, which it asks for last, `application/json;q=0.5`, the server still sending `application/jsonl`; and a result `rest::ByteStream`, bytes of a content type sent as they come, one type on both sides, of chunks that are `Vec<u8>`, `bytes` being no dependency of the API, described as `Bytes` are in the document, `*/*`, a stream for every rule streams follow.
+Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`; pagination by header comes later; the error of `authenticate` answers its own status, not always 401; a path parameter of a struct type is refused when it is called, until a `rest::PathValue` derive refuses it at compile time; a header read twice, an argument in two places, a query struct that is not a struct and a header that quoll or HTTP writes do not compile; `Bytes` carries its content type; a failure after the 200 ends an `Events` stream with an `event: problem`, and the client reads every event that has data, whatever its name; a scheme gives its name and its challenge as `Scheme::NAME` and `Scheme::CHALLENGE`, its credential is `Send`, and `openapi` comes with the OpenAPI document; `Basic` reads a `BasicCredential` and challenges with the realm `api`; a declared scheme is written with its visibility, `pub scheme Key`; in `Bearer | Key` the first credential the request carries decides; a route needs all its scopes, and `optional` with `scopes` does not compile; `key::<K>` sends any declared scheme's credential, `openid`'s included, and the client's middleware tell a route's schemes by their type; a cookie scheme refuses a request from another origin, as Go's `CrossOriginProtection` does, the server's own origin alone trusted for now; an alternative takes up to four schemes; `client::redirects(n)` follows redirects one hop at a time through the middleware after it, on a reqwest client that follows none, comes before every middleware that adds a credential, and the helpers send a credential, and `on_request` runs, on the requests of a contract to the api's own origin only; `bearer_from` takes a `client::TokenSource`, whose `token` it asks before each call and whose `refresh` once after a 401, the 401 answering when the token is the same or the body cannot be sent twice; `user_agent` and `request_id` set their header when the request has none, one id across the attempts of a call; `timeout` is a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; `Api::openapi()` returns a `rest::openapi::Document` and is written whatever the features, so that every type of a contract implements `JsonSchema`, unless the api says `#[openapi(none)]`; `Scheme::openapi` returns a `rest::openapi::SecurityScheme` and has no default; the document's `info` is the contract crate's name and version, a query struct is unfolded into its keys, `Bytes` are `application/octet-stream` as a body and `*/*` as a result, each route lists the errors quoll answers and a `default`, two types of one name take schemars' suffix, a type read and written otherwise has two schemas, operation ids are unique, two schemes of one `NAME` in an api do not compile, and the notes document is a snapshot of its tests; the server's helpers return quoll's layer types, under `server::layer`, which the example adds from the innermost to the outermost; `request_id()` keeps a caller's id of 1 to 128 bytes of printable ASCII with no space, or makes a UUID v4, which a handler reads with `RequestId::current()`, a task-local; the span of `trace()` has the method, the path without the query, the operation and the request id, and each answer is logged once, at `ERROR` for a 5xx the crate has not logged with its cause; `body_limit` replaces axum's default limit; `cors(origins)?` refuses what is not an origin with an `InvalidOrigin`, allows the methods a contract serves and any header, exposes `Location`, `WWW-Authenticate` and `X-Request-Id`, and allows no credentials, the CSRF check of a cookie scheme still trusting the server's own origin alone. On 2026-11-20: a client error's sources show its URL by origin and path, never its credentials nor its query; the helpers move to the top of the crate, `quoll::client` and `quoll::server`, and `rest::test` to `quoll::test`, with no re-export left in `quoll::rest`; `client::builder()` takes quoll's helpers and any `reqwest_middleware::Middleware` with `with`, puts quoll's own in the order they work in, `trace`, `user_agent`, `request_id`, `retry`, `timeout`, `redirects`, then the credentials and `on_request`, whatever the order they are given in, each other where it is given, tells a helper by its type, configures reqwest's client with `http(..)`, follows no redirect in reqwest's client when `redirects` is given, adds `redirects(10)` when it is given a credential, `on_request` included, and no `redirects`, and builds a contract's client with `build::<Api>(url)`, through the trait `client::Contract` the macro implements on `Api`, or a `ClientWithMiddleware` with `build_http()`; `server::builder()` takes quoll's layers and any tower layer with `with`, the first given the outermost, puts quoll's own in the order `request_id`, `trace`, `cors`, `compression`, `timeout`, `body_limit`, each other where it is given, serves a router with `serve(address, router)`, an address a `&str`, a `String` or a `SocketAddr`, or `serve_on(listener, router)` until Ctrl-C or `SIGTERM`, or the signal given to `shutdown(..)`, waits 5 s for the requests it serves, `grace(..)`, or until a second signal, and logs at `WARN` the connections it leaves open, and gives the router with its layers with `into_router(router)`; `Api::client`, `Api::client_with` and `Api::router` stay; `build::<T>` on a type that is not a contract's api does not compile. Also on 2026-11-20: a contract splits into `rest::group!` blocks, one group per block, which an api lists by their paths, the usual form, `{ auth::Auth, notes::Notes }`, a group named alone needing its module imported by glob, `use notes::*;`, and rustc's error on the name otherwise; the api reads them through a hidden descriptor, by type, and checks them against each other at compile time, inline groups going through the same generator; schemes are declared in the api alone, a `group!` naming one by its path or an import, the rule that names a declared scheme alone holding in the api's block only; a group may be listed by two apis, each serving it under its prefix; `#[openapi(none)]` goes on a `group!` too; and two schemes of different types of one `NAME` from two blocks, which the macro cannot compare, make `Api::openapi()` panic with a message saying so, which the snapshot test of the document catches. On 2026-11-20 too, the example's store is in memory, without SQLite. And for the example of the Docker Engine API, on 2026-11-20: the client reads a `JsonLines` sent as `application/json` too, which it asks for last, `application/json;q=0.5`, the server still sending `application/jsonl`; and a result `rest::ByteStream`, bytes of a content type sent as they come, one type on both sides, of chunks that are `Vec<u8>`, `bytes` being no dependency of the API, described as `Bytes` are in the document, `*/*`, a stream for every rule streams follow. On 2026-11-20 too, the TypeScript chain is driven by a Rust core, `cargo quoll gen`, `dev` and `build`, configured in the workspace's metadata, which runs the commands it names; no plugin for now; `subscribe` comes later.
 
 ## Stack and crates
 
@@ -26,6 +26,14 @@ notes/
 ```
 
 The crate is `quoll`, used from git until it is published; the contract is its module `quoll::rest`, which the examples bring in with `use quoll::rest`. It has two features, `server` and `client`, which bring the modules of each side: `quoll::client`, the builder of a client and its middleware, `quoll::server`, the builder of a server and its layers, and `quoll::test`, a router served for a test. What the macro generates for each side compiles only with its feature: the command line never links axum, nor the server reqwest. A contract crate passes them on, `notes-api = { path = "../api", features = ["server"] }`.
+
+Quoll's own crates are three. The dev loop is a crate of its own, outside `quoll`, which no application depends on: it is installed, with `cargo install --git https://github.com/4thlabs/quoll quoll-cli` until it is published.
+
+| Crate | What it is |
+|---|---|
+| `quoll` | The contract, `quoll::rest`, and the `server`, `client` and `test` modules behind their features. |
+| `quoll-macros` | The proc macro behind `rest::api!` and `rest::group!`, re-exported by `quoll`, never named. |
+| `quoll-cli` | The binary `cargo-quoll`, a cargo subcommand: `cargo quoll gen`, `dev` and `build`, as [The dev loop](#the-dev-loop) says. |
 
 ## The contract
 
@@ -352,17 +360,52 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 - A contract of a third-party API that is only called says `#[openapi(none)]` on its api: no `Api::openapi`, and its types, which may come from crates that do not implement `JsonSchema`, need serde alone. A `rest::group!` of such a contract says it on its group.
 - orval writes the TypeScript from it: TanStack Query here; `vue-query`, `svelte-query`, `swr`, `zod` or a plain `fetch` client from the same document.
 - The credential goes through orval's mutator, one function of the application; the browser sends cookies itself.
-- A stream's items are typed through an extension, as OpenAPI 3.1 cannot type them: the response's media type (`text/event-stream`, `application/jsonl`) carries `x-item`, a `$ref` to the item's schema, which orval writes as a type like any other. `subscribe<T>(url, onItem, init)`, from `vite-plugin-rest/client`, reads the stream with `fetch`, so that it sends headers, calls `onItem` with each item parsed, and returns the function that stops it. The extension goes once the generators read OpenAPI 3.2's item schemas.
+- A stream's items are typed through an extension, as OpenAPI 3.1 cannot type them: the response's media type (`text/event-stream`, `application/jsonl`) carries `x-item`, a `$ref` to the item's schema, which orval writes as a type like any other. The extension goes once the generators read OpenAPI 3.2's item schemas.
+- No helper of quoll reads a stream on the web side for now; the browser's own APIs do:
+  - **`EventSource`** reads an `Events` route of a same-origin app whose scheme is a cookie, which the browser sends itself. `onmessage` sees unnamed events only: `source.addEventListener("problem", ...)` sees the `event: problem` that ends a stream which failed after the 200, its `data` the problem. After a clean end of the stream, `EventSource` connects again on its own, unless it is closed.
+  - **`fetch`** and `response.body.getReader()` read a `ByteStream` and a `JsonLines`, and an `Events` route that takes a header credential, which `EventSource` cannot send, with a few lines that split the events. A failure of a `JsonLines` stream aborts its body, an error of the reader, not a clean end.
+  - A helper, `subscribe`, comes later, as [Later](#later) says.
 - An `i64` is a `number`, exact up to 2^53: ids and counts stay below it. A value that may go beyond it is declared as a `String` in its Rust type.
-- Neither the document nor the TypeScript is committed: the Vite plugin writes them in development and in a build. They are the one generated code on disk, as `tsc` and the editor need files. A test of the example keeps a snapshot of its document, which is no input of the build.
+- Neither the document nor the TypeScript is committed in the example: `cargo quoll gen` writes them, in development and in a build. They are the one generated code on disk, as `tsc` and the editor need files. A project that wants a CI of its JavaScript alone, with no cargo, commits the document and runs `cargo quoll gen --check` in its Rust CI. A test of the example keeps a snapshot of its document, which is no input of the build.
 
-### The Vite plugin
+### The dev loop
 
-- **`vite dev`**: builds and starts the server, proxies `/api` to it, writes `openapi.json`, runs orval through its JavaScript API.
-- **A change to the contract crate**: writes `openapi.json` again, runs orval, rebuilds and restarts the server. The contract crate holds no axum, so its binary builds in seconds. A file whose content did not change is not rewritten, so that Vite reloads nothing.
-- **A change to the server crate**: rebuilds and restarts the server only.
-- **A cargo error** shows in Vite's overlay and its terminal; the last server that built keeps running.
-- **`vite build`**: writes the TypeScript before bundling, and fails if cargo fails.
+`cargo quoll`, from the crate `quoll-cli`, writes the documents, runs the commands that follow them, and rebuilds and restarts the servers. It knows no bundler and no generator: the project's own commands, named in the workspace's `Cargo.toml`, do the JavaScript side. It does not link the contract crate: it runs the contract's binary and reads the document from its output, so that its version need not be the contract's version of `quoll`.
+
+```toml
+[[workspace.metadata.quoll.api]]
+package = "notes-api"
+bin = "openapi"                       # the contract's binary, which prints the document
+output = "examples/notes/web/openapi.json"
+after = [["npx", "orval"]]            # commands run, in order, after the document
+
+[[workspace.metadata.quoll.server]]
+package = "notes-server"
+url = "http://127.0.0.1:8080"
+
+[workspace.metadata.quoll.web]
+dir = "examples/notes/web"
+dev = ["npm", "run", "dev"]           # run by `cargo quoll dev`, beside the server
+build = ["npm", "run", "build"]       # run by `cargo quoll build`, after `gen`
+```
+
+- **The config**: one `api` per contract, with the package, its binary, the file it writes and its `after`, a list of commands; one `server` per server, with the package and the url it answers on; one `web`, with its directory and its two commands. Paths are relative to the workspace's root. A config that cannot be read is an error that names the key at fault.
+- **A command** is a list of words, run with no shell, its program found on the `PATH` as the OS does: `npm` is `npm.cmd` on Windows, resolved, not written per OS. `after` runs in the directory of `output`, `dev` and `build` in `web.dir`.
+- **`cargo quoll gen`** builds and runs each api's binary, writes its `output` when its content changed, a file that did not change being left as it is, then runs its `after` commands in order, whether the document changed or not, so that a checkout whose document is committed gets its TypeScript too. It fails when cargo or a command fails, with its output.
+- **`cargo quoll gen --check`** writes nothing, and fails when a document on disk is not the one the contract prints: the check of a project that commits its document.
+- **`cargo quoll build`** runs `gen`, then `web.build`, and fails when either fails.
+- **`cargo quoll dev`** runs `gen`, builds and starts the servers, then watches the workspace's packages:
+  - **A change to a contract crate**, or to a crate it depends on: its document, then its `after` if the document changed, then the servers that depend on it. The contract crate holds no axum, so its binary builds in seconds. A document whose content did not change is not rewritten, so that the web side reloads nothing.
+  - **A change to a server crate**: that server alone.
+  - **A server** is built with `--message-format=json`, and the one running stops only once the new one has compiled. A cargo error is printed with its message, and the last server that compiled keeps running. A server is ready when its `url` answers.
+  - **`web.dev`** starts once the servers are ready, its output passed through. Every child stops on Ctrl-C or `SIGTERM`, on Linux, macOS and Windows.
+  - **`--json`** prints one JSON line per event, for a tool that reads them: a document written, with its api and path; a cargo error, with its package, message, file and line; a server ready, with its package and url.
+
+The JavaScript side follows conventions, with no plugin of quoll for now:
+
+- **The proxy** is the bundler's own, to the server's `url`: Vite's `server.proxy`, Next.js's `rewrites`. The page calls the api on its own origin, `/api/...`.
+- **The generator** keeps its own config, which reads the `output` the api writes, `input: "./openapi.json"` for orval, and `after` runs it. Any generator works, the one the project's command names.
+- **A reload** is the bundler's own: its watcher sees the TypeScript the generator rewrites. A cargo error shows in the terminal of `cargo quoll dev`, not in the bundler's overlay.
 
 ## A complete example
 
@@ -860,23 +903,36 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
+`Cargo.toml`, the workspace's, at the root of the repository, where the example sits in `examples/notes/`: `cargo quoll dev` runs the server and Vite, `cargo quoll build` writes the TypeScript then bundles the page, in CI too, so that a change of the contract that breaks the page breaks the pull request.
+
+```toml
+[[workspace.metadata.quoll.api]]
+package = "notes-api"
+bin = "openapi"
+output = "examples/notes/web/openapi.json"
+after = [["npx", "orval"]]
+
+[[workspace.metadata.quoll.server]]
+package = "notes-server"
+url = "http://127.0.0.1:8080"
+
+[workspace.metadata.quoll.web]
+dir = "examples/notes/web"
+dev = ["npm", "run", "dev"]
+build = ["npm", "run", "build"]
+```
+
 `web/vite.config.ts`
 
 ```typescript
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import rest from "vite-plugin-rest";
 
 export default defineConfig({
-  plugins: [
-    react(),
-    rest({
-      workspace: "..",
-      contract: { package: "notes-api", bin: "openapi" },
-      server: { package: "notes-server", url: "http://localhost:8080", proxy: "/api" },
-      orval: "./orval.config.ts",
-    }),
-  ],
+  plugins: [react()],
+  server: {
+    proxy: { "/api": "http://127.0.0.1:8080" },
+  },
 });
 ```
 
@@ -899,25 +955,29 @@ export default defineConfig({
 });
 ```
 
+The page takes a bearer token, which `EventSource` cannot send: `apiEvents` reads the events with `fetch`, and splits them itself, as quoll's server writes them, each line ending in `\n`. Every event that has data is an item, whatever its name, an event with no data and a comment are skipped, and an `event: problem` ends the stream with an error.
+
 `web/src/api/fetch.ts`
 
 ```typescript
-import { subscribe } from "vite-plugin-rest/client";
-
 let token: string | undefined;
 
 export function signIn(accessToken: string) {
   token = accessToken;
 }
 
-export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
-  const headers = new Headers(init.headers);
+function authorization(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
 
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const response = await fetch(url, { ...init, headers });
+  return headers;
+}
+
+export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
+  const response = await fetch(url, { ...init, headers: authorization(init.headers) });
 
   if (!response.ok) {
     throw await response.json(); // the RFC 9457 problem
@@ -926,10 +986,74 @@ export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
-export function apiSubscribe<T>(url: string, onItem: (item: T) => void): () => void {
-  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+// Reads a stream of server-sent events, calling `onItem` with each one's data parsed, until the function it returns
+// is called.
+export function apiEvents<T>(url: string, onItem: (item: T) => void): () => void {
+  const controller = new AbortController();
 
-  return subscribe<T>(url, onItem, { headers });
+  readEvents(url, onItem, controller.signal).catch((error) => {
+    if (!controller.signal.aborted) {
+      console.error(error);
+    }
+  });
+
+  return () => controller.abort();
+}
+
+async function readEvents<T>(url: string, onItem: (item: T) => void, signal: AbortSignal) {
+  const response = await fetch(url, { headers: authorization(), signal });
+
+  if (!response.ok) {
+    throw await response.json(); // the RFC 9457 problem
+  }
+
+  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+
+  for (;;) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      return;
+    }
+
+    const blocks = (buffer + value).split("\n\n");
+    buffer = blocks.pop() ?? "";
+
+    for (const block of blocks) {
+      const { event, data } = parseEvent(block);
+
+      if (data === undefined) {
+        continue;
+      }
+
+      if (event === "problem") {
+        throw JSON.parse(data); // the RFC 9457 problem, after the 200
+      }
+
+      onItem(JSON.parse(data) as T);
+    }
+  }
+}
+
+// One event, its lines `field: value`; a line that starts with `:` is a comment.
+function parseEvent(block: string): { event?: string; data?: string } {
+  let event: string | undefined;
+  let data: string | undefined;
+
+  for (const line of block.split("\n")) {
+    const colon = line.indexOf(":");
+    const field = colon < 0 ? line : line.slice(0, colon);
+    const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
+
+    if (field === "event") {
+      event = value;
+    } else if (field === "data") {
+      data = data === undefined ? value : `${data}\n${value}`;
+    }
+  }
+
+  return { event, data };
 }
 ```
 
@@ -938,7 +1062,7 @@ export function apiSubscribe<T>(url: string, onItem: (item: T) => void): () => v
 ```typescript
 import { useEffect } from "react";
 
-import { apiSubscribe } from "./api/fetch";
+import { apiEvents } from "./api/fetch";
 import { type NoteEvent, useNotesGet, useNotesUpdate } from "./api/generated";
 
 export function NoteView({ id }: { id: number }) {
@@ -946,7 +1070,7 @@ export function NoteView({ id }: { id: number }) {
   const update = useNotesUpdate();
 
   // Another tab or the command line changed the note: read it again.
-  useEffect(() => apiSubscribe<NoteEvent>(`/api/notes/${id}/events`, () => refetch()), [id, refetch]);
+  useEffect(() => apiEvents<NoteEvent>(`/api/notes/${id}/events`, () => refetch()), [id, refetch]);
 
   if (!note) {
     return <p>Loading</p>;
@@ -1008,3 +1132,4 @@ Decided, not in the first version. The first two change no contract already writ
 1. **Typed errors per route**, as the Errors section says.
 2. **Pagination by header.** GitHub pages with a `Link` header (`rel="next"`, `rel="last"`), which a result cannot say yet: a result `Paged<T>` carrying it, and on the client `.pages()`, a stream that follows the links.
 3. **A `rest::PathValue` derive** on unit enums and newtypes, so that a path parameter not read from text is refused at compile time: a struct of the application in a path no longer compiles.
+4. **A `subscribe` helper** for the web side, in an npm package of its own: `subscribe<T>(url, onItem, init)` reads a stream with `fetch`, so that it sends a header credential, calls `onItem` with each item parsed and returns the function that stops it. It reads `Events`, every event that has data an item whatever its name and `event: problem` an error, and `JsonLines`, an aborted body an error, not a clean end, and does not connect again after a clean end; `ByteStream` too, with `onChunk`.
