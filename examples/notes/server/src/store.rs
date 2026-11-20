@@ -16,7 +16,7 @@ pub const PAGE_SIZE: usize = 20;
 
 const CHANGES_KEPT: usize = 16;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Store {
     inner: Arc<Mutex<Inner>>,
     passwords: Arc<Passwords>,
@@ -101,6 +101,13 @@ impl fmt::Debug for Store {
 }
 
 impl Store {
+    pub fn in_memory() -> Self {
+        Self {
+            inner: Arc::default(),
+            passwords: Arc::default(),
+        }
+    }
+
     pub async fn add_user(
         &self,
         name: impl Into<String>,

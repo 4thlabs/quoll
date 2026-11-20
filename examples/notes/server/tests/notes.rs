@@ -16,7 +16,7 @@ fn served(app: notes_server::App) -> axum::Router {
 
 #[tokio::test]
 async fn a_created_note_reads_back() -> anyhow::Result<()> {
-    let app = notes_server::App::default();
+    let app = notes_server::App::in_memory();
     let token = app.sessions.open(User {
         id: 1,
         name: "ana".into(),
@@ -41,7 +41,7 @@ async fn a_created_note_reads_back() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
-    let url = quoll::test::spawn(served(notes_server::App::default())).await;
+    let url = quoll::test::spawn(served(notes_server::App::in_memory())).await;
     let api = Api::client(&url)?;
 
     let error = api.notes().get(1).await.unwrap_err();
@@ -58,7 +58,7 @@ struct Served {
 
 impl Served {
     async fn start() -> Self {
-        let app = notes_server::App::default();
+        let app = notes_server::App::in_memory();
         let store = app.store.clone();
         let sessions = app.sessions.clone();
         let url = quoll::test::spawn(served(app)).await;
@@ -193,7 +193,7 @@ async fn a_wrong_password_and_an_unknown_user_are_refused() -> anyhow::Result<()
 
 #[tokio::test]
 async fn a_user_whose_name_is_taken_is_not_added() -> anyhow::Result<()> {
-    let store = Store::default();
+    let store = Store::in_memory();
 
     store.add_user("ana", "correct horse").await?;
 
@@ -729,7 +729,7 @@ fn a_session_lasts_a_day() {
 #[tokio::test]
 async fn a_token_past_its_lifetime_is_refused() -> anyhow::Result<()> {
     let app = notes_server::App {
-        store: Store::default(),
+        store: Store::in_memory(),
         sessions: Sessions::with_lifetime(Duration::ZERO),
     };
     let token = app.sessions.open(ana());
