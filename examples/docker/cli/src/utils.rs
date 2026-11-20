@@ -15,6 +15,25 @@ pub fn docker_error(error: rest::Error) -> anyhow::Error {
     }
 }
 
+/// Whether `error` is that of an item of a stream that did not decode, after which the stream goes on.
+pub fn is_undecoded(error: &rest::Error) -> bool {
+    std::error::Error::source(error).is_some_and(|source| source.is::<serde_json::Error>())
+}
+
+/// `error` and its sources, on one line.
+pub fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

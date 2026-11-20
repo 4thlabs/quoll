@@ -17,7 +17,7 @@ cargo run -p docker-cli -- inspect web
 cargo run -p docker-cli -- start web
 cargo run -p docker-cli -- stop web -t 5
 cargo run -p docker-cli -- logs -f web
-cargo run -p docker-cli -- events
+cargo run -p docker-cli -- events --since 1763632800
 ```
 
 It reaches the daemon `DOCKER_HOST` names, as the `docker` command does: `unix:///path/to/docker.sock`, or
@@ -39,11 +39,12 @@ names none. TLS, `DOCKER_TLS_VERIFY`, and `ssh://` are not supported.
   its bytes: the command line splits them, across chunks, and writes stdout and stderr each to its own. With a TTY,
   `application/vnd.docker.raw-stream`, it writes them as they come.
 - **The events.** `JsonLines<Event>`: Docker 29 and later send them as `application/jsonl`, older ones as
-  `application/json`, which quoll's client reads as JSON Lines too. So does the progress of a pull.
+  `application/json`, which quoll's client reads as JSON Lines too. So does the progress of a pull. An event the
+  command line does not read, of a kind newer than it, is skipped with a warning on stderr, and the stream goes on.
 
 ## Its tests
 
 `cli/tests/cli.rs` runs each command against a fake daemon written with axum, on port 0 and on a Unix socket.
 `cli/tests/daemon.rs` runs them against a real daemon: it pulls `alpine:3`, makes a container, then starts it, reads
-its logs and its events, stops it and removes it. With no daemon, it says it is skipped and passes, unless
+its logs and its events, stops it and removes it. With nothing listening where the daemon would, it says it is skipped and passes, unless
 `DOCKER_CLI_TEST_DAEMON=required`, which CI sets on its runners, where Docker runs.

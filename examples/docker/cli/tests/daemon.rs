@@ -5,12 +5,14 @@
 //! With no daemon, the test says so and passes, unless `DOCKER_CLI_TEST_DAEMON` is `required`, as CI sets it on the
 //! runners that have Docker: there, a daemon that does not answer fails it.
 
+use std::error::Error as _;
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use docker_api::{Containers, Docker, DockerClient, Images, NewContainer, System};
+use docker_api::{Containers, DockerClient, Images, NewContainer, System};
+use docker_cli::Host;
 use futures::StreamExt;
-use quoll::client;
+use quoll::rest;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
@@ -21,23 +23,56 @@ const BOUND: Duration = Duration::from_secs(120);
 const IMAGE: &str = "alpine";
 const TAG: &str = "3";
 
-/// A client of the daemon `DOCKER_HOST` names, as the command line reads it, for what the test sets up.
+/// A client of the daemon `DOCKER_HOST` names, as the command line reaches it, for what the test sets up.
 fn docker() -> DockerClient {
-    let docker_host = std::env::var("DOCKER_HOST").unwrap_or_default();
+    Host::from_env()
+        .and_then(|host| host.client())
+        .expect("a client of the daemon")
+}
 
-    if let Some(address) = docker_host.strip_prefix("tcp://") {
-        return Docker::client(&format!("http://{address}")).expect("an http url");
+/// Whether `error` says that nothing listens where the daemon would: no socket, or a connection refused. Any other
+/// error, an answer with a status among them, is the daemon's, and fails the test.
+fn nothing_listens(error: &rest::Error) -> bool {
+    let mut source = error.source();
+
+    while let Some(cause) = source {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            return matches!(
+                io.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            );
+        }
+
+        source = cause.source();
     }
 
-    let socket = docker_host
-        .strip_prefix("unix://")
-        .unwrap_or("/var/run/docker.sock")
-        .to_owned();
+    false
+}
 
-    client::builder()
-        .http(move |http| http.unix_socket(socket))
-        .build::<Docker>("http://localhost")
-        .expect("a client")
+/// Removes the container `name` when dropped, however the test ends, so that a failure leaves none running.
+struct Removed {
+    name: String,
+}
+
+impl Drop for Removed {
+    fn drop(&mut self) {
+        let name = self.name.clone();
+
+        // The test's runtime may be ending: one of its own, on a thread of its own, removes the container.
+        let removed = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a runtime");
+
+            runtime.block_on(docker().containers().remove(name, true))
+        })
+        .join();
+
+        if !matches!(removed, Ok(Ok(()))) {
+            eprintln!("the container {} may be left: {removed:?}", self.name);
+        }
+    }
 }
 
 /// The command line run with `args`, to its end: its standard output.
@@ -98,18 +133,22 @@ async fn line_with(lines: &mut (impl tokio::io::AsyncBufRead + Unpin), wanted: &
 async fn each_command_works_on_a_real_daemon() {
     let docker = docker();
 
-    if let Err(error) = docker.system().version().await {
-        let required =
-            std::env::var("DOCKER_CLI_TEST_DAEMON").is_ok_and(|value| value == "required");
+    match docker.system().version().await {
+        Ok(_) => {}
+        Err(error) if nothing_listens(&error) => {
+            let required =
+                std::env::var("DOCKER_CLI_TEST_DAEMON").is_ok_and(|value| value == "required");
 
-        assert!(
-            !required,
-            "DOCKER_CLI_TEST_DAEMON is required, and no daemon answers: {error:?}"
-        );
-        eprintln!(
-            "skipped: no Docker daemon answers, at DOCKER_HOST or /var/run/docker.sock ({error}); set DOCKER_CLI_TEST_DAEMON=required to fail instead"
-        );
-        return;
+            assert!(
+                !required,
+                "DOCKER_CLI_TEST_DAEMON is required, and no daemon answers: {error:?}"
+            );
+            eprintln!(
+                "skipped: no Docker daemon answers, at DOCKER_HOST or /var/run/docker.sock ({error}); set DOCKER_CLI_TEST_DAEMON=required to fail instead"
+            );
+            return;
+        }
+        Err(error) => panic!("the daemon answers, but not its version: {error:?}"),
     }
 
     let mut progress = docker
@@ -125,6 +164,13 @@ async fn each_command_works_on_a_real_daemon() {
     }
 
     let name = format!("docker-cli-test-{}", std::process::id());
+    // Docker counts in seconds: one before the container is made, so that `events --since` sends its start whenever
+    // the stream opens.
+    let since = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("a time after 1970")
+        .as_secs()
+        - 1;
     let container = NewContainer {
         image: format!("{IMAGE}:{TAG}"),
         cmd: ["sh", "-c", "echo out; echo err >&2; exec sleep 300"]
@@ -139,16 +185,18 @@ async fn each_command_works_on_a_real_daemon() {
         .await
         .expect("the container is created");
 
+    let _removed = Removed { name: name.clone() };
+
     assert!(docker_cli(&["ps", "-a"]).await.contains(&name));
-
-    let mut events = spawned(&["events"]);
-    let mut event_lines = BufReader::new(events.stdout.take().expect("piped"));
-
     assert_eq!(docker_cli(&["start", &name]).await, format!("{name}\n"));
     assert_eq!(
         docker_cli(&["start", &name]).await,
         format!("{name} is running already\n")
     );
+
+    let mut events = spawned(&["events", "--since", &since.to_string()]);
+    let mut event_lines = BufReader::new(events.stdout.take().expect("piped"));
+
     line_with(&mut event_lines, &["container start", &name]).await;
     events.kill().await.expect("the events stop");
 
@@ -173,10 +221,4 @@ async fn each_command_works_on_a_real_daemon() {
         docker_cli(&["stop", &name]).await,
         format!("{name} is stopped already\n")
     );
-
-    docker
-        .containers()
-        .remove(name, true)
-        .await
-        .expect("the container is removed");
 }
