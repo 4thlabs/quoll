@@ -663,7 +663,8 @@ use crate::{App, User};
 
 impl NotesServer for App {
     async fn search(&self, user: &User, filter: NoteFilter) -> Result<Vec<Note>> {
-        // The document says 1000 at most: a caller who skips its check meets the same rule here.
+        // The document says 1000 at most: a caller who skips its check meets the same rule, and a search under the
+        // store's lock stays short.
         if filter
             .contains
             .as_ref()
@@ -738,8 +739,9 @@ async fn main() -> anyhow::Result<()> {
 
     app.store.add_user("demo", &password).await?;
 
-    let key = app.store.add_operator("ops");
+    let key = app.store.add_operator("ops")?;
 
+    println!("throwaway credentials of a demo, made anew at each start:");
     println!("sign in as demo, password {password}, at POST /api/token");
     println!("an operator's X-Api-Key: {key}");
 

@@ -73,7 +73,8 @@ Quoll is a Rust library, edition 2024, built with the latest stable Rust. The ru
 
 ## Docs
 
-- Every public item has a `///` comment, and each module a `//!` comment that says what it holds.
+- Every public item of the crates has a `///` comment, and each module a `//!` comment that says what it holds; an
+  example has one where it teaches something.
 - A public function's example is a doctest that compiles and runs, or is `no_run` when it needs a network.
 - `# Errors` says when a function returns an error, `# Panics` when it may panic.
 - No file has a license header: `license = "MIT"` in `Cargo.toml` says it.

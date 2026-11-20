@@ -7,8 +7,9 @@ async fn main() -> anyhow::Result<()> {
 
     app.store.add_user("demo", &password).await?;
 
-    let key = app.store.add_operator("ops");
+    let key = app.store.add_operator("ops")?;
 
+    println!("throwaway credentials of a demo, made anew at each start:");
     println!("sign in as demo, password {password}, at POST /api/token");
     println!("an operator's X-Api-Key: {key}");
 
