@@ -363,7 +363,7 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 
 ## A complete example
 
-Notes kept per user: a token for a login, notes to list, read, write and watch, and statistics for operators holding a key. The web page and the command line use bearer tokens, the operators' scripts a key. The store, `server/src/store.rs`, keeps them in SQLite, and is not shown here.
+Notes kept per user: a token for a login, notes to list, read, write and watch, and statistics for operators holding a key. The web page and the command line use bearer tokens, the operators' scripts a key. The contract is one `rest::api!`, its models a file per domain, as is the server. The sessions, kept in memory, and the store, which keeps the rest in SQLite, are in the repository, `examples/notes/server/src/sessions.rs` and `store.rs` with `store/`, beside the helpers they share, `utils.rs`, and are not shown here.
 
 `api/Cargo.toml`
 
@@ -385,9 +385,94 @@ serde = { version = "1", features = ["derive"] }
 `api/src/lib.rs`
 
 ```rust
+//! The contract of the notes example, which the server implements and its clients call.
+
+mod admin;
+mod api;
+mod auth;
+mod notes;
+
+pub use admin::*;
+pub use api::*;
+pub use auth::*;
+pub use notes::*;
+```
+
+`api/src/api.rs`
+
+```rust
+use quoll::rest::{self, Created, Events, Form};
+
+use crate::{Login, NewNote, Note, NoteEvent, NoteFilter, Stats, TokenResponse};
+
+rest::api! {
+    /// Notes, kept per user.
+    pub api Api = "/api";
+
+    pub scheme Key = header "X-Api-Key";
+
+    pub group Auth {
+        /// Trades a login for a token.
+        POST "/token" => token(login: Form<Login>) -> TokenResponse;
+    }
+
+    #[auth(Bearer)]
+    pub group Notes {
+        GET    "/notes"             => search(query filter: NoteFilter) -> Vec<Note>;
+        GET    "/notes/{id}"        => get(id: i64) -> Note;
+        POST   "/notes"             => create(note: NewNote) -> Created<Note>;
+        PUT    "/notes/{id}"        => update(id: i64, note: NewNote) -> Note;
+        DELETE "/notes/{id}"        => remove(id: i64);
+        GET    "/notes/{id}/events" => events(id: i64) -> Events<NoteEvent>;
+    }
+
+    #[auth(Key)]
+    pub group Admin {
+        GET "/admin/stats" => stats() -> Stats;
+    }
+}
+```
+
+`api/src/auth.rs`
+
+```rust
 use std::fmt;
 
-use quoll::rest::{self, Created, Events, Form};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Login {
+    pub user: String,
+    pub password: String,
+}
+
+/// Never shows the password.
+impl fmt::Debug for Login {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Login")
+            .field("user", &self.user)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TokenResponse {
+    /// Sent as `Authorization: Bearer <token>` to the routes of the notes.
+    pub access_token: String,
+}
+
+/// Never shows the token.
+impl fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenResponse").finish_non_exhaustive()
+    }
+}
+```
+
+`api/src/notes.rs`
+
+```rust
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -427,66 +512,18 @@ pub enum NoteEvent {
         id: i64,
     },
 }
+```
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct Login {
-    pub user: String,
-    pub password: String,
-}
+`api/src/admin.rs`
 
-/// Never shows the password.
-impl fmt::Debug for Login {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Login")
-            .field("user", &self.user)
-            .finish_non_exhaustive()
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct TokenResponse {
-    /// Sent as `Authorization: Bearer <token>` to the routes of the notes.
-    pub access_token: String,
-}
-
-/// Never shows the token.
-impl fmt::Debug for TokenResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TokenResponse").finish_non_exhaustive()
-    }
-}
+```rust
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Stats {
     pub users: u64,
     pub notes: u64,
-}
-
-rest::api! {
-    /// Notes, kept per user.
-    pub api Api = "/api";
-
-    pub scheme Key = header "X-Api-Key";
-
-    pub group Auth {
-        /// Trades a login for a token.
-        POST "/token" => token(login: Form<Login>) -> TokenResponse;
-    }
-
-    #[auth(Bearer)]
-    pub group Notes {
-        GET    "/notes"             => search(query filter: NoteFilter) -> Vec<Note>;
-        GET    "/notes/{id}"        => get(id: i64) -> Note;
-        POST   "/notes"             => create(note: NewNote) -> Created<Note>;
-        PUT    "/notes/{id}"        => update(id: i64, note: NewNote) -> Note;
-        DELETE "/notes/{id}"        => remove(id: i64);
-        GET    "/notes/{id}/events" => events(id: i64) -> Events<NoteEvent>;
-    }
-
-    #[auth(Key)]
-    pub group Admin {
-        GET "/admin/stats" => stats() -> Stats;
-    }
 }
 ```
 
@@ -501,26 +538,31 @@ fn main() {
 `server/src/lib.rs`
 
 ```rust
+//! The server of the notes example, on SQLite.
+
+mod admin;
+mod app;
+mod auth;
+mod notes;
+mod sessions;
+mod store;
+mod utils;
+
+pub use app::{App, router, server};
+pub use auth::{Operator, User};
+pub use sessions::{SESSION_LIFETIME, Sessions};
+pub use store::{PAGE_SIZE, Store, StoreError};
+```
+
+`server/src/app.rs`
+
+```rust
 use std::time::Duration;
 
-use notes_api::*;
-use quoll::rest::{Authenticate, Bearer, Created, Error, Events, Form, Result};
+use notes_api::{Api, ApiServices};
 use quoll::server;
 
-mod store;
-
-pub use store::{PAGE_SIZE, SESSION_LIFETIME, Sessions, Store, StoreError};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct User {
-    pub id: i64,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Operator {
-    pub name: String,
-}
+use crate::{Sessions, Store};
 
 #[derive(Debug, Clone)]
 pub struct App {
@@ -537,6 +579,43 @@ impl App {
     }
 }
 
+pub fn router(app: App) -> axum::Router {
+    Api::router(ApiServices {
+        auth: app.clone(),
+        notes: app.clone(),
+        admin: app,
+    })
+}
+
+/// The layers go in any order: a request gets its id, then its span, then its deadline and its body's limit.
+pub fn server() -> server::Builder {
+    server::builder()
+        .with(server::request_id())
+        .with(server::trace())
+        .with(server::timeout(Duration::from_secs(10)))
+        .with(server::body_limit(1 << 20))
+}
+```
+
+`server/src/auth.rs`
+
+```rust
+use notes_api::{AuthServer, Key, Login, TokenResponse};
+use quoll::rest::{Authenticate, Bearer, Error, Form, Result};
+
+use crate::App;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct User {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Operator {
+    pub name: String,
+}
+
 impl AuthServer for App {
     async fn token(&self, login: Form<Login>) -> Result<TokenResponse> {
         let user = self
@@ -551,6 +630,37 @@ impl AuthServer for App {
         })
     }
 }
+
+impl Authenticate<Bearer> for App {
+    type Caller = User;
+
+    async fn authenticate(&self, token: String) -> Result<User> {
+        self.sessions
+            .user(&token)
+            .ok_or_else(|| Error::unauthorized("unknown or expired token"))
+    }
+}
+
+impl Authenticate<Key> for App {
+    type Caller = Operator;
+
+    async fn authenticate(&self, key: String) -> Result<Operator> {
+        self.store
+            .operator(&key)
+            .await
+            .map_err(Error::internal)?
+            .ok_or_else(|| Error::unauthorized("unknown key"))
+    }
+}
+```
+
+`server/src/notes.rs`
+
+```rust
+use notes_api::{CONTAINS_LIMIT, NewNote, Note, NoteEvent, NoteFilter, NotesServer};
+use quoll::rest::{Created, Error, Events, Result};
+
+use crate::{App, User};
 
 impl NotesServer for App {
     async fn search(&self, user: &User, filter: NoteFilter) -> Result<Vec<Note>> {
@@ -615,50 +725,20 @@ impl NotesServer for App {
         Ok(Events::new(changes))
     }
 }
+```
+
+`server/src/admin.rs`
+
+```rust
+use notes_api::{AdminServer, Stats};
+use quoll::rest::{Error, Result};
+
+use crate::{App, Operator};
 
 impl AdminServer for App {
     async fn stats(&self, _operator: &Operator) -> Result<Stats> {
         self.store.stats().await.map_err(Error::internal)
     }
-}
-
-impl Authenticate<Bearer> for App {
-    type Caller = User;
-
-    async fn authenticate(&self, token: String) -> Result<User> {
-        self.sessions
-            .user(&token)
-            .ok_or_else(|| Error::unauthorized("unknown or expired token"))
-    }
-}
-
-impl Authenticate<Key> for App {
-    type Caller = Operator;
-
-    async fn authenticate(&self, key: String) -> Result<Operator> {
-        self.store
-            .operator(&key)
-            .await
-            .map_err(Error::internal)?
-            .ok_or_else(|| Error::unauthorized("unknown key"))
-    }
-}
-
-pub fn router(app: App) -> axum::Router {
-    Api::router(ApiServices {
-        auth: app.clone(),
-        notes: app.clone(),
-        admin: app,
-    })
-}
-
-/// The layers go in any order: a request gets its id, then its span, then its deadline and its body's limit.
-pub fn server() -> server::Builder {
-    server::builder()
-        .with(server::request_id())
-        .with(server::trace())
-        .with(server::timeout(Duration::from_secs(10)))
-        .with(server::body_limit(1 << 20))
 }
 ```
 
