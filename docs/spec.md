@@ -281,7 +281,7 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 - `rest::Result<T>` is `Result<T, rest::Error>`, one error for the server and the client: its `status()`, the RFC 9457 problem when there is one, the raw body, and `body_as::<T>()` for a third-party API's own error shape.
 - The server answers a handler's error with its status and a problem in JSON: `Error::not_found(detail)`, `Error::bad_request(detail)`, `Error::unauthorized(detail)`, `Error::new(status, detail)`, and `Error::internal(err)` for a 500 that logs `err` without sending it.
 - An error a client received from another API answers 502 when a handler returns it, so that the other API's status is not passed on as ours.
-- On the client, a failure with no response (connection, timeout) is an `Error` without a status.
+- On the client, a failure with no response (connection, timeout) is an `Error` without a status. Its sources show the URL of the call by its origin and its path, never its credentials nor its query, where a query scheme sends its key.
 - Every route has this one error, and its TypeScript the problem shape. Typed errors per route, `Result<Note, NotFound>` with `#[derive(rest::Problem)] #[problem(status = 404)]`, come later: adding them breaks no contract.
 
 ## OpenAPI and TypeScript
