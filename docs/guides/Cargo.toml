@@ -1,0 +1,27 @@
+[package]
+name = "quoll-guides"
+description = "The user guides of quoll, whose Rust blocks are compiled and run as doctests"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[dev-dependencies]
+anyhow = "1"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+futures = "0.3"
+notes-api = { path = "../../examples/notes/api" }
+http = "1"
+quoll = { path = "../../quoll", features = ["server", "client"] }
+reqwest = { version = "0.13", default-features = false }
+reqwest-middleware = "0.5"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tracing-subscriber = "0.3"
+
+[lints]
+workspace = true

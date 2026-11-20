@@ -30,6 +30,7 @@ cargo doc --workspace --no-deps --all-features                     # the docs, w
 cargo expand -p <crate> --test <test>                              # what the macro writes (cargo install cargo-expand)
 TRYBUILD=overwrite cargo test -p quoll --test compile_fail         # to accept a new or changed error message
 SNAPSHOT=overwrite cargo test -p notes-api --test openapi          # to accept a changed OpenAPI document of the example
+cargo test -p quoll-guides                                         # the Rust blocks of the guides and the README
 ```
 
 ## Layout
@@ -42,7 +43,10 @@ Planned, from the spec:
   It is built and tested with the workspace.
 - `examples/docker/`: a contract of the Docker Engine API, which it only calls, and a command line on it, built and
   tested with the workspace; its test against a real daemon is skipped where none answers, but in CI.
-- `docs/`: `spec.md` and the coding rules. Guides for users come with the code they describe.
+- `docs/`: `spec.md`, the coding rules, and the user guides, indexed by `docs/README.md`. `docs/guides/` is the crate
+  `quoll-guides` too, whose doctests compile and run the Rust blocks of each guide and of the README: a block that
+  needs a network is `rust,no_run`, one of tests `rust,test_harness`, one that shows a mistake `rust,compile_fail`.
+  A guide says how to use quoll and links to the rustdoc for each item's detail; the why stays in the spec.
 
 What the macro generates is never written to disk: `cargo expand` shows it. The TypeScript that orval writes is
 generated in the example, and gitignored.
@@ -55,9 +59,10 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
 - CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`: `cargo fmt --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` and
   `cargo doc --workspace --no-deps`, the last three once per feature combination of `quoll`: none, `server`, `client`
-  and both. Those leave the examples out, `--exclude 'notes-*' --exclude 'docker-*'`: their crates turn `quoll`'s
-  features on, and cargo would unify them into the whole build, so a local `cargo test --workspace` builds `quoll`
-  with both. The examples have their own run of the three, `--package 'notes-*' --package 'docker-*'`, whose tests
+  and both. Those leave the examples and the guides out, `--exclude 'notes-*' --exclude 'docker-*' --exclude
+  quoll-guides`: their crates turn `quoll`'s features on, and cargo would unify them into the whole build, so a local
+  `cargo test --workspace` builds `quoll` with both. The examples and the guides have their own run of the three,
+  `--package 'notes-*' --package 'docker-*' --package quoll-guides`, whose tests
   set `DOCKER_CLI_TEST_DAEMON=required`, so that the Docker example's test fails when the runner's daemon does not
   answer. Warnings are errors, in rustc and in rustdoc.
 - The `ci` job gathers all of them and is the one check `main` requires: a new job goes in its `needs`. The branch must

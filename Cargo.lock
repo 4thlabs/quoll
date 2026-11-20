@@ -1610,6 +1610,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "quoll-guides"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures",
+ "http",
+ "notes-api",
+ "quoll",
+ "reqwest",
+ "reqwest-middleware",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "quoll-macros"
 version = "0.1.0"
 dependencies = [
