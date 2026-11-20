@@ -38,11 +38,13 @@ const MAX_AGE: Duration = Duration::from_secs(60 * 60);
 /// - A browser keeps the answer of a preflight for an hour.
 ///
 /// ```
-/// use quoll::rest;
+/// use quoll::server;
 ///
 /// # fn api_router() -> axum::Router { axum::Router::new() }
-/// # fn main() -> Result<(), rest::server::InvalidOrigin> {
-/// let router = api_router().layer(rest::server::cors(["https://app.example.com"])?);
+/// # fn main() -> Result<(), server::InvalidOrigin> {
+/// let router = server::builder()
+///     .with(server::cors(["https://app.example.com"])?)
+///     .into_router(api_router());
 /// # Ok(())
 /// # }
 /// ```

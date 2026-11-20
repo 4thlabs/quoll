@@ -26,7 +26,7 @@ impl Notes for Fake {
 
 fn main() -> Result<()> {
     let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::bearer("a-token"))
+        .with(quoll::client::bearer("a-token"))
         .build();
     let _api: ApiClient = Api::client_with(http, "http://localhost:8080")?;
     let _fake = Fake;

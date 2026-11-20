@@ -2,8 +2,7 @@
 
 use notes_api::{Api, ApiClient, NewNote, Notes};
 use notes_server::{Sessions, User};
-use quoll::rest;
-use reqwest_middleware::ClientBuilder;
+use quoll::{client, rest};
 
 #[tokio::test]
 async fn a_created_note_reads_back() -> anyhow::Result<()> {
@@ -12,11 +11,10 @@ async fn a_created_note_reads_back() -> anyhow::Result<()> {
         id: 1,
         name: "ana".into(),
     });
-    let url = rest::test::spawn(notes_server::router(app)).await;
-    let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::bearer(token))
-        .build();
-    let api = Api::client_with(http, &url)?;
+    let url = quoll::test::spawn(served(app)).await;
+    let api = client::builder()
+        .with(client::bearer(token))
+        .build::<Api>(&url)?;
 
     let created = api
         .notes()
@@ -33,13 +31,18 @@ async fn a_created_note_reads_back() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
-    let url = rest::test::spawn(notes_server::router(notes_server::App::in_memory())).await;
+    let url = quoll::test::spawn(served(notes_server::App::in_memory())).await;
     let api = Api::client(&url)?;
 
     let error = api.notes().get(1).await.unwrap_err();
 
     assert_eq!(error.status(), Some(reqwest::StatusCode::UNAUTHORIZED));
     Ok(())
+}
+
+/// The router of `app` with the layers of its server, as `main` serves it.
+fn served(app: notes_server::App) -> axum::Router {
+    notes_server::server().into_router(notes_server::router(app))
 }
 
 /// The server, in memory, on a free port: its URL and its sessions, where a test opens the ones it calls with.
@@ -53,7 +56,7 @@ impl Served {
     async fn start() -> Self {
         let app = notes_server::App::in_memory();
         let sessions = app.sessions.clone();
-        let url = rest::test::spawn(notes_server::router(app)).await;
+        let url = quoll::test::spawn(served(app)).await;
 
         Self { url, sessions }
     }
@@ -65,11 +68,9 @@ impl Served {
 
     /// A client sending `token`.
     fn client_with(&self, token: String) -> rest::Result<ApiClient> {
-        let http = ClientBuilder::new(reqwest::Client::new())
-            .with(rest::client::bearer(token))
-            .build();
-
-        Api::client_with(http, &self.url)
+        client::builder()
+            .with(client::bearer(token))
+            .build::<Api>(&self.url)
     }
 }
 

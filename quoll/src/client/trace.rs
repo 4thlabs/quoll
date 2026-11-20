@@ -12,6 +12,7 @@ use reqwest_tracing::{
 };
 use tracing::Span;
 
+use super::{Helper, Rank};
 use crate::__private::client::redacted;
 use crate::rest::Route;
 
@@ -25,13 +26,14 @@ use crate::rest::Route;
 /// alone. Added first, it is one span around the whole call, its attempts and its redirects.
 ///
 /// ```no_run
-/// # use quoll::rest;
-/// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-///     .with(rest::client::trace())
-///     .build();
+/// # use quoll::{client, rest};
+/// let http = client::builder()
+///     .with(client::trace())
+///     .build_http()?;
+/// # Ok::<(), quoll::rest::Error>(())
 /// ```
 pub fn trace() -> impl Middleware {
-    TracingMiddleware::<Operation>::new()
+    Helper::new(Rank::Trace, TracingMiddleware::<Operation>::new())
 }
 
 /// The span of a call, named by its operation.

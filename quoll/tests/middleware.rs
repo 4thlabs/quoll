@@ -12,9 +12,8 @@ use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use http::Extensions;
-use quoll::rest::{
-    self, Authenticate, Bearer, Error, Events, Result, Route, Text, client::TokenSource,
-};
+use quoll::client::TokenSource;
+use quoll::rest::{self, Authenticate, Bearer, Error, Events, Result, Route, Text};
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware, Next};
 use schemars::JsonSchema;
@@ -181,7 +180,7 @@ impl KeyedServer for App {
 
 /// The api served on a port, with `app` as its service: its URL.
 async fn serve(app: &App) -> String {
-    rest::test::spawn(Api::router(ApiServices {
+    quoll::test::spawn(Api::router(ApiServices {
         calls: app.clone(),
         secure: app.clone(),
         keyed: app.clone(),
@@ -252,7 +251,7 @@ async fn on_request_changes_the_requests_of_a_contract_only() -> Result<()> {
     let sign = {
         let routes = Arc::clone(&routes);
 
-        rest::client::on_request(move |request: &mut reqwest::Request, route: &Route| {
+        quoll::client::on_request(move |request: &mut reqwest::Request, route: &Route| {
             let signature = format!("{} {}", route.operation_id(), request.url().path());
 
             routes
@@ -298,7 +297,7 @@ async fn on_request_changes_the_requests_of_a_contract_only() -> Result<()> {
 async fn user_agent_is_sent_unless_the_request_has_one() -> Result<()> {
     let url = serve(&App::default()).await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::user_agent("notes-cli/0.1"))
+        .with(quoll::client::user_agent("notes-cli/0.1"))
         .build();
     let api = client(http, &url);
 
@@ -311,7 +310,7 @@ async fn user_agent_is_sent_unless_the_request_has_one() -> Result<()> {
     assert_eq!(own.agent.as_deref(), Some("mine/1"));
 
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::user_agent("notes\ncli"))
+        .with(quoll::client::user_agent("notes\ncli"))
         .build();
     let error = client(http, &url)
         .calls()
@@ -332,8 +331,8 @@ async fn request_id_is_new_on_each_call_and_kept_on_its_attempts() -> Result<()>
     let url = serve(&app).await;
     let attempts: Arc<Mutex<Vec<Option<String>>>> = Arc::default();
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::request_id())
-        .with(rest::client::retry(2))
+        .with(quoll::client::request_id())
+        .with(quoll::client::retry(2))
         .with(ids(Arc::clone(&attempts)))
         .build();
     let api = client(http, &url);
@@ -378,7 +377,7 @@ async fn flaky(failures: usize, times: u32) -> (ApiClient, App) {
     };
     let url = serve(&app).await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::retry(times))
+        .with(quoll::client::retry(times))
         .build();
 
     (client(http, &url), app)
@@ -468,7 +467,7 @@ async fn retry_tries_again_a_call_that_got_no_response() {
         });
     }
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::retry(2))
+        .with(quoll::client::retry(2))
         .build();
 
     let error = client(http, &url)
@@ -485,7 +484,7 @@ async fn retry_tries_again_a_call_that_got_no_response() {
 async fn timeout_ends_a_call_that_takes_longer() {
     let url = serve(&App::default()).await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::timeout(Duration::from_millis(200)))
+        .with(quoll::client::timeout(Duration::from_millis(200)))
         .build();
 
     let error = client(http, &url)
@@ -503,7 +502,7 @@ async fn timeout_leaves_a_stream_that_outlives_it() -> Result<()> {
     let app = App::default();
     let url = serve(&app).await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::timeout(Duration::from_millis(200)))
+        .with(quoll::client::timeout(Duration::from_millis(200)))
         .build();
     let api = client(http, &url);
 
@@ -553,8 +552,8 @@ async fn silent() -> (String, Arc<AtomicUsize>) {
 async fn timeout_bounds_the_wait_for_a_streams_head_which_retry_tries_again() {
     let (url, accepted) = silent().await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::retry(2))
-        .with(rest::client::timeout(Duration::from_millis(100)))
+        .with(quoll::client::retry(2))
+        .with(quoll::client::timeout(Duration::from_millis(100)))
         .build();
 
     // A guard that fails the test rather than hang it, were the head never bounded.
@@ -575,7 +574,7 @@ async fn trace_opens_a_span_named_by_the_operation() -> Result<()> {
     let (log, _capture) = support::log::capture(true);
     let url = serve(&App::default()).await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::trace())
+        .with(quoll::client::trace())
         .build();
 
     client(http.clone(), &url)
@@ -629,13 +628,13 @@ async fn trace_shows_no_query_of_a_call_that_got_no_answer() {
     let url = dead_url().await;
 
     for retried in [false, true] {
-        let http = ClientBuilder::new(reqwest::Client::new()).with(rest::client::trace());
+        let http = ClientBuilder::new(reqwest::Client::new()).with(quoll::client::trace());
         let http = if retried {
-            http.with(rest::client::retry(1))
+            http.with(quoll::client::retry(1))
         } else {
             http
         };
-        let http = http.with(rest::client::key::<Token>("secret-key")).build();
+        let http = http.with(quoll::client::key::<Token>("secret-key")).build();
 
         let error = client(http, &url)
             .keyed()
@@ -712,7 +711,7 @@ impl TokenSource for Source {
 async fn from_source(app: &App, source: &Source) -> ApiClient {
     let url = serve(app).await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::bearer_from(source.clone()))
+        .with(quoll::client::bearer_from(source.clone()))
         .build();
 
     client(http, &url)
@@ -802,7 +801,7 @@ async fn bearer_from_fails_a_token_that_is_not_a_b64token_without_showing_it() {
     let app = App::default();
     let url = serve(&app).await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::bearer_from(Broken))
+        .with(quoll::client::bearer_from(Broken))
         .build();
 
     let error = client(http, &url)

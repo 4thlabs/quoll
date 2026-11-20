@@ -1,5 +1,5 @@
 //! What the generated code calls for the schemes a contract declares: how each one reads its credential, and where it
-//! travels, which the client's `rest::client::key` reads.
+//! travels, which the client's `client::key` reads.
 
 use http::request::Parts;
 use http::uri::Authority;
@@ -22,9 +22,9 @@ pub enum Place {
 
 /// A scheme the contract declares, which the macro implements: where its credential travels.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a scheme the contract declares, whose credential `rest::client::key` sends",
+    message = "`{Self}` is not a scheme the contract declares, whose credential `client::key` sends",
     label = "not a declared scheme",
-    note = "`rest::client::bearer` sends a `Bearer` token and `rest::client::basic` a `Basic` user and password; a scheme of the application's own sends its credential through a middleware of its own"
+    note = "`client::bearer` sends a `Bearer` token and `client::basic` a `Basic` user and password; a scheme of the application's own sends its credential through a middleware of its own"
 )]
 pub trait Declared: Scheme {
     /// Where its credential travels.

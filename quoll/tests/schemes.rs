@@ -323,7 +323,7 @@ async fn serve() -> Served {
     let app = App::default();
     let router = Api::router(ApiServices { admin: app.clone() })
         .merge(other::Api::router(other::ApiServices { other: OtherApp }));
-    let url = rest::test::spawn(router).await;
+    let url = quoll::test::spawn(router).await;
 
     Served { url, app }
 }
@@ -365,7 +365,7 @@ async fn refused(response: reqwest::Response, status: StatusCode, case: &str) ->
 async fn basic_reads_a_user_and_a_password() -> Result<()> {
     let served = serve().await;
 
-    let api = client(&served.url, rest::client::basic("ana", "secret"))?;
+    let api = client(&served.url, quoll::client::basic("ana", "secret"))?;
     assert_eq!(api.admin().basic().await?, "ana");
 
     let http = reqwest::Client::new();
@@ -396,7 +396,7 @@ async fn basic_reads_a_user_and_a_password() -> Result<()> {
 async fn a_header_scheme_reads_its_header() -> Result<()> {
     let served = serve().await;
 
-    let api = client(&served.url, rest::client::key::<Key>("k-ana"))?;
+    let api = client(&served.url, quoll::client::key::<Key>("k-ana"))?;
     assert_eq!(api.admin().key().await?, "ana");
 
     let response = reqwest::get(served.at("/key"))
@@ -405,7 +405,7 @@ async fn a_header_scheme_reads_its_header() -> Result<()> {
     assert_eq!(challenges(&response), ["Key"]);
     refused(response, StatusCode::UNAUTHORIZED, "no key").await;
 
-    let wrong = client(&served.url, rest::client::key::<Key>("k-nobody"))?;
+    let wrong = client(&served.url, quoll::client::key::<Key>("k-nobody"))?;
     let error = wrong.admin().key().await.expect_err("an unknown key");
     assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
 
@@ -431,7 +431,7 @@ async fn a_cookie_scheme_reads_its_cookie_beside_the_others() -> Result<()> {
     let seen = Seen::default();
     let http = ClientBuilder::new(reqwest::Client::new())
         .with(theme())
-        .with(rest::client::key::<Session>("s-ana"))
+        .with(quoll::client::key::<Session>("s-ana"))
         .with(recorder(Arc::clone(&seen)))
         .build();
     let api = Api::client_with(http, &served.url)?;
@@ -542,7 +542,7 @@ async fn a_query_scheme_reads_its_key_beside_the_routes_own() -> Result<()> {
     let served = serve().await;
     let seen = Seen::default();
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::key::<Token>("t-ana"))
+        .with(quoll::client::key::<Token>("t-ana"))
         .with(recorder(Arc::clone(&seen)))
         .build();
     let api = Api::client_with(http, &served.url)?;
@@ -584,11 +584,11 @@ async fn a_query_scheme_reads_its_key_beside_the_routes_own() -> Result<()> {
 async fn an_openid_scheme_reads_a_bearer_token_that_bearer_does_not_send() -> Result<()> {
     let served = serve().await;
 
-    let api = client(&served.url, rest::client::key::<Login>("l-ana"))?;
+    let api = client(&served.url, quoll::client::key::<Login>("l-ana"))?;
     assert_eq!(api.admin().login().await?, "ana");
 
     // `bearer` sends its token to the routes that take `Bearer`, which this one does not.
-    let bearer = client(&served.url, rest::client::bearer("l-ana"))?;
+    let bearer = client(&served.url, quoll::client::bearer("l-ana"))?;
     let error = bearer.admin().login().await.expect_err("no token sent");
     assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
 
@@ -707,14 +707,14 @@ async fn an_optional_route_takes_no_credential_but_refuses_a_wrong_one() -> Resu
         "anonymous"
     );
     assert_eq!(
-        client(&served.url, rest::client::bearer("b-ana"))?
+        client(&served.url, quoll::client::bearer("b-ana"))?
             .admin()
             .maybe()
             .await?,
         "ana"
     );
     assert_eq!(
-        client(&served.url, rest::client::key::<Key>("k-admin"))?
+        client(&served.url, quoll::client::key::<Key>("k-admin"))?
             .admin()
             .maybe()
             .await?,
@@ -725,7 +725,7 @@ async fn an_optional_route_takes_no_credential_but_refuses_a_wrong_one() -> Resu
         ("b-nobody", StatusCode::UNAUTHORIZED),
         ("b-down", StatusCode::INTERNAL_SERVER_ERROR),
     ] {
-        let error = client(&served.url, rest::client::bearer(token))?
+        let error = client(&served.url, quoll::client::bearer(token))?
             .admin()
             .maybe()
             .await
@@ -742,7 +742,7 @@ async fn an_optional_route_takes_no_credential_but_refuses_a_wrong_one() -> Resu
 async fn a_caller_needs_every_scope_of_its_route() -> Result<()> {
     let served = serve().await;
 
-    client(&served.url, rest::client::bearer("b-admin"))?
+    client(&served.url, quoll::client::bearer("b-admin"))?
         .admin()
         .remove()
         .await?;
@@ -776,7 +776,7 @@ async fn a_caller_needs_every_scope_of_its_route() -> Result<()> {
 async fn a_middleware_tells_two_schemes_of_one_name_apart() -> Result<()> {
     let served = serve().await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::key::<Key>("k-ana"))
+        .with(quoll::client::key::<Key>("k-ana"))
         .build();
     let api = Api::client_with(http.clone(), &served.url)?;
     let other = other::Api::client_with(http, &served.url)?;
@@ -791,8 +791,8 @@ async fn a_middleware_tells_two_schemes_of_one_name_apart() -> Result<()> {
     assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
 
     let both = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::key::<Key>("k-ana"))
-        .with(rest::client::key::<other::Key>("o-1"))
+        .with(quoll::client::key::<Key>("k-ana"))
+        .with(quoll::client::key::<other::Key>("o-1"))
         .build();
     assert_eq!(
         other::Api::client_with(both, &served.url)?
@@ -830,16 +830,16 @@ async fn a_route_names_its_schemes_and_tells_their_types() -> Result<()> {
 async fn a_credential_the_server_would_not_read_fails_the_call_without_showing_it() -> Result<()> {
     let served = serve().await;
     let unsendable: [(&str, ClientWithMiddleware); 7] = [
-        ("basic user", with(rest::client::basic("secret:user", "x"))),
+        ("basic user", with(quoll::client::basic("secret:user", "x"))),
         (
             "basic password",
-            with(rest::client::basic("ana", "secret\n")),
+            with(quoll::client::basic("ana", "secret\n")),
         ),
-        ("header", with(rest::client::key::<Key>("secret\nkey"))),
-        ("header blank", with(rest::client::key::<Key>(" secret"))),
-        ("cookie", with(rest::client::key::<Session>("secret;key"))),
-        ("query", with(rest::client::key::<Token>(""))),
-        ("openid", with(rest::client::key::<Login>("secret token"))),
+        ("header", with(quoll::client::key::<Key>("secret\nkey"))),
+        ("header blank", with(quoll::client::key::<Key>(" secret"))),
+        ("cookie", with(quoll::client::key::<Session>("secret;key"))),
+        ("query", with(quoll::client::key::<Token>(""))),
+        ("openid", with(quoll::client::key::<Login>("secret token"))),
     ];
 
     for (case, http) in unsendable {
@@ -949,7 +949,7 @@ async fn redirecting() -> (String, Arc<Mutex<Vec<bool>>>) {
             }
         })
     };
-    let elsewhere = rest::test::spawn(elsewhere).await;
+    let elsewhere = quoll::test::spawn(elsewhere).await;
 
     let to = format!("{elsewhere}/api/key");
     let api = axum::Router::new().route(
@@ -959,16 +959,16 @@ async fn redirecting() -> (String, Arc<Mutex<Vec<bool>>>) {
         ),
     );
 
-    (rest::test::spawn(api).await, seen)
+    (quoll::test::spawn(api).await, seen)
 }
 
-/// What the docs of `rest::client::key` say of redirects: reqwest's own policy keeps the key of a header scheme on a
-/// redirect to another host, which `rest::client::redirects` does not (tests/redirects.rs).
+/// What the docs of `quoll::client::key` say of redirects: reqwest's own policy keeps the key of a header scheme on a
+/// redirect to another host, which `quoll::client::redirects` does not (tests/redirects.rs).
 #[tokio::test]
 async fn a_key_in_a_header_follows_reqwests_own_redirect_to_another_origin() -> Result<()> {
     let (url, seen) = redirecting().await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::key::<Key>("k-ana"))
+        .with(quoll::client::key::<Key>("k-ana"))
         .build();
     let api = Api::client_with(http, &url)?;
 

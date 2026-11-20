@@ -137,7 +137,7 @@ impl FeedsServer for App {
 /// The api served on a port, its URL, its client, and what says when a held stream is dropped.
 async fn served() -> (String, ApiClient, mpsc::UnboundedReceiver<&'static str>) {
     let (dropped, signals) = mpsc::unbounded_channel();
-    let url = rest::test::spawn(Api::router(ApiServices {
+    let url = quoll::test::spawn(Api::router(ApiServices {
         feeds: App { dropped },
     }))
     .await;
@@ -480,7 +480,7 @@ fn third_party(accepts: Arc<Mutex<Vec<String>>>) -> axum::Router {
 /// A client of another API, and the `Accept` of each request it got.
 async fn third_party_client() -> (ApiClient, Arc<Mutex<Vec<String>>>) {
     let accepts = Arc::default();
-    let url = rest::test::spawn(third_party(Arc::clone(&accepts))).await;
+    let url = quoll::test::spawn(third_party(Arc::clone(&accepts))).await;
     let api = Api::client(&url).expect("the url is the api's");
 
     (api, accepts)
@@ -683,7 +683,7 @@ fn endless(dropped: mpsc::UnboundedSender<&'static str>) -> axum::Router {
 /// A client of an endless API, and what says when it drops a body.
 async fn endless_client() -> (ApiClient, mpsc::UnboundedReceiver<&'static str>) {
     let (dropped, signals) = mpsc::unbounded_channel();
-    let url = rest::test::spawn(endless(dropped)).await;
+    let url = quoll::test::spawn(endless(dropped)).await;
     let api = Api::client(&url).expect("the url is the api's");
 
     (api, signals)

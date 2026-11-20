@@ -1,4 +1,4 @@
-//! `rest::client::redirects`: redirects followed one hop at a time, through the middleware after it, between servers
+//! `quoll::client::redirects`: redirects followed one hop at a time, through the middleware after it, between servers
 //! on free ports, so that a credential reaches the api's own origin only.
 
 #![cfg(all(feature = "server", feature = "client"))]
@@ -121,7 +121,7 @@ async fn served(hops: usize) -> (ApiClient, Log) {
         move |request: Request| keep(Arc::clone(&log), request)
     };
 
-    let elsewhere = rest::test::spawn(Router::new().fallback(keeping(&log))).await;
+    let elsewhere = quoll::test::spawn(Router::new().fallback(keeping(&log))).await;
 
     let api = Router::new()
         .route(
@@ -172,9 +172,9 @@ async fn served(hops: usize) -> (ApiClient, Log) {
             }),
         )
         .fallback(keeping(&log));
-    let url = rest::test::spawn(api).await;
+    let url = quoll::test::spawn(api).await;
 
-    let sign = rest::client::on_request(|request: &mut reqwest::Request, _: &Route| {
+    let sign = quoll::client::on_request(|request: &mut reqwest::Request, _: &Route| {
         request.headers_mut().insert(
             "x-signature",
             "signed".try_into().expect("a header's value"),
@@ -184,7 +184,7 @@ async fn served(hops: usize) -> (ApiClient, Log) {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("a client");
-    let before = rest::client::on_request(|request: &mut reqwest::Request, _: &Route| {
+    let before = quoll::client::on_request(|request: &mut reqwest::Request, _: &Route| {
         let mut secret = HeaderValue::from_static("s-1");
 
         secret.set_sensitive(true);
@@ -195,15 +195,15 @@ async fn served(hops: usize) -> (ApiClient, Log) {
             .insert("x-plain", HeaderValue::from_static("p-1"));
     });
     let http = ClientBuilder::new(http)
-        .with(rest::client::trace())
-        .with(rest::client::user_agent("notes-cli/0.1"))
-        .with(rest::client::request_id())
-        .with(rest::client::retry(1))
-        .with(rest::client::timeout(Duration::from_secs(10)))
+        .with(quoll::client::trace())
+        .with(quoll::client::user_agent("notes-cli/0.1"))
+        .with(quoll::client::request_id())
+        .with(quoll::client::retry(1))
+        .with(quoll::client::timeout(Duration::from_secs(10)))
         .with(before)
-        .with(rest::client::redirects(hops))
-        .with(rest::client::bearer("t-1"))
-        .with(rest::client::key::<Key>("k-1"))
+        .with(quoll::client::redirects(hops))
+        .with(quoll::client::bearer("t-1"))
+        .with(quoll::client::key::<Key>("k-1"))
         .with(sign)
         .build();
 
@@ -315,14 +315,14 @@ async fn the_deadline_of_a_streams_head_starts_again_on_each_hop() -> Result<()>
                 ([(CONTENT_TYPE, "text/event-stream")], "data: 1\n\n").into_response()
             }),
         );
-    let url = rest::test::spawn(api).await;
+    let url = quoll::test::spawn(api).await;
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("a client");
     let http = ClientBuilder::new(http)
-        .with(rest::client::timeout(DEADLINE))
-        .with(rest::client::redirects(5))
+        .with(quoll::client::timeout(DEADLINE))
+        .with(quoll::client::redirects(5))
         .build();
     let api = Api::client_with(http, &url)?;
 

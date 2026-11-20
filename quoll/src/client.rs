@@ -1,18 +1,46 @@
-//! Middleware for the client a contract becomes: reqwest-middleware's, which a `ClientWithMiddleware` given to
-//! `Api::client_with` runs on each request, in the order they are added: the first sees the request first, and the
-//! answer last.
+//! The client a contract becomes: a [`Builder`] of the client of a contract, and the usual middleware of
+//! reqwest-middleware, which a client runs on each request, in the order they are added: the first sees the request
+//! first, and the answer last.
+//!
+//! The builder puts the helpers of quoll in the order they work in, whatever the order they are given in, and any
+//! other middleware where it is given:
+//!
+//! ```no_run
+//! # use std::time::Duration;
+//! use quoll::client;
+//! # quoll::rest::api! {
+//! #     pub api Api = "/api";
+//! #     #[auth(Bearer)]
+//! #     pub group Notes { GET "/notes/{id}" => get(id: i64) -> String; }
+//! # }
+//!
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+//! let api = client::builder()
+//!     .with(client::bearer("mF_9.B5f-4.1JqM"))
+//!     .with(client::redirects(5))
+//!     .with(client::retry(3))
+//!     .with(client::request_id())
+//!     .with(client::timeout(Duration::from_secs(10)))
+//!     .with(client::user_agent("notes-cli/0.1"))
+//!     .with(client::trace())
+//!     .build::<Api>("http://localhost:8080")?;
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! The helpers of authentication, [`bearer`], [`bearer_from`], [`basic`] and [`key`], and the closure of
 //! [`on_request`], act on the requests of a contract to its api's own origin only: a request that carries no
 //! [`Route`], as one sent to another host through the same `ClientWithMiddleware`, and a hop of [`redirects`] to
 //! another origin, go as they are. [`redirects`] comes before all of them, so that they run on each hop.
 //!
-//! An order that works, from the first to the last:
+//! Each helper is a middleware for `reqwest_middleware::ClientBuilder` too, whose `ClientWithMiddleware`
+//! `Api::client_with` takes. There, they run in the order they are added, which is to be the one the builder puts
+//! them in, from the first to the last:
 //!
 //! ```no_run
 //! # use std::time::Duration;
-//! # use quoll::rest;
-//! # rest::api! {
+//! # use quoll::client;
+//! # quoll::rest::api! {
 //! #     pub api Api = "/api";
 //! #     #[auth(Bearer)]
 //! #     pub group Notes { GET "/notes/{id}" => get(id: i64) -> String; }
@@ -22,13 +50,13 @@
 //!     .redirect(reqwest::redirect::Policy::none())
 //!     .build()?;
 //! let http = reqwest_middleware::ClientBuilder::new(http)
-//!     .with(rest::client::trace()) // one span around the whole call
-//!     .with(rest::client::user_agent("notes-cli/0.1"))
-//!     .with(rest::client::request_id()) // before `retry`: one id for every attempt
-//!     .with(rest::client::retry(3))
-//!     .with(rest::client::timeout(Duration::from_secs(10))) // per attempt and per hop
-//!     .with(rest::client::redirects(5)) // before every credential: each hop is given it, or not
-//!     .with(rest::client::bearer("mF_9.B5f-4.1JqM"))
+//!     .with(client::trace()) // one span around the whole call
+//!     .with(client::user_agent("notes-cli/0.1"))
+//!     .with(client::request_id()) // before `retry`: one id for every attempt
+//!     .with(client::retry(3))
+//!     .with(client::timeout(Duration::from_secs(10))) // per attempt and per hop
+//!     .with(client::redirects(5)) // before every credential: each hop is given it, or not
+//!     .with(client::bearer("mF_9.B5f-4.1JqM"))
 //!     .build();
 //! let api = Api::client_with(http, "http://localhost:8080")?;
 //! # Ok(())
@@ -52,12 +80,14 @@ use crate::__private::client::ApiOrigin;
 use crate::rest::auth::is_b64token;
 use crate::rest::{Basic, Bearer, Route, Scheme};
 
+mod builder;
 mod redirects;
 mod request;
 mod retry;
 mod token;
 mod trace;
 
+pub use builder::{Builder, Contract, builder};
 pub use redirects::redirects;
 pub use request::{on_request, request_id, timeout, user_agent};
 pub use retry::retry;
@@ -75,17 +105,16 @@ pub use trace::trace;
 /// than a 401 that would look like an expired token.
 ///
 /// ```no_run
-/// # use quoll::rest;
+/// # use quoll::{client, rest};
 /// # rest::api! {
 /// #     pub api Api = "/api";
 /// #     #[auth(Bearer)]
 /// #     pub group Notes { GET "/notes/{id}" => get(id: i64) -> String; }
 /// # }
 /// # async fn run() -> rest::Result<()> {
-/// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-///     .with(rest::client::bearer("mF_9.B5f-4.1JqM"))
-///     .build();
-/// let api = Api::client_with(http, "http://localhost:8080")?;
+/// let api = client::builder()
+///     .with(client::bearer("mF_9.B5f-4.1JqM"))
+///     .build::<Api>("http://localhost:8080")?;
 ///
 /// let note = api.notes().get(1).await?;
 /// # Ok(())
@@ -107,17 +136,16 @@ pub fn bearer(token: impl Into<String>) -> impl Middleware {
 /// server would not read, fails each call that would send them, with an error that shows neither.
 ///
 /// ```no_run
-/// # use quoll::rest;
+/// # use quoll::{client, rest};
 /// # rest::api! {
 /// #     pub api Api = "/api";
 /// #     #[auth(Basic)]
 /// #     pub group Admin { GET "/admin/stats" => stats() -> String; }
 /// # }
 /// # async fn run() -> rest::Result<()> {
-/// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-///     .with(rest::client::basic("ana", "secret"))
-///     .build();
-/// let api = Api::client_with(http, "http://localhost:8080")?;
+/// let api = client::builder()
+///     .with(client::basic("ana", "secret"))
+///     .build::<Api>("http://localhost:8080")?;
 ///
 /// let stats = api.admin().stats().await?;
 /// # Ok(())
@@ -165,7 +193,7 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
 /// through the middleware after it, and `key` sends the key to the api's own origin only.
 ///
 /// ```no_run
-/// # use quoll::rest;
+/// # use quoll::{client, rest};
 /// rest::api! {
 ///     pub api Api = "/api";
 ///
@@ -179,14 +207,10 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
 /// }
 ///
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let http = reqwest::Client::builder()
-///     .redirect(reqwest::redirect::Policy::none())
-///     .build()?;
-/// let http = reqwest_middleware::ClientBuilder::new(http)
-///     .with(rest::client::redirects(5))
-///     .with(rest::client::key::<Key>("k-1"))
-///     .build();
-/// let api = Api::client_with(http, "http://localhost:8080")?;
+/// let api = client::builder()
+///     .with(client::redirects(5))
+///     .with(client::key::<Key>("k-1"))
+///     .build::<Api>("http://localhost:8080")?;
 ///
 /// let stats = api.admin().stats().await?;
 /// # Ok(())
@@ -345,7 +369,7 @@ fn authorization(header: Option<HeaderValue>, unsendable: &'static str) -> Box<A
 /// as they are: a route with `#[auth(none)]`, a request that did not come from the client of a contract and carries
 /// no `Route`, or a hop of [`redirects`] to another origin, never gets the credential.
 fn send<S: Scheme>(add: Box<Add>) -> impl Middleware {
-    middleware(move |mut request, extensions, next| {
+    helper(Rank::Credential, move |mut request, extensions, next| {
         if !own_route(&request, extensions).is_some_and(Route::takes::<S>) {
             return next.run(request, extensions);
         }
@@ -376,12 +400,68 @@ type Add = dyn Fn(&mut Request) -> Result<(), Failure> + Send + Sync;
 /// What a middleware's call returns: the answer of the rest of the chain.
 type Handled<'a> = Pin<Box<dyn Future<Output = reqwest_middleware::Result<Response>> + Send + 'a>>;
 
-/// Gives a closure the signature reqwest-middleware takes, for every lifetime of its request.
-fn middleware<F>(handle: F) -> F
+/// A helper of quoll's, ranked: a closure given the signature reqwest-middleware takes, for every lifetime of its
+/// request.
+fn helper<F>(rank: Rank, handle: F) -> Helper
 where
     F: for<'a> Fn(Request, &'a mut Extensions, Next<'a>) -> Handled<'a> + Send + Sync + 'static,
 {
-    handle
+    Helper::new(rank, handle)
+}
+
+/// Where a helper of quoll's goes among the others a [`Builder`] is given, from the first, which sees the request
+/// first, to the last: the order the helpers work in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Rank {
+    /// [`trace`]: one span around the whole call.
+    Trace,
+    /// [`user_agent`].
+    UserAgent,
+    /// [`request_id`]: before `retry`, one id for every attempt of a call.
+    RequestId,
+    /// [`retry`].
+    Retry,
+    /// [`timeout`]: a deadline per attempt and per hop.
+    Timeout,
+    /// [`redirects`]: before every credential, so that each hop is given it, or not.
+    Redirects,
+    /// [`bearer`], [`bearer_from`], [`basic`], [`key`] and [`on_request`], in the order they are given.
+    Credential,
+}
+
+/// What each helper of quoll's returns, behind an `impl Middleware`: its middleware, and its rank, by which a
+/// [`Builder`] tells it from a middleware of the application's.
+pub(crate) struct Helper {
+    pub(crate) rank: Rank,
+    inner: Box<dyn Middleware>,
+}
+
+impl Helper {
+    fn new(rank: Rank, inner: impl Middleware) -> Self {
+        Self {
+            rank,
+            inner: Box::new(inner),
+        }
+    }
+}
+
+/// The signature reqwest-middleware's `Middleware` has, as the `async-trait` it is written with spells it out: the
+/// future of the middleware inside is passed on as it is, with no box of its own.
+impl Middleware for Helper {
+    fn handle<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        request: Request,
+        extensions: &'life1 mut Extensions,
+        next: Next<'life2>,
+    ) -> Pin<Box<dyn Future<Output = reqwest_middleware::Result<Response>> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait,
+    {
+        self.inner.handle(request, extensions, next)
+    }
 }
 
 /// Why a middleware fails a call: a credential that cannot be sent as it is, whose message does not show it, or a

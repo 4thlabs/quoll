@@ -50,12 +50,13 @@ pub(crate) fn record_request_id(extensions: &Extensions, id: &RequestId) {
 /// `ERROR`.
 ///
 /// ```
-/// use quoll::rest;
+/// use quoll::server;
 ///
 /// # fn api_router() -> axum::Router { axum::Router::new() }
-/// let router = api_router()
-///     .layer(rest::server::trace())
-///     .layer(rest::server::request_id());
+/// let router = server::builder()
+///     .with(server::request_id())
+///     .with(server::trace())
+///     .into_router(api_router());
 /// ```
 ///
 /// [`request_id`]: super::request_id()

@@ -164,7 +164,7 @@ async fn served() -> (String, ApiClient) {
         points: App,
         bodies: App,
     });
-    let url = rest::test::spawn(router).await;
+    let url = quoll::test::spawn(router).await;
     let api = Api::client(&url).expect("the url is the api's");
 
     (url, api)

@@ -6,14 +6,14 @@
 
 A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI document; the OpenAPI document feeds TypeScript generators (TanStack Query, SWR, zod...). No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
 
-Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`; pagination by header comes later; the error of `authenticate` answers its own status, not always 401; a path parameter of a struct type is refused when it is called, until a `rest::PathValue` derive refuses it at compile time; a header read twice, an argument in two places, a query struct that is not a struct and a header that quoll or HTTP writes do not compile; `Bytes` carries its content type; a failure after the 200 ends an `Events` stream with an `event: problem`, and the client reads every event that has data, whatever its name; a scheme gives its name and its challenge as `Scheme::NAME` and `Scheme::CHALLENGE`, its credential is `Send`, and `openapi` comes with the OpenAPI document; `Basic` reads a `BasicCredential` and challenges with the realm `api`; a declared scheme is written with its visibility, `pub scheme Key`; in `Bearer | Key` the first credential the request carries decides; a route needs all its scopes, and `optional` with `scopes` does not compile; `key::<K>` sends any declared scheme's credential, `openid`'s included, and the client's middleware tell a route's schemes by their type; a cookie scheme refuses a request from another origin, as Go's `CrossOriginProtection` does, the server's own origin alone trusted for now; an alternative takes up to four schemes; `rest::client::redirects(n)` follows redirects one hop at a time through the middleware after it, on a reqwest client that follows none, comes before every middleware that adds a credential, and the helpers send a credential, and `on_request` runs, on the requests of a contract to the api's own origin only; `bearer_from` takes a `rest::client::TokenSource`, whose `token` it asks before each call and whose `refresh` once after a 401, the 401 answering when the token is the same or the body cannot be sent twice; `user_agent` and `request_id` set their header when the request has none, one id across the attempts of a call; `timeout` is a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; `Api::openapi()` returns a `rest::openapi::Document` and is written whatever the features, so that every type of a contract implements `JsonSchema`, unless the api says `#[openapi(none)]`; `Scheme::openapi` returns a `rest::openapi::SecurityScheme` and has no default; the document's `info` is the contract crate's name and version, a query struct is unfolded into its keys, `Bytes` are `application/octet-stream` as a body and `*/*` as a result, each route lists the errors quoll answers and a `default`, two types of one name take schemars' suffix, a type read and written otherwise has two schemas, operation ids are unique, two schemes of one `NAME` in an api do not compile, and the notes document is a snapshot of its tests; the server's helpers return quoll's layer types, under `rest::server::layer`, which the example adds from the innermost to the outermost; `request_id()` keeps a caller's id of 1 to 128 bytes of printable ASCII with no space, or makes a UUID v4, which a handler reads with `RequestId::current()`, a task-local; the span of `trace()` has the method, the path without the query, the operation and the request id, and each answer is logged once, at `ERROR` for a 5xx the crate has not logged with its cause; `body_limit` replaces axum's default limit; `cors(origins)?` refuses what is not an origin with an `InvalidOrigin`, allows the methods a contract serves and any header, exposes `Location`, `WWW-Authenticate` and `X-Request-Id`, and allows no credentials, the CSRF check of a cookie scheme still trusting the server's own origin alone. On 2026-11-20: a client error's sources show its URL by origin and path, never its credentials nor its query.
+Decided by the maintainer on 2026-11-18: the contract is one function-like macro, `rest::api! { ... }`; the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument; authentication is generic, through schemes; no generated Rust is written to disk; the client is built on reqwest-middleware and is native only, with no wasm32 for now. On 2026-11-19: the crate is named `quoll`; errors stay one `rest::Error`, typed errors per route come later; the items of a stream are typed in TypeScript through an extension and a `subscribe` helper; an `i64` is a TypeScript `number`; pagination by header comes later; the error of `authenticate` answers its own status, not always 401; a path parameter of a struct type is refused when it is called, until a `rest::PathValue` derive refuses it at compile time; a header read twice, an argument in two places, a query struct that is not a struct and a header that quoll or HTTP writes do not compile; `Bytes` carries its content type; a failure after the 200 ends an `Events` stream with an `event: problem`, and the client reads every event that has data, whatever its name; a scheme gives its name and its challenge as `Scheme::NAME` and `Scheme::CHALLENGE`, its credential is `Send`, and `openapi` comes with the OpenAPI document; `Basic` reads a `BasicCredential` and challenges with the realm `api`; a declared scheme is written with its visibility, `pub scheme Key`; in `Bearer | Key` the first credential the request carries decides; a route needs all its scopes, and `optional` with `scopes` does not compile; `key::<K>` sends any declared scheme's credential, `openid`'s included, and the client's middleware tell a route's schemes by their type; a cookie scheme refuses a request from another origin, as Go's `CrossOriginProtection` does, the server's own origin alone trusted for now; an alternative takes up to four schemes; `client::redirects(n)` follows redirects one hop at a time through the middleware after it, on a reqwest client that follows none, comes before every middleware that adds a credential, and the helpers send a credential, and `on_request` runs, on the requests of a contract to the api's own origin only; `bearer_from` takes a `client::TokenSource`, whose `token` it asks before each call and whose `refresh` once after a 401, the 401 answering when the token is the same or the body cannot be sent twice; `user_agent` and `request_id` set their header when the request has none, one id across the attempts of a call; `timeout` is a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; `Api::openapi()` returns a `rest::openapi::Document` and is written whatever the features, so that every type of a contract implements `JsonSchema`, unless the api says `#[openapi(none)]`; `Scheme::openapi` returns a `rest::openapi::SecurityScheme` and has no default; the document's `info` is the contract crate's name and version, a query struct is unfolded into its keys, `Bytes` are `application/octet-stream` as a body and `*/*` as a result, each route lists the errors quoll answers and a `default`, two types of one name take schemars' suffix, a type read and written otherwise has two schemas, operation ids are unique, two schemes of one `NAME` in an api do not compile, and the notes document is a snapshot of its tests; the server's helpers return quoll's layer types, under `server::layer`, which the example adds from the innermost to the outermost; `request_id()` keeps a caller's id of 1 to 128 bytes of printable ASCII with no space, or makes a UUID v4, which a handler reads with `RequestId::current()`, a task-local; the span of `trace()` has the method, the path without the query, the operation and the request id, and each answer is logged once, at `ERROR` for a 5xx the crate has not logged with its cause; `body_limit` replaces axum's default limit; `cors(origins)?` refuses what is not an origin with an `InvalidOrigin`, allows the methods a contract serves and any header, exposes `Location`, `WWW-Authenticate` and `X-Request-Id`, and allows no credentials, the CSRF check of a cookie scheme still trusting the server's own origin alone. On 2026-11-20: a client error's sources show its URL by origin and path, never its credentials nor its query; the helpers move to the top of the crate, `quoll::client` and `quoll::server`, and `rest::test` to `quoll::test`, with no re-export left in `quoll::rest`; `client::builder()` takes quoll's helpers and any `reqwest_middleware::Middleware` with `with`, puts quoll's own in the order they work in, `trace`, `user_agent`, `request_id`, `retry`, `timeout`, `redirects`, then the credentials and `on_request`, whatever the order they are given in, each other where it is given, tells a helper by its type, configures reqwest's client with `http(..)`, follows no redirect in reqwest's client when `redirects` is given, and builds a contract's client with `build::<Api>(url)`, through the trait `client::Contract` the macro implements on `Api`, or a `ClientWithMiddleware` with `build_http()`; `server::builder()` takes quoll's layers and any tower layer with `with`, the first given the outermost, puts quoll's own in the order `request_id`, `trace`, `cors`, `compression`, `timeout`, `body_limit`, each other where it is given, serves a router with `serve(address, router)` or `serve_on(listener, router)` until Ctrl-C or `SIGTERM`, or the signal given to `shutdown(..)`, waits 5 s for the requests it serves, `grace(..)`, and gives the router with its layers with `into_router(router)`; `Api::client`, `Api::client_with` and `Api::router` stay; `build::<T>` on a type that is not a contract's api does not compile.
 
 ## Stack and crates
 
 - **tokio** for the runtime, **axum** (on hyper and tower) for the server, **reqwest** with **reqwest-middleware** for the client. Native only: the browser goes through the TypeScript.
 - **serde** and **serde_json** for bodies, **serde_html_form** for forms and queries (it repeats a key for a `Vec`), **schemars** for the JSON Schema of each type, which OpenAPI 3.1 uses as is. Every type a contract names implements `JsonSchema`, whatever the features, as the document is written with neither.
 - **syn** and **quote** in the macro.
-- The server hands back an `axum::Router`, the client takes a `reqwest_middleware::ClientWithMiddleware`: tower layers and reqwest middleware stay the user's, with no wrapper in between.
+- The server hands back an `axum::Router`, the client takes a `reqwest_middleware::ClientWithMiddleware`: tower layers and reqwest middleware stay the user's, with no wrapper in between. `client::builder()` and `server::builder()` build them, with quoll's helpers in the order they work in, and give them back: the router with its layers, the `ClientWithMiddleware`.
 
 An application splits into crates by role:
 
@@ -25,7 +25,7 @@ notes/
   web/      TypeScript    vite, orval, TanStack Query
 ```
 
-The crate is `quoll`, used from git until it is published; the contract is its module `quoll::rest`, which the examples bring in with `use quoll::rest`. It has two features, `server` and `client`. What the macro generates for each side compiles only with its feature: the command line never links axum, nor the server reqwest. A contract crate passes them on, `notes-api = { path = "../api", features = ["server"] }`.
+The crate is `quoll`, used from git until it is published; the contract is its module `quoll::rest`, which the examples bring in with `use quoll::rest`. It has two features, `server` and `client`, which bring the modules of each side: `quoll::client`, the builder of a client and its middleware, `quoll::server`, the builder of a server and its layers, and `quoll::test`, a router served for a test. What the macro generates for each side compiles only with its feature: the command line never links axum, nor the server reqwest. A contract crate passes them on, `notes-api = { path = "../api", features = ["server"] }`.
 
 ## The contract
 
@@ -161,7 +161,7 @@ pub trait Scheme: 'static {
 - `NAME` is what `rest::Route::schemes()` holds and what OpenAPI names the scheme; `CHALLENGE` is the `WWW-Authenticate` of a 401, a constant so that one that is not a header's value does not compile. The credential is `Send`, as `authenticate` holds it across an `await`. `openapi` describes the scheme in the document, with no default: `SecurityScheme::bearer()`, `basic()`, `http(name)`, `header(name)`, `cookie(name)`, `query(name)` or `openid(url)`, `.with_description(text)`. The crate's schemes and the declared ones give theirs, a declared one with its `///` as the description.
 - `read` gives `None` for a request with none of its credential, leaving to another scheme an `Authorization` header of another scheme, and a 401 for one of its own that is not well formed. Its detail never shows the credential.
 - Given by the crate: `Bearer`, whose credential is the token, a `String`; and `Basic`, whose credential is a `rest::BasicCredential { user, password }`, read from the base64 of `user:password` in UTF-8, and whose `Debug` hides the password. `Basic` challenges with `Basic realm="api", charset="UTF-8"`, which makes a browser open its own login window: a route the web page calls takes another scheme.
-- Declared in the contract, with a name and a visibility: `pub scheme Key = header "X-Api-Key";`, `pub scheme Session = cookie "session";`, `pub scheme Token = query "token";`, `pub scheme Login = openid "https://accounts.example.com/.well-known/openid-configuration";` (a bearer token on the wire, described as OpenID Connect, whose challenge is `Bearer`; quoll checks no token, `authenticate` does). Each becomes a type of that name implementing `Scheme`, whose credential is a `String` and whose name is its own: the server implements `Authenticate<Key>`. A header or a query key given twice is a 401, as is an empty one. A header scheme's credential is a header of its own, which reqwest, as curl and `fetch`, keeps on a redirect it follows to another host, where it strips only `Authorization`, `Cookie` and `Proxy-Authorization`: a client that sends one follows redirects with `rest::client::redirects(n)`, which sends each hop through the middleware after it, on a reqwest client that follows none. Of a cookie given twice, as a browser holding it for two paths sends it, the first that is not empty is read, the one of the longest path (RFC 6265); an empty one is none, as a cookie cleared by the application. A route that takes a query scheme has no other value of its key: the macro refuses one in the route's string, and a query struct has no field of that name, which the macro cannot see.
+- Declared in the contract, with a name and a visibility: `pub scheme Key = header "X-Api-Key";`, `pub scheme Session = cookie "session";`, `pub scheme Token = query "token";`, `pub scheme Login = openid "https://accounts.example.com/.well-known/openid-configuration";` (a bearer token on the wire, described as OpenID Connect, whose challenge is `Bearer`; quoll checks no token, `authenticate` does). Each becomes a type of that name implementing `Scheme`, whose credential is a `String` and whose name is its own: the server implements `Authenticate<Key>`. A header or a query key given twice is a 401, as is an empty one. A header scheme's credential is a header of its own, which reqwest, as curl and `fetch`, keeps on a redirect it follows to another host, where it strips only `Authorization`, `Cookie` and `Proxy-Authorization`: a client that sends one follows redirects with `client::redirects(n)`, which sends each hop through the middleware after it, on a reqwest client that follows none. Of a cookie given twice, as a browser holding it for two paths sends it, the first that is not empty is read, the one of the longest path (RFC 6265); an empty one is none, as a cookie cleared by the application. A route that takes a query scheme has no other value of its key: the macro refuses one in the route's string, and a query struct has no field of that name, which the macro cannot see.
 - A cookie travels with a request that a page of another site has a browser send, with no preflight for a form or text. A request that carries the cookie of a cookie scheme, with a method other than `GET`, `HEAD` or `OPTIONS`, is answered 403 unless its `Sec-Fetch-Site` is `same-origin` or `none`, or, from a browser that sends none, its `Origin` is its `Host`, compared as origins: one host, and one port, the default of the origin's scheme where either leaves it out. A request with neither header comes from no browser and passes. Behind a reverse proxy, the proxy passes the browser's `Host`, `proxy_set_header Host $host` in nginx; `X-Forwarded-Host`, which anyone may send, is not read. Only the server's own origin is trusted for now: trusted origins come later. The application sets the cookie `SameSite=Lax` or `Strict`, `HttpOnly` and `Secure`, a second defense that does not cover a page of the same site, and names it with the prefix `__Host-`, which a subdomain cannot set.
 - Any other is a type of the application implementing `Scheme`, as an HMAC signature, named in `#[auth(...)]` as the others are, by its path: `#[auth(crate::auth::Hmac)]`.
 
@@ -176,6 +176,7 @@ Nothing is written to disk: the macro runs as rustc compiles the contract, and i
 | `struct ApiServices` | server | a field per group: its service |
 | `Api::router` | server | an `axum::Router` from an `ApiServices` |
 | `Api::client`, `Api::client_with` | client | `api.notes()` is a `NotesClient`, implementing `Notes` |
+| `impl client::Contract for Api` | client | what `client::builder().build::<Api>(url)` builds the client with |
 | `Api::openapi` | both, and neither | the OpenAPI 3.1 document; none with `#[openapi(none)]` |
 | `struct Key`, ... | both | each scheme the contract declares |
 
@@ -199,10 +200,14 @@ Each method becomes a function returning `impl Future + Send`, which axum needs;
 - A service of a group with authentication also implements `Authenticate` for its schemes (see Authentication).
 - `ApiServices` has one field per group: a missing one does not compile.
 - A service is `Send + Sync + 'static`; the router holds it in an `Arc`. Its state is its own fields: there is no axum `State` to thread through.
+- `server::builder()` serves the router: `.with(layer)` for quoll's layers and any tower layer (see Middleware), `.serve("0.0.0.0:8080", router)` binds an address and serves, `.serve_on(listener, router)` serves a listener bound already, a `TcpListener` on port 0 or a `UnixListener`. Each returns an `std::io::Result<()>`, an error when the address cannot be bound or the signals cannot be listened to.
+- It serves until Ctrl-C, or `SIGTERM` on Unix, which `docker stop` and Kubernetes send, or the future given to `.shutdown(signal)`, `std::future::pending()` for never. Told to stop, it accepts no more connections and returns once the requests it serves have ended, or after its grace, 5 s, `.grace(duration)`: a stream may never end, and the connections still open then end with the runtime, as `main` returns.
+- `.into_router(router)` gives the router with its layers, for an application that serves it itself, or `quoll::test::spawn`.
 
 ## The client
 
 - `Api::client(url)` makes a client with no middleware; `Api::client_with(http, url)` takes a `ClientWithMiddleware`.
+- `client::builder()` builds one with middleware: `.with(middleware)` for quoll's helpers and any `reqwest_middleware::Middleware` (see Middleware), `.http(|http| http.proxy(proxy))` configures reqwest's `ClientBuilder`, and `.build::<Api>(url)` gives the `ApiClient`, through `client::Contract`, which the macro implements on `Api`: its `Client` and its `client_with`. `.build_http()` gives the `ClientWithMiddleware`, for the clients of several contracts. Both return a `rest::Result`, an error when reqwest cannot build its client or the URL is not an api's.
 - `api.notes().get(3)`: a method per route, arguments in the contract's order. Rust has no named arguments: a route with many optional filters takes a query struct with `Default`.
 - Each request carries a `rest::Route` in its extensions: the operation id, the group, the method, the path as written and the schemes it accepts. Middleware reads it.
 
@@ -210,13 +215,15 @@ Each method becomes a function returning `impl Future + Send`, which axum needs;
 
 One mechanism a side: reqwest-middleware on the client, tower layers on the server. The crate gives the usual ones, built on the existing crates where there is one.
 
-### Client, `rest::client::`
+The builders put quoll's own in the order they work in, whatever the order they are given in: they are sorted into the places they were given at, and any other middleware or layer keeps its place. They tell a helper by its type: one wrapped in a middleware of the application's is the application's. Given to `reqwest_middleware::ClientBuilder` or `Router::layer` directly, each helper works as well, in the order it is added.
+
+### Client, `quoll::client::`
 
 | Helper | What it does |
 |---|---|
 | `on_request(f)` | a closure that changes each request of a contract to its api's own origin before it leaves, given its `rest::Route`: what an interceptor does elsewhere |
 | `bearer(token)` | `Authorization: Bearer`, on the routes whose schemes hold `Bearer` only |
-| `bearer_from(source)` | asks a `rest::client::TokenSource` for a token before each call, and once more after a 401, for tokens that expire |
+| `bearer_from(source)` | asks a `client::TokenSource` for a token before each call, and once more after a 401, for tokens that expire |
 | `basic(user, password)` | `Authorization: Basic`, on the routes whose schemes hold `Basic` only |
 | `key::<Key>(value)` | the credential of a scheme the contract declares, where it travels: its header, its cookie after the request's others in one `Cookie` header (a jar's are not added there), its query key, or `Authorization: Bearer` for `openid`; on the routes that take it only |
 | `user_agent(name)` | `User-Agent`, on a request that has none |
@@ -231,7 +238,7 @@ The helpers tell a route's schemes by their type, `rest::Route::takes::<Key>()`,
 A header computed from the request is a closure given to `on_request`; the helpers of authentication are written so:
 
 ```rust
-let sign = rest::client::on_request(move |request: &mut Request, route: &rest::Route| {
+let sign = client::on_request(move |request: &mut Request, route: &rest::Route| {
     let body = request.body().and_then(|body| body.as_bytes()).unwrap_or_default();
     let signature = key.sign(request.method(), request.url().path(), body);
 
@@ -252,28 +259,30 @@ pub trait TokenSource: Send + Sync + 'static {
 
 A call answered 401 is sent once more with the token `refresh` gives, and that second answer is the call's; it is not sent again when `refresh` gives back the token refused, or when its body cannot be sent twice. Two calls refused at once each call `refresh` with the token they sent: a source that keeps one token renews it once, under a lock, and gives the other call the new one. An error of the source fails the call.
 
-`redirects(n)` follows 301, 302 and 303 with a `GET` without the body, a `HEAD` staying one, and 307 and 308 with the method and the body, which a route's can always send twice; past `n` hops, or back to a request already sent, the call fails. It comes before every middleware that adds a credential, `on_request` included, so that they run on each hop and send nothing to another origin. A hop to another origin loses `Authorization`, `Cookie`, `Proxy-Authorization` and every header marked sensitive that a middleware before it added, and keeps any other: a credential's header added before it is marked sensitive. Any other answer, or a redirect it does not follow, is the call's answer. An order that works, from the first added: `trace`, `user_agent`, `request_id`, `retry`, `timeout`, `redirects`, then the credentials and `on_request`.
+`redirects(n)` follows 301, 302 and 303 with a `GET` without the body, a `HEAD` staying one, and 307 and 308 with the method and the body, which a route's can always send twice; past `n` hops, or back to a request already sent, the call fails. It comes before every middleware that adds a credential, `on_request` included, so that they run on each hop and send nothing to another origin. A hop to another origin loses `Authorization`, `Cookie`, `Proxy-Authorization` and every header marked sensitive that a middleware before it added, and keeps any other: a credential's header added before it is marked sensitive. Any other answer, or a redirect it does not follow, is the call's answer. Given `redirects`, `client::builder()` builds reqwest's client with `redirect(Policy::none())`, whatever `http(..)` sets; without it, reqwest follows redirects as it does by default.
 
-### Server, `rest::server::`
+The order `client::builder()` puts the helpers in, from the first, which sees the request first: `trace`, one span around the whole call; `user_agent`; `request_id`, before `retry`, so that the attempts of a call share one id; `retry`; `timeout`; `redirects`, before every credential; then the credentials and `on_request`, in the order given. It is the order to add them in to a `reqwest_middleware::ClientBuilder`. A middleware of the application's that adds a credential is given after `redirects`.
+
+### Server, `quoll::server::`
 
 | Helper | What it does |
 |---|---|
-| `request_id()` | keeps the caller's `X-Request-Id` or makes one, a UUID v4, and sends it back; a handler reads it with `rest::server::RequestId::current()` |
+| `request_id()` | keeps the caller's `X-Request-Id` or makes one, a UUID v4, and sends it back; a handler reads it with `server::RequestId::current()` |
 | `trace()` | a tracing span per request, with the operation id and the request id, and a line per answer (tower-http) |
 | `timeout(duration)` | a handler that takes longer answers 503 |
 | `body_limit(bytes)` | a larger body answers 413 |
 | `cors(origins)?` | CORS for the given origins (tower-http) |
 | `compression()` | gzip, brotli and zstd responses, streams aside (tower-http) |
 
-They answer RFC 9457 problems, as handlers do, where tower-http's answer plain text. Any other tower layer applies as is, as a rate limit from tower_governor. Each helper returns a layer type of quoll's, under `rest::server::layer`, which no application names, and no tower-http type.
+They answer RFC 9457 problems, as handlers do, where tower-http's answer plain text. Any other tower layer applies as is, as a rate limit from tower_governor. Each helper returns a layer type of quoll's, under `server::layer`, which no application names, and no tower-http type: the builder tells them by it.
 
-- **The order.** axum runs the last layer added first: the example adds `body_limit`, `timeout`, `trace`, then `request_id`, so that a request gets its id, then its span, and that a 503 of the deadline and a 413 of the limit are traced and carry the id. In another order each layer still works, but an answer of a layer outside `request_id` carries no id, and one of a layer outside `trace` is not traced: past its deadline, a request whose `timeout` is outside `trace` has its span dropped with the route's future.
+- **The order.** `server::builder()` runs the first layer given first, the outermost, and puts quoll's in this order, from the outermost: `request_id`, `trace`, `cors`, `compression`, `timeout`, `body_limit`. So a request gets its id, then its span, and a 503 of the deadline and a 413 of the limit are traced, carry the id and the headers of CORS, which a page needs to read them. `Router::layer` runs the last layer added first: there, the layers are added in the reverse order. In another order each layer still works, but an answer of a layer outside `request_id` carries no id, one of a layer outside `trace` is not traced, past its deadline a request whose `timeout` is outside `trace` has its span dropped with the route's future, and an answer of a layer outside `cors` carries no header of CORS.
 - **The route.** The router puts the `rest::Route` of a request in the extensions of its answer, where a layer reads it, and names its operation in the span of `trace`. An answer no route made carries none: axum's 404 and 405, a 503 of `timeout`, an early 413 of `body_limit`.
 - **`request_id()`**: the caller's id is kept when it is 1 to 128 bytes of printable ASCII with no space, and replaced otherwise, or when given twice; the request is served. The id is set on the request and its answer, and given to the span. `RequestId::current()` gives it while the handler's future runs, a task-local: not in a task it spawns, nor in the stream it returns.
 - **`trace()`**: the span `request` has the `method`, the `path` without the query, which may hold a credential, the `operation` and the `request_id`. Each answer is logged once, `answered` with its status and latency: at `INFO`, and at `ERROR` for a 5xx the crate has not logged with its cause already, as it logs an `Error::internal`, an error of another API and a deadline.
 - **`timeout(duration)`**: it bounds the route's future, which reads the body and ends with the head of the answer, and not the body: an `Events` or a `JsonLines` stream goes on past it. The 503 says the deadline, and is logged once.
 - **`body_limit(bytes)`**: a `Content-Length` past it is answered at once; a chunked body is read up to it. It sets axum's own limit, through which JSON, `Form`, `Text` and `Bytes` are read, and replaces its default of 2 MiB.
-- **`cors(origins)`** takes origins as text, `https://app.example.com`, and returns an error, `rest::server::InvalidOrigin`, for one that is not an origin: `*`, `null`, a path. It allows the methods a contract serves, `OPTIONS` among them, any header a page asks for, and exposes `Location`, `WWW-Authenticate` and `X-Request-Id`. It allows no credentials: a page of another origin sends a token or a key in a header. A cookie scheme's CSRF check still trusts the server's own origin alone, so that a listed origin's call with the cookie, on a method other than `GET`, `HEAD` and `OPTIONS`, is answered 403. A preflight is an `OPTIONS` request with an `Origin` and an `Access-Control-Request-Method`: any other `OPTIONS` request reaches its route.
+- **`cors(origins)`** takes origins as text, `https://app.example.com`, and returns an error, `server::InvalidOrigin`, for one that is not an origin: `*`, `null`, a path. It allows the methods a contract serves, `OPTIONS` among them, any header a page asks for, and exposes `Location`, `WWW-Authenticate` and `X-Request-Id`. It allows no credentials: a page of another origin sends a token or a key in a header. A cookie scheme's CSRF check still trusts the server's own origin alone, so that a listed origin's call with the cookie, on a method other than `GET`, `HEAD` and `OPTIONS`, is answered 403. A preflight is an `OPTIONS` request with an `Origin` and an `Access-Control-Request-Method`: any other `OPTIONS` request reaches its route.
 - **`compression()`** leaves out what tower-http's default does, small answers, images and server-sent events, and JSON Lines too, whose lines would wait in the encoder.
 
 ## Errors
@@ -428,6 +437,7 @@ use std::time::Duration;
 
 use notes_api::*;
 use quoll::rest::{self, Authenticate, Bearer, Created, Error, Events, Form, Result};
+use quoll::server;
 
 mod store;
 
@@ -531,11 +541,15 @@ pub fn router(app: App) -> axum::Router {
         notes: app.clone(),
         admin: app,
     })
-    // The last layer added runs first: a request gets its id, then its span, then its deadline and its body's limit.
-    .layer(rest::server::body_limit(1 << 20))
-    .layer(rest::server::timeout(Duration::from_secs(10)))
-    .layer(rest::server::trace())
-    .layer(rest::server::request_id())
+}
+
+/// The server, with its layers in any order: a request gets its id, then its span, then its deadline and its body's limit.
+pub fn server() -> server::Builder {
+    server::builder()
+        .with(server::request_id())
+        .with(server::trace())
+        .with(server::timeout(Duration::from_secs(10)))
+        .with(server::body_limit(1 << 20))
 }
 ```
 
@@ -550,9 +564,9 @@ async fn main() -> anyhow::Result<()> {
         store: notes_server::Store::open("notes.db").await?,
         sessions: notes_server::Sessions::default(),
     };
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
-    axum::serve(listener, notes_server::router(app)).await?;
+    // Until Ctrl-C or SIGTERM, then up to 5 s for the requests it serves.
+    notes_server::server().serve("0.0.0.0:8080", notes_server::router(app)).await?;
     Ok(())
 }
 ```
@@ -562,16 +576,19 @@ async fn main() -> anyhow::Result<()> {
 ```rust
 use notes_api::{Api, NewNote, Notes};
 use notes_server::User;
-use quoll::rest;
-use reqwest_middleware::ClientBuilder;
+use quoll::client;
+
+/// The router of `app` with the layers of its server, as `main` serves it.
+fn served(app: notes_server::App) -> axum::Router {
+    notes_server::server().into_router(notes_server::router(app))
+}
 
 #[tokio::test]
 async fn a_created_note_reads_back() -> anyhow::Result<()> {
     let app = notes_server::App::in_memory();
     let token = app.sessions.open(User { id: 1, name: "ana".into() });
-    let url = rest::test::spawn(notes_server::router(app)).await;
-    let http = ClientBuilder::new(reqwest::Client::new()).with(rest::client::bearer(token)).build();
-    let api = Api::client_with(http, &url)?;
+    let url = quoll::test::spawn(served(app)).await;
+    let api = client::builder().with(client::bearer(token)).build::<Api>(&url)?;
 
     let created = api.notes().create(NewNote { title: "Milk".into(), body: String::new() }).await?;
     let read = api.notes().get(created.id).await?;
@@ -582,7 +599,7 @@ async fn a_created_note_reads_back() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
-    let url = rest::test::spawn(notes_server::router(notes_server::App::in_memory())).await;
+    let url = quoll::test::spawn(served(notes_server::App::in_memory())).await;
     let api = Api::client(&url)?;
 
     let error = api.notes().get(1).await.unwrap_err();
@@ -597,9 +614,9 @@ async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
 ```rust
 use futures::StreamExt;
 use notes_api::{Api, Login, NewNote, NoteFilter, Notes};
-use quoll::rest::{self, Form};
+use quoll::client;
+use quoll::rest::Form;
 use reqwest::StatusCode;
-use reqwest_middleware::ClientBuilder;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -607,13 +624,12 @@ async fn main() -> anyhow::Result<()> {
     let login = Login { user: std::env::var("NOTES_USER")?, password: std::env::var("NOTES_PASSWORD")? };
     let token = Api::client(&url)?.auth().token(Form(login)).await?;
 
-    let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::user_agent("notes-cli/0.1"))
-        .with(rest::client::request_id())
-        .with(rest::client::retry(3))
-        .with(rest::client::bearer(token.access_token))
-        .build();
-    let api = Api::client_with(http, &url)?;
+    let api = client::builder()
+        .with(client::user_agent("notes-cli/0.1"))
+        .with(client::request_id())
+        .with(client::retry(3))
+        .with(client::bearer(token.access_token))
+        .build::<Api>(&url)?;
 
     let created = api.notes().create(NewNote { title: "Milk".into(), body: String::new() }).await?;
     let filter = NoteFilter { contains: Some("milk".into()), ..Default::default() };
@@ -747,6 +763,7 @@ export function NoteView({ id }: { id: number }) {
 - A group less visible than its api, whose router and client name the group's items.
 - Two items the macro writes with one name: a group named as its api, or as the `NotesServer`, `NotesClient`, `ApiServices` or `ApiClient` the contract writes for another; two routes of one operation id, as `tags_list` in a group `Note` and `list` in a group `NoteTags`, both `note_tags_list`.
 - A route left out of a service or a fake, a handler or a fake's method of the wrong signature: Rust's own errors on the trait.
+- `client::builder().build::<T>(url)` for a type that is not the api of a contract, or of a contract built without the feature `client`: the message says what an api is.
 - A group without a service; a service of a group with authentication that does not implement `Authenticate` for its schemes; two schemes of one `#[auth(A | B)]` giving callers of two types; scopes on a caller that does not implement `Scoped`.
 - A scheme in `#[auth(...)]` that is neither given by the crate, declared in the contract nor a type implementing `Scheme`; a scheme's credential that is not `Send`; `key::<K>` for a scheme the contract does not declare; two schemes of one `NAME` in an api, which names a scheme in the OpenAPI document, or a `NAME` of other characters than ASCII letters, digits, `.`, `-` and `_`.
 - A type of a contract that does not implement `JsonSchema`, unless the api says `#[openapi(none)]`; `#[openapi(...)]` with anything but `none`, or on a scheme, a group or a route.

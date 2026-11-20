@@ -24,10 +24,12 @@ use crate::rest::Error;
 /// ```
 /// use std::time::Duration;
 ///
-/// use quoll::rest;
+/// use quoll::server;
 ///
 /// # fn api_router() -> axum::Router { axum::Router::new() }
-/// let router = api_router().layer(rest::server::timeout(Duration::from_secs(10)));
+/// let router = server::builder()
+///     .with(server::timeout(Duration::from_secs(10)))
+///     .into_router(api_router());
 /// ```
 pub fn timeout(duration: Duration) -> TimeoutLayer {
     TimeoutLayer { duration }

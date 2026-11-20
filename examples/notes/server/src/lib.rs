@@ -3,7 +3,8 @@
 use std::time::Duration;
 
 use notes_api::*;
-use quoll::rest::{self, Authenticate, Bearer, Created, Error, Result};
+use quoll::rest::{Authenticate, Bearer, Created, Error, Result};
+use quoll::server;
 
 mod store;
 
@@ -74,12 +75,17 @@ impl Authenticate<Bearer> for App {
     }
 }
 
-/// The router of the api, served by `app`, with the usual layers.
+/// The router of the api, served by `app`.
 pub fn router(app: App) -> axum::Router {
-    // The last layer added runs first: a request gets its id, then its span, then its deadline and its body's limit.
     Api::router(ApiServices { notes: app })
-        .layer(rest::server::body_limit(1 << 20))
-        .layer(rest::server::timeout(Duration::from_secs(10)))
-        .layer(rest::server::trace())
-        .layer(rest::server::request_id())
+}
+
+/// The server of the api, with the usual layers, which the builder puts in the order they work in: a request gets its
+/// id, then its span, then its deadline and its body's limit.
+pub fn server() -> server::Builder {
+    server::builder()
+        .with(server::request_id())
+        .with(server::trace())
+        .with(server::timeout(Duration::from_secs(10)))
+        .with(server::body_limit(1 << 20))
 }
