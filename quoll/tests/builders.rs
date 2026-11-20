@@ -166,13 +166,20 @@ async fn request_id_added_after_retry_by_hand_gives_each_attempt_its_own() -> Re
 }
 
 /// An api at one origin whose `/api/away` redirects to `/landing` at another, which answers, in JSON, whether the
-/// request carried `X-Signature`: the URL of the api.
+/// request carried `X-Signature`, `"signed"`, or the key `X-Api-Key`, `"keyed"`, or neither, `"clean"`: the URL of the
+/// api.
 async fn redirecting() -> String {
     let landing = axum::Router::new().route(
         "/landing",
         axum::routing::get(|request: Request| async move {
-            let signed = request.headers().contains_key("x-signature");
-            let body = if signed { "\"signed\"" } else { "\"unsigned\"" };
+            let headers = request.headers();
+            let body = if headers.contains_key("x-signature") {
+                "\"signed\""
+            } else if headers.contains_key("x-api-key") {
+                "\"keyed\""
+            } else {
+                "\"clean\""
+            };
 
             ([(CONTENT_TYPE, "application/json")], body)
         }),
@@ -208,7 +215,7 @@ async fn a_credential_given_before_redirects_is_not_sent_to_another_origin() -> 
         .with(client::redirects(5))
         .build::<Api>(&url)?;
 
-    assert_eq!(api.calls().away().await?, "unsigned");
+    assert_eq!(api.calls().away().await?, "clean");
     Ok(())
 }
 
@@ -241,7 +248,55 @@ async fn with_redirects_the_reqwest_client_follows_none_whatever_it_is_set_to() 
         .build::<Api>(&url)?;
 
     // Followed by reqwest, below every middleware, the redirect would carry the signature to the other origin.
-    assert_eq!(api.calls().away().await?, "unsigned");
+    assert_eq!(api.calls().away().await?, "clean");
+    Ok(())
+}
+
+/// A contract whose route takes the key of a header scheme, which reqwest's own policy keeps on a redirect to another
+/// origin.
+mod keyed {
+    use quoll::rest;
+
+    rest::api! {
+        pub api Api = "/api";
+
+        pub scheme Key = header "X-Api-Key";
+
+        #[auth(Key)]
+        pub group Keyed {
+            GET "/away" => away() -> String;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_credential_given_with_no_redirects_is_not_sent_to_another_origin() -> Result<()> {
+    use keyed::Keyed as _;
+
+    let url = redirecting().await;
+    let api = client::builder()
+        .with(client::key::<keyed::Key>("k-1"))
+        .build::<keyed::Api>(&url)?;
+
+    // The redirect is followed, by the `redirects` the builder adds, which gives the hop no key.
+    assert_eq!(api.keyed().away().await?, "clean");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_credential_with_no_redirects_by_hand_goes_to_another_origin() -> Result<()> {
+    use keyed::Keyed as _;
+
+    let url = redirecting().await;
+    let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
+        .with(client::key::<keyed::Key>("k-1"))
+        .build();
+
+    // reqwest follows the redirect below every middleware, with the headers of the first request.
+    assert_eq!(
+        keyed::Api::client_with(http, &url)?.keyed().away().await?,
+        "keyed"
+    );
     Ok(())
 }
 

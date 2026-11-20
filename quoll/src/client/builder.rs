@@ -9,9 +9,12 @@ use reqwest::redirect::Policy;
 use reqwest_middleware::{ClientWithMiddleware, Middleware};
 use sync_wrapper::SyncWrapper;
 
-use super::{Helper, Rank};
+use super::{Helper, Rank, redirects};
 use crate::order::arrange;
 use crate::rest::{Error, Result};
+
+/// The redirects a builder given a credential and no `redirects` follows: reqwest's own limit.
+const REDIRECTS: usize = 10;
 
 /// What configures the reqwest client of a [`Builder`], called once, by value: never shared, so that it need not be
 /// `Sync`.
@@ -63,6 +66,12 @@ pub fn builder() -> Builder {
 /// any other stays where it is. A middleware that adds a credential comes after `redirects`, as the helpers do. A
 /// helper is told by its type: one wrapped in a middleware of the application's is a middleware of the application's.
 ///
+/// Given a credential, `bearer`, `bearer_from`, `basic`, `key` or `on_request`, and no `redirects`, the builder adds
+/// `redirects(10)` itself, reqwest's own limit, so that redirects are still followed, but each hop through the
+/// credentials: reqwest's own policy follows them below every middleware, with the headers of the first request, and
+/// keeps the key of a header scheme, or what `on_request` adds, on a hop to another origin. A `redirects(n)` given is
+/// kept as it is.
+///
 /// ```no_run
 /// use quoll::client;
 /// use reqwest::Request;
@@ -105,8 +114,9 @@ impl Builder {
     /// Configures the reqwest client under the middleware, with `configure`, given its `reqwest::ClientBuilder`: a
     /// proxy, TLS, a pool. Each closure given is called in turn, when the client is built.
     ///
-    /// With [`redirects`](super::redirects), the reqwest client follows no redirect, whatever `configure` sets:
-    /// `redirects` follows them itself. Without it, the client follows them as reqwest does, ten at most.
+    /// With [`redirects`](super::redirects), given or added for a credential, the reqwest client follows no
+    /// redirect, whatever `configure` sets: `redirects` follows them itself. Without it, the client follows them as
+    /// reqwest does, ten at most.
     ///
     /// ```no_run
     /// use std::time::Duration;
@@ -144,18 +154,27 @@ impl Builder {
     /// # Errors
     ///
     /// When reqwest cannot build its client, as when its TLS cannot be set up.
-    pub fn build_http(self) -> Result<ClientWithMiddleware> {
-        let redirects = self
-            .middleware
-            .iter()
-            .any(|(rank, _)| *rank == Some(Rank::Redirects));
+    pub fn build_http(mut self) -> Result<ClientWithMiddleware> {
+        let given = |wanted: Rank| {
+            self.middleware
+                .iter()
+                .any(|(rank, _)| *rank == Some(wanted))
+        };
+        let follows = given(Rank::Redirects);
+        let credentials = given(Rank::Credential);
+
+        if credentials && !follows {
+            self.middleware
+                .push((Some(Rank::Redirects), Arc::new(redirects(REDIRECTS))));
+        }
+
         let mut http = reqwest::Client::builder();
 
         for configure in self.http {
             http = (configure.into_inner())(http);
         }
 
-        if redirects {
+        if credentials || follows {
             http = http.redirect(Policy::none());
         }
 
