@@ -1,4 +1,4 @@
-//! The layers of `rest::server`, each on the router a contract becomes, served on a port and called over HTTP.
+//! The layers of `quoll::server`, each on the router a contract becomes, served on a port and called over HTTP.
 
 #![cfg(all(feature = "server", feature = "client"))]
 
@@ -105,7 +105,7 @@ impl LayersServer for App {
     }
 
     async fn request_id(&self) -> Result<String> {
-        Ok(rest::server::RequestId::current().map_or_else(String::new, |id| id.to_string()))
+        Ok(quoll::server::RequestId::current().map_or_else(String::new, |id| id.to_string()))
     }
 
     async fn slow(&self) -> Result<String> {
@@ -185,15 +185,15 @@ fn router(app: &App) -> axum::Router {
 /// The router as the spec layers it: the last layer added runs first.
 fn layered(app: &App) -> axum::Router {
     router(app)
-        .layer(rest::server::body_limit(LIMIT))
-        .layer(rest::server::timeout(DEADLINE))
-        .layer(rest::server::trace())
-        .layer(rest::server::request_id())
+        .layer(quoll::server::body_limit(LIMIT))
+        .layer(quoll::server::timeout(DEADLINE))
+        .layer(quoll::server::trace())
+        .layer(quoll::server::request_id())
 }
 
 /// `router` served on a port: its URL, and the client of its api.
 async fn serve(router: axum::Router) -> (String, ApiClient) {
-    let url = rest::test::spawn(router).await;
+    let url = quoll::test::spawn(router).await;
     let api = Api::client(&url).expect("the URL is one");
 
     (url, api)
@@ -379,8 +379,8 @@ async fn a_request_is_traced_with_its_operation_and_its_id() {
 async fn a_request_gets_its_id_in_its_span_whichever_layer_runs_first() {
     let (log, _capture) = support::log::capture(false);
     let router = router(&App::default())
-        .layer(rest::server::request_id())
-        .layer(rest::server::trace());
+        .layer(quoll::server::request_id())
+        .layer(quoll::server::trace());
     let (url, _) = serve(router).await;
 
     assert_eq!(
@@ -664,7 +664,7 @@ async fn a_chunked_body_past_the_limit_answers_413() {
 async fn a_lower_limit_of_a_route_is_not_said_as_the_layer_s() {
     let router = router(&App::default())
         .layer(axum::extract::DefaultBodyLimit::max(100))
-        .layer(rest::server::body_limit(LIMIT));
+        .layer(quoll::server::body_limit(LIMIT));
     let (url, api) = serve(router).await;
 
     for (case, answered) in post_each(&api, LIMIT / 2).await {
@@ -694,7 +694,7 @@ async fn a_lower_limit_of_a_route_is_not_said_as_the_layer_s() {
 const ORIGIN: &str = "https://app.example.com";
 
 fn with_cors(app: &App) -> axum::Router {
-    router(app).layer(rest::server::cors(["HTTPS://App.Example.com:443"]).expect("an origin"))
+    router(app).layer(quoll::server::cors(["HTTPS://App.Example.com:443"]).expect("an origin"))
 }
 
 #[tokio::test]
@@ -790,7 +790,7 @@ async fn a_listed_origin_is_still_refused_by_a_cookie_scheme() {
 
 #[test]
 fn cors_refuses_what_is_not_an_origin() {
-    let error = rest::server::cors([ORIGIN, "*"]).expect_err("`*` is no origin");
+    let error = quoll::server::cors([ORIGIN, "*"]).expect_err("`*` is no origin");
 
     assert_eq!(error.origin(), "*");
 }
@@ -805,7 +805,7 @@ fn raw_client() -> reqwest::Client {
 
 #[tokio::test]
 async fn an_answer_is_compressed_as_the_caller_accepts() -> Result<()> {
-    let router = router(&App::default()).layer(rest::server::compression());
+    let router = router(&App::default()).layer(quoll::server::compression());
     let (url, api) = serve(router).await;
 
     for encoding in ["gzip", "br", "zstd"] {
@@ -835,7 +835,7 @@ async fn an_answer_is_compressed_as_the_caller_accepts() -> Result<()> {
 #[tokio::test]
 async fn a_stream_is_not_compressed_and_its_first_value_comes_at_once() -> Result<()> {
     // Read raw from a service of its own, whose held streams no test releases.
-    let (url, _) = serve(router(&App::default()).layer(rest::server::compression())).await;
+    let (url, _) = serve(router(&App::default()).layer(quoll::server::compression())).await;
 
     for path in ["/api/held/events", "/api/held/lines"] {
         let response = raw_client()
@@ -849,7 +849,7 @@ async fn a_stream_is_not_compressed_and_its_first_value_comes_at_once() -> Resul
     }
 
     let app = App::default();
-    let (_, api) = serve(router(&app).layer(rest::server::compression())).await;
+    let (_, api) = serve(router(&app).layer(quoll::server::compression())).await;
     // A first value held in an encoder would never come: the guard fails the test rather than hang it.
     let guard = Duration::from_secs(10);
 

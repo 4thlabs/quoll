@@ -99,7 +99,7 @@ fn pattern(len: usize) -> Vec<u8> {
 
 /// The api served on a port, its URL and its client.
 async fn served() -> (String, ApiClient) {
-    let url = rest::test::spawn(Api::router(ApiServices {
+    let url = quoll::test::spawn(Api::router(ApiServices {
         files: App,
         accepts: App,
     }))
@@ -331,7 +331,7 @@ fn not_its_result(error: &Error, operation: &str, why: &str) {
 
 #[tokio::test]
 async fn text_is_read_from_text_plain_in_utf8_with_or_without_a_charset() {
-    let url = rest::test::spawn(third_party()).await;
+    let url = quoll::test::spawn(third_party()).await;
     let api = Api::client(&url).expect("the url is the api's");
 
     let plain = api.files().text("plain".into()).await.expect("text/plain");
@@ -343,7 +343,7 @@ async fn text_is_read_from_text_plain_in_utf8_with_or_without_a_charset() {
 
 #[tokio::test]
 async fn text_of_another_content_type_or_charset_is_an_error_with_no_status() {
-    let url = rest::test::spawn(third_party()).await;
+    let url = quoll::test::spawn(third_party()).await;
     let api = Api::client(&url).expect("the url is the api's");
 
     for value in ["html", "json", "latin1", "none"] {
@@ -359,7 +359,7 @@ async fn text_of_another_content_type_or_charset_is_an_error_with_no_status() {
 
 #[tokio::test]
 async fn text_that_is_not_utf8_is_an_error_with_no_status() {
-    let url = rest::test::spawn(third_party()).await;
+    let url = quoll::test::spawn(third_party()).await;
     let api = Api::client(&url).expect("the url is the api's");
 
     let error = api
@@ -377,7 +377,7 @@ async fn text_that_is_not_utf8_is_an_error_with_no_status() {
 
 #[tokio::test]
 async fn bytes_are_read_of_any_content_type_which_they_keep() {
-    let url = rest::test::spawn(third_party()).await;
+    let url = quoll::test::spawn(third_party()).await;
     let api = Api::client(&url).expect("the url is the api's");
 
     for (len, content_type, body) in [
@@ -475,7 +475,7 @@ fn accept_recorder(accepts: SeenAccepts) -> axum::Router {
 #[tokio::test]
 async fn each_call_asks_for_its_result_and_a_route_s_own_accept_wins() {
     let accepts = SeenAccepts::default();
-    let url = rest::test::spawn(accept_recorder(Arc::clone(&accepts))).await;
+    let url = quoll::test::spawn(accept_recorder(Arc::clone(&accepts))).await;
     let api = Api::client(&url).expect("the url is the api's");
 
     api.files()

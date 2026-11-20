@@ -68,20 +68,14 @@
 //! its api with `#[openapi(none)]`: it has no document, and its types need serde alone.
 
 mod accepted;
-mod auth;
+pub(crate) mod auth;
 mod body;
-#[cfg(feature = "client")]
-pub mod client;
 mod created;
 pub(crate) mod error;
 pub mod openapi;
 mod problem;
 mod route;
-#[cfg(feature = "server")]
-pub mod server;
 pub(crate) mod stream;
-#[cfg(feature = "server")]
-pub mod test;
 
 pub use accepted::Accepted;
 pub use auth::{Authenticate, Basic, BasicCredential, Bearer, Scheme, Scoped};

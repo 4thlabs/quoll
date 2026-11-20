@@ -193,7 +193,7 @@ fn router() -> axum::Router {
 
 /// Serves a router on a free port, and gives the URL of the api in it.
 async fn serve_router(router: axum::Router) -> String {
-    let url = rest::test::spawn(router).await;
+    let url = quoll::test::spawn(router).await;
 
     format!("{url}/api")
 }

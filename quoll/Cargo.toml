@@ -16,6 +16,9 @@ server = [
     "dep:futures-util",
     "dep:serde_html_form",
     "dep:tokio",
+    # The signals a server stops on, and the start of its grace.
+    "tokio/signal",
+    "tokio/sync",
     "dep:tower-http",
     "dep:tower-layer",
     "dep:tower-service",
@@ -38,7 +41,7 @@ client = [
 [dependencies]
 # The user and the password of `Basic`, which the server reads and the client writes.
 base64 = "0.23"
-# `http1` and `tokio` serve a router, as `rest::test::spawn` does.
+# `http1` and `tokio` serve a router, as `quoll::test::spawn` does.
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"], optional = true }
 # The body of an answer as reqwest reads it, which the client parses without a copy.
 bytes = { version = "1", optional = true }
@@ -55,7 +58,7 @@ quoll-macros = { version = "0.1.0", path = "../quoll-macros" }
 # TLS through rustls with the platform's roots, and the system's proxy settings, as reqwest's defaults have them.
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "system-proxy"], optional = true }
 reqwest-middleware = { version = "0.5", optional = true }
-# What `rest::client::retry` and `rest::client::trace` are built on, out of every public signature.
+# What `client::retry` and `client::trace` are built on, out of every public signature.
 reqwest-retry = { version = "0.9", default-features = false, optional = true }
 reqwest-tracing = { version = "0.7", optional = true }
 # The schemas of the OpenAPI document, which every type of a contract has, whatever the features.
@@ -68,7 +71,7 @@ serde_json = "1"
 sync_wrapper = "1"
 # `time` for the keep-alive comments of server-sent events, and the deadline of the head of a stream's answer.
 tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
-# The span of `rest::server::trace`, CORS and compression, each behind a layer of quoll's own.
+# The span of `server::trace`, CORS and compression, each behind a layer of quoll's own.
 tower-http = { version = "0.6", default-features = false, features = [
     "compression-br",
     "compression-gzip",
@@ -76,13 +79,13 @@ tower-http = { version = "0.6", default-features = false, features = [
     "cors",
     "trace",
 ], optional = true }
-# The traits of the layers of `rest::server`, which axum's `Router::layer` takes.
+# The traits of the layers of `server`, which axum's `Router::layer` takes.
 tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }
 tracing = { version = "0.1", optional = true }
 # The origin of the api, which the client compares with each request's.
 url = { version = "2", optional = true }
-# The `X-Request-Id` of `rest::client::request_id`.
+# The `X-Request-Id` of `client::request_id`.
 uuid = { version = "1", features = ["v4"], optional = true }
 
 [dev-dependencies]

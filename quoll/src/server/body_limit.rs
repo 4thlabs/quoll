@@ -33,10 +33,12 @@ pub(crate) fn too_large(limit: Option<usize>) -> Error {
 /// no number then.
 ///
 /// ```
-/// use quoll::rest;
+/// use quoll::server;
 ///
 /// # fn api_router() -> axum::Router { axum::Router::new() }
-/// let router = api_router().layer(rest::server::body_limit(1 << 20));
+/// let router = server::builder()
+///     .with(server::body_limit(1 << 20))
+///     .into_router(api_router());
 /// ```
 pub fn body_limit(bytes: usize) -> BodyLimitLayer {
     BodyLimitLayer { limit: bytes }

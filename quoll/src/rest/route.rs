@@ -10,7 +10,7 @@ use crate::rest::Scheme;
 /// reqwest-middleware middleware reads it, to name a span after the operation or to send a credential to the routes
 /// that take it. The server puts it in the extensions of each answer of a route, where a tower layer reads it, to
 /// count the answers of each operation; an answer no route made has none, as axum's 404 and the 503 of
-/// `rest::server::timeout`.
+/// `server::timeout`.
 ///
 /// ```
 /// use quoll::rest::Route;
@@ -29,7 +29,7 @@ pub struct Route {
     pub(crate) path: &'static str,
     pub(crate) schemes: &'static [&'static str],
     pub(crate) scheme_types: &'static [TypeId],
-    /// Whether the result is a stream, whose body `rest::client::timeout` leaves without a deadline.
+    /// Whether the result is a stream, whose body `client::timeout` leaves without a deadline.
     pub(crate) streams: bool,
 }
 

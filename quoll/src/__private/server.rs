@@ -23,8 +23,8 @@ use crate::__private::content_type::{
 };
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
 use crate::rest::error::Repr;
-use crate::rest::server::{body_limit, trace};
 use crate::rest::{Authenticate, Error, Result, Route, Scheme, Scoped};
+use crate::server::{body_limit, trace};
 
 mod stream;
 mod text;
@@ -50,7 +50,7 @@ impl<S: Send + Sync + 'static> Group<S> {
     /// Serves `route` with `handler`, given the service and the request. An error it returns is answered as a
     /// problem; a 401 carries a `WWW-Authenticate` challenge for each scheme of `C`, the schemes the route takes, as
     /// RFC 9110 asks, and none on a route that takes no scheme, `()`. Every answer carries the route in its
-    /// extensions, where a layer reads it, and the span of `rest::server::trace` names its operation.
+    /// extensions, where a layer reads it, and the span of `server::trace` names its operation.
     ///
     /// # Panics
     ///
@@ -484,7 +484,7 @@ fn from_form<T: DeserializeOwned>(form: &[u8], what: &str) -> Result<T> {
         .map_err(|error| Error::bad_request(format!("{what} is not valid: {error}")))
 }
 
-/// What axum refused in a body: a 413 for one larger than its limit, said as `rest::server::body_limit` says it but
+/// What axum refused in a body: a 413 for one larger than its limit, said as `server::body_limit` says it but
 /// with no number, as the limit axum enforced may be a route's own, or else as [`rejected`] says it.
 fn body_rejected(status: StatusCode, text: String) -> Error {
     if status == StatusCode::PAYLOAD_TOO_LARGE {
@@ -718,7 +718,7 @@ impl IntoResponse for Error {
     }
 }
 
-/// Marks an answer whose error the crate has logged already, so that `rest::server::trace` does not log it as an error
+/// Marks an answer whose error the crate has logged already, so that `server::trace` does not log it as an error
 /// a second time.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Logged;
@@ -928,7 +928,7 @@ mod tests {
                 ))
             })
             .finish();
-        let url = crate::rest::test::spawn(router).await;
+        let url = crate::test::spawn(router).await;
 
         let response = reqwest::get(format!("{url}/upstream"))
             .await

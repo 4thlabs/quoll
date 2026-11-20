@@ -24,10 +24,12 @@ type Compressible = And<DefaultPredicate, NotForContentType>;
 /// leave as they come, are sent as they are.
 ///
 /// ```
-/// use quoll::rest;
+/// use quoll::server;
 ///
 /// # fn api_router() -> axum::Router { axum::Router::new() }
-/// let router = api_router().layer(rest::server::compression());
+/// let router = server::builder()
+///     .with(server::compression())
+///     .into_router(api_router());
 /// ```
 pub fn compression() -> CompressionLayer {
     let compressible = DefaultPredicate::new().and(NotForContentType::const_new(JSON_LINES));

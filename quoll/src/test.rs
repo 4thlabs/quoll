@@ -5,18 +5,19 @@ use axum::Router;
 use tokio::net::TcpListener;
 
 /// Serves `router` on a free port of 127.0.0.1, and gives its base URL, `http://127.0.0.1:<port>`, with no final
-/// slash: what `Api::client` takes.
+/// slash: what `Api::client` and `client::Builder::build` take. A router with the layers of a `server::Builder` is the
+/// one its `into_router` gives.
 ///
 /// The server runs on a task of the tokio runtime it is called from, and lives as long as that runtime: to the end of
 /// the test, as `#[tokio::test]` gives each test a runtime of its own, which stops the server when the test returns.
 ///
 /// ```
-/// use quoll::rest;
+/// use quoll::test;
 ///
 /// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() -> Result<(), reqwest::Error> {
 /// let router = axum::Router::new().route("/health", axum::routing::get(|| async { "ok" }));
-/// let url = rest::test::spawn(router).await;
+/// let url = test::spawn(router).await;
 ///
 /// let answer = reqwest::get(format!("{url}/health")).await?.text().await?;
 ///

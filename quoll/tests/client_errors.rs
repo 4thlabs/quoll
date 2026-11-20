@@ -55,7 +55,7 @@ fn assert_shows_no_key(error: &Error, path: &str) {
 
 /// Calls the route through `http`, with the key added last, and returns its error.
 async fn call(http: ClientBuilder, url: &str) -> Error {
-    let http: ClientWithMiddleware = http.with(rest::client::key::<Token>(KEY)).build();
+    let http: ClientWithMiddleware = http.with(quoll::client::key::<Token>(KEY)).build();
 
     Api::client_with(http, url)
         .expect("the url is the api's")
@@ -154,7 +154,7 @@ async fn a_call_that_got_no_response_shows_no_key() {
 #[tokio::test]
 async fn a_failure_tried_again_shows_no_key() {
     let url = dead_url().await;
-    let http = ClientBuilder::new(reqwest::Client::new()).with(rest::client::retry(1));
+    let http = ClientBuilder::new(reqwest::Client::new()).with(quoll::client::retry(1));
 
     let error = call(http, &url).await;
 
@@ -164,7 +164,7 @@ async fn a_failure_tried_again_shows_no_key() {
 #[tokio::test]
 async fn a_failure_retry_does_not_try_again_shows_no_key() {
     let url = dead_url().await;
-    let http = ClientBuilder::new(reqwest::Client::new()).with(rest::client::retry(0));
+    let http = ClientBuilder::new(reqwest::Client::new()).with(quoll::client::retry(0));
 
     let error = call(http, &url).await;
 
@@ -194,7 +194,7 @@ async fn a_hop_of_redirects_that_got_no_response_shows_no_key() {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("a client");
-    let http = ClientBuilder::new(http).with(rest::client::redirects(1));
+    let http = ClientBuilder::new(http).with(quoll::client::redirects(1));
 
     let error = call(http, &url).await;
 
@@ -218,7 +218,7 @@ async fn an_internal_error_logs_no_key_of_a_reqwest_error() {
     let url = format!("{}/api/keyed?token={KEY}", dead_url().await);
     let direct = reqwest::get(&url).await.expect_err("no response");
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::retry(0))
+        .with(quoll::client::retry(0))
         .build();
     let chained = http.get(&url).send().await.expect_err("no response");
 

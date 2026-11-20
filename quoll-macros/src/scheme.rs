@@ -1,6 +1,6 @@
 //! What a scheme the contract declares becomes, on both sides and whatever the features: a type implementing
 //! `rest::Scheme`, which reads its credential through a helper of `quoll`, and which says where its credential
-//! travels, for the client's `rest::client::key`.
+//! travels, for the client's `client::key`.
 
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};

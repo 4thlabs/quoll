@@ -149,7 +149,7 @@ async fn serve() -> Served {
         notes: app.clone(),
         open: app,
     });
-    let url = rest::test::spawn(router).await;
+    let url = quoll::test::spawn(router).await;
 
     Served { url, handled }
 }
@@ -157,7 +157,7 @@ async fn serve() -> Served {
 /// A client of the api that sends `token`.
 fn client(url: &str, token: &str) -> Result<ApiClient> {
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::bearer(token))
+        .with(quoll::client::bearer(token))
         .build();
 
     Api::client_with(http, url)
@@ -443,7 +443,7 @@ async fn the_middleware_sends_the_token_to_the_routes_that_take_it_only() -> Res
     let served = serve().await;
     let seen = Seen::default();
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(rest::client::bearer("ana-token"))
+        .with(quoll::client::bearer("ana-token"))
         .with(recorder(Arc::clone(&seen)))
         .build();
     let api = Api::client_with(http.clone(), &served.url)?;

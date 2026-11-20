@@ -39,7 +39,7 @@ impl RequestId {
     /// spawned, in the stream an `Events` or a `JsonLines` sends, or with no [`request_id`] layer.
     ///
     /// ```
-    /// use quoll::rest::server::RequestId;
+    /// use quoll::server::RequestId;
     ///
     /// /// The id to log beside an error, when there is one.
     /// fn request() -> String {
@@ -116,12 +116,13 @@ fn made() -> HeaderValue {
 /// (whichever of the two layers runs first) and to the handler, through [`RequestId::current`].
 ///
 /// ```
-/// use quoll::rest;
+/// use quoll::server;
 ///
 /// # fn api_router() -> axum::Router { axum::Router::new() }
-/// let router = api_router()
-///     .layer(rest::server::trace())
-///     .layer(rest::server::request_id());
+/// let router = server::builder()
+///     .with(server::request_id())
+///     .with(server::trace())
+///     .into_router(api_router());
 /// ```
 ///
 /// [`trace`]: super::trace()

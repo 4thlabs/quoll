@@ -1,0 +1,12 @@
+error[E0277]: `Notes` is not the api of a contract, of which `client::Builder::build` builds a client
+ --> tests/compile_fail_client/build_not_a_contract.rs:7:31
+  |
+7 |     let _ = client::builder().build::<Notes>("http://localhost:8080");
+  |                               ^^^^^ not the api of a contract
+  |
+help: the trait `Contract` is not implemented for `Notes`
+ --> tests/compile_fail_client/build_not_a_contract.rs:4:1
+  |
+4 | struct Notes;
+  | ^^^^^^^^^^^^
+  = note: the api is the type `rest::api!` names after `api`, as `Api` in `pub api Api = "/api";`, and it has a client when `quoll` has the feature `client`

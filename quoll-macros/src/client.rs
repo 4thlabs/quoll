@@ -249,7 +249,8 @@ fn query(route: &Route) -> Option<(TokenStream, TokenStream)> {
     Some((item, call))
 }
 
-/// `ApiClient`, its method per group, and `Api::client` and `Api::client_with`, which build it.
+/// `ApiClient`, its method per group, and `Api::client` and `Api::client_with`, which build it, as does
+/// `client::Builder::build` through `client::Contract`.
 fn api_client(api: &Api) -> TokenStream {
     let Api { vis, name, .. } = api;
     let client = api.client();
@@ -309,6 +310,17 @@ fn api_client(api: &Api) -> TokenStream {
                 #url: &str,
             ) -> ::quoll::rest::Result<#client> {
                 ::quoll::__private::client::Client::with(#http, #url).map(|client| #client { client })
+            }
+        }
+
+        impl ::quoll::client::Contract for #name {
+            type Client = #client;
+
+            fn client_with(
+                #http: ::quoll::__private::reqwest_middleware::ClientWithMiddleware,
+                #url: &str,
+            ) -> ::quoll::rest::Result<#client> {
+                #name::client_with(#http, #url)
             }
         }
     }

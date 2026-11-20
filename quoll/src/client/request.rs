@@ -12,7 +12,7 @@ use reqwest_middleware::Middleware;
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use super::{Failure, middleware, own_route};
+use super::{Failure, Rank, helper, own_route};
 use crate::rest::Route;
 
 /// The header of [`request_id`].
@@ -23,29 +23,26 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 ///
 /// A request with no `Route`, one that did not come from the client of a contract, and a hop of
 /// [`redirects`](super::redirects) to another origin, go as they are: what `change` adds may be a credential, as the
-/// signature below. It is added after `redirects`, so that it runs on each hop; added before, what it puts in goes
-/// along to another origin, unless it is a header marked sensitive.
+/// signature below. It comes after `redirects`, where a [`Builder`](super::Builder) puts it, so that it runs on each
+/// hop; added before, what it puts in goes along to another origin, unless it is a header marked sensitive.
 ///
 /// ```no_run
-/// # use quoll::rest;
+/// # use quoll::{client, rest};
 /// use reqwest::Request;
 ///
 /// # fn sign(_: &http::Method, _: &str, _: &[u8]) -> http::HeaderValue { http::HeaderValue::from_static("") }
-/// # fn run() -> Result<(), reqwest::Error> {
-/// let sign = rest::client::on_request(|request: &mut Request, route: &rest::Route| {
+/// # fn run() -> rest::Result<()> {
+/// let sign = client::on_request(|request: &mut Request, route: &rest::Route| {
 ///     let body = request.body().and_then(|body| body.as_bytes()).unwrap_or_default();
 ///     let signature = sign(request.method(), request.url().path(), body);
 ///
 ///     request.headers_mut().insert("X-Signature", signature);
 /// });
-/// // reqwest's own policy would follow a redirect below every middleware, with the signature.
-/// let http = reqwest::Client::builder()
-///     .redirect(reqwest::redirect::Policy::none())
-///     .build()?;
-/// let http = reqwest_middleware::ClientBuilder::new(http)
-///     .with(rest::client::redirects(5))
+/// // After `redirects`, whatever the order: each hop is signed on the api's own origin only.
+/// let http = client::builder()
+///     .with(client::redirects(5))
 ///     .with(sign)
-///     .build();
+///     .build_http()?;
 /// # Ok(())
 /// # }
 /// ```
@@ -53,7 +50,7 @@ pub fn on_request<F>(change: F) -> impl Middleware
 where
     F: Fn(&mut Request, &Route) + Send + Sync + 'static,
 {
-    middleware(move |mut request, extensions, next| {
+    helper(Rank::Credential, move |mut request, extensions, next| {
         if let Some(route) = own_route(&request, extensions) {
             change(&mut request, route);
         }
@@ -68,15 +65,16 @@ where
 /// A name that cannot be a header's value, as one with a line break, fails each call that would send it.
 ///
 /// ```no_run
-/// # use quoll::rest;
-/// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-///     .with(rest::client::user_agent("notes-cli/0.1"))
-///     .build();
+/// # use quoll::{client, rest};
+/// let http = client::builder()
+///     .with(client::user_agent("notes-cli/0.1"))
+///     .build_http()?;
+/// # Ok::<(), quoll::rest::Error>(())
 /// ```
 pub fn user_agent(name: impl Into<String>) -> impl Middleware {
     let value = HeaderValue::try_from(name.into()).ok();
 
-    middleware(move |mut request, extensions, next| {
+    helper(Rank::UserAgent, move |mut request, extensions, next| {
         if !request.headers().contains_key(USER_AGENT) {
             let Some(value) = value.clone() else {
                 return Box::pin(async {
@@ -96,19 +94,21 @@ pub fn user_agent(name: impl Into<String>) -> impl Middleware {
 /// Sends `X-Request-Id` with a new random UUID on each request that has none, a request of a contract or not, so that
 /// the logs of the client and of the server tell the call by one id.
 ///
-/// The middleware after it see the request with its id: added before [`retry`](super::retry), it gives every
-/// attempt of a call the same id, and after it, each attempt its own. A route that sends an `X-Request-Id` of its own
+/// The middleware after it see the request with its id: before [`retry`](super::retry), where a
+/// [`Builder`](super::Builder) puts it, it gives every attempt of a call the same id, and after it, each attempt its
+/// own. A route that sends an `X-Request-Id` of its own
 /// keeps it.
 ///
 /// ```no_run
-/// # use quoll::rest;
-/// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-///     .with(rest::client::request_id())
-///     .with(rest::client::retry(3))
-///     .build();
+/// # use quoll::{client, rest};
+/// let http = client::builder()
+///     .with(client::request_id())
+///     .with(client::retry(3))
+///     .build_http()?;
+/// # Ok::<(), quoll::rest::Error>(())
 /// ```
 pub fn request_id() -> impl Middleware {
-    middleware(|mut request, extensions, next| {
+    helper(Rank::RequestId, |mut request, extensions, next| {
         if !request.headers().contains_key(X_REQUEST_ID) {
             let mut buffer = Uuid::encode_buffer();
             let id = Uuid::new_v4().hyphenated().encode_lower(&mut buffer);
@@ -137,14 +137,15 @@ pub fn request_id() -> impl Middleware {
 ///
 /// ```no_run
 /// # use std::time::Duration;
-/// # use quoll::rest;
-/// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-///     .with(rest::client::retry(3))
-///     .with(rest::client::timeout(Duration::from_secs(10)))
-///     .build();
+/// # use quoll::{client, rest};
+/// let http = client::builder()
+///     .with(client::retry(3))
+///     .with(client::timeout(Duration::from_secs(10)))
+///     .build_http()?;
+/// # Ok::<(), quoll::rest::Error>(())
 /// ```
 pub fn timeout(duration: Duration) -> impl Middleware {
-    middleware(move |mut request, extensions, next| {
+    helper(Rank::Timeout, move |mut request, extensions, next| {
         if !extensions.get::<Route>().is_some_and(|route| route.streams) {
             *request.timeout_mut() = Some(duration);
 

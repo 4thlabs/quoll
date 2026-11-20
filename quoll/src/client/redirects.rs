@@ -10,15 +10,17 @@ use reqwest::{Request, Response, Url};
 use reqwest_middleware::{Middleware, Next};
 
 use super::request::HeadDeadline;
-use super::{Failure, middleware};
+use super::{Failure, Rank, helper};
 
 /// Follows up to `hops` redirects of each call, each hop sent through the middleware added after it, on a reqwest
 /// client that follows none, `redirect(Policy::none())`: reqwest's own policy follows them below every middleware,
-/// with the headers of the first request, which `key` and `on_request` may have added.
+/// with the headers of the first request, which `key` and `on_request` may have added. A [`Builder`](super::Builder)
+/// given `redirects` builds its reqwest client so.
 ///
-/// It comes before every middleware that adds a credential, so that they run on each hop and send nothing to another
-/// origin: [`bearer`](super::bearer), [`bearer_from`](super::bearer_from), [`basic`](super::basic),
-/// [`key`](super::key) and [`on_request`](super::on_request) act on the api's own origin only. A hop is a copy of the
+/// It comes before every middleware that adds a credential, where a `Builder` puts it, so that they run on each hop
+/// and send nothing to another origin: [`bearer`](super::bearer), [`bearer_from`](super::bearer_from),
+/// [`basic`](super::basic), [`key`](super::key) and [`on_request`](super::on_request) act on the api's own origin
+/// only. A hop is a copy of the
 /// request `redirects` got, with what the middleware before it added: to another origin, it leaves out the headers
 /// that carry a credential, `Authorization`, `Cookie` and `Proxy-Authorization`, and every header marked sensitive,
 /// but keeps any other, so that a header of a credential added before it is to be marked sensitive.
@@ -31,20 +33,19 @@ use super::{Failure, middleware};
 ///   with an error with no status.
 ///
 /// ```no_run
-/// # use quoll::rest;
-/// # fn run() -> Result<(), reqwest::Error> {
-/// let http = reqwest::Client::builder()
-///     .redirect(reqwest::redirect::Policy::none())
-///     .build()?;
-/// let http = reqwest_middleware::ClientBuilder::new(http)
-///     .with(rest::client::redirects(5))
-///     .with(rest::client::bearer("mF_9.B5f-4.1JqM"))
-///     .build();
+/// # use quoll::{client, rest};
+/// # fn run() -> rest::Result<()> {
+/// let http = client::builder()
+///     .with(client::redirects(5))
+///     .with(client::bearer("mF_9.B5f-4.1JqM"))
+///     .build_http()?;
 /// # Ok(())
 /// # }
 /// ```
 pub fn redirects(hops: usize) -> impl Middleware {
-    middleware(move |request, extensions, next| Box::pin(follow(request, extensions, next, hops)))
+    helper(Rank::Redirects, move |request, extensions, next| {
+        Box::pin(follow(request, extensions, next, hops))
+    })
 }
 
 /// Sends `request`, and each redirect it gets, up to `hops`.

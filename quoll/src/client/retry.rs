@@ -11,8 +11,8 @@ use reqwest_retry::{
     Jitter, RetryTransientMiddleware, Retryable, RetryableStrategy, default_on_request_failure,
 };
 
-use super::middleware;
 use super::request::HeadTimedOut;
+use super::{Rank, helper};
 
 /// The bound of the wait before the first attempt again, which doubles after each, up to [`LONGEST`]. A wait is
 /// never shorter than half of it.
@@ -32,10 +32,11 @@ const LONGEST: Duration = Duration::from_secs(10);
 /// until its answer comes: what the stream gives after its 200 is the caller's.
 ///
 /// ```no_run
-/// # use quoll::rest;
-/// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-///     .with(rest::client::retry(3))
-///     .build();
+/// # use quoll::{client, rest};
+/// let http = client::builder()
+///     .with(client::retry(3))
+///     .build_http()?;
+/// # Ok::<(), quoll::rest::Error>(())
 /// ```
 pub fn retry(times: u32) -> impl Middleware {
     let policy = ExponentialBackoff::builder()
@@ -47,7 +48,7 @@ pub fn retry(times: u32) -> impl Middleware {
         policy, Transient,
     ));
 
-    middleware(move |request, extensions, next| {
+    helper(Rank::Retry, move |request, extensions, next| {
         if !may_retry(&request) {
             return next.run(request, extensions);
         }

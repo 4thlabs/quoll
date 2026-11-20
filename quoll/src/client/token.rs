@@ -8,7 +8,7 @@ use http::header::AUTHORIZATION;
 use reqwest::Request;
 use reqwest_middleware::Middleware;
 
-use super::{Failure, bearer_header, middleware, own_route};
+use super::{Failure, Rank, bearer_header, helper, own_route};
 use crate::rest::{Bearer, Result, Route};
 
 /// Where [`bearer_from`] takes its tokens: asked for one before each call, and for a new one after a 401.
@@ -18,7 +18,8 @@ use crate::rest::{Bearer, Result, Route};
 /// call the token it has when the one refused is no longer its own.
 ///
 /// ```no_run
-/// use quoll::rest::{self, client::TokenSource};
+/// use quoll::client::{self, TokenSource};
+/// use quoll::rest;
 /// use tokio::sync::Mutex;
 ///
 /// /// The token of a session, which a call to the authentication server renews.
@@ -45,9 +46,10 @@ use crate::rest::{Bearer, Result, Route};
 /// }
 ///
 /// # async fn renew() -> rest::Result<String> { Ok(String::new()) }
-/// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-///     .with(rest::client::bearer_from(Session { token: Mutex::new("t-1".into()) }))
-///     .build();
+/// let http = client::builder()
+///     .with(client::bearer_from(Session { token: Mutex::new("t-1".into()) }))
+///     .build_http()?;
+/// # Ok::<(), quoll::rest::Error>(())
 /// ```
 pub trait TokenSource: Send + Sync + 'static {
     /// The token to send on a call.
@@ -76,20 +78,22 @@ pub trait TokenSource: Send + Sync + 'static {
 /// does not show it.
 ///
 /// ```no_run
-/// # use quoll::rest::{self, client::TokenSource};
+/// # use quoll::client::{self, TokenSource};
+/// # use quoll::rest;
 /// # struct Session;
 /// # impl TokenSource for Session {
 /// #     async fn token(&self) -> rest::Result<String> { Ok(String::new()) }
 /// #     async fn refresh(&self, _: &str) -> rest::Result<String> { Ok(String::new()) }
 /// # }
-/// let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
-///     .with(rest::client::bearer_from(Session))
-///     .build();
+/// let http = client::builder()
+///     .with(client::bearer_from(Session))
+///     .build_http()?;
+/// # Ok::<(), quoll::rest::Error>(())
 /// ```
 pub fn bearer_from(source: impl TokenSource) -> impl Middleware {
     let source = Arc::new(source);
 
-    middleware(move |request, extensions, next| {
+    helper(Rank::Credential, move |request, extensions, next| {
         if !own_route(&request, extensions).is_some_and(Route::takes::<Bearer>) {
             return next.run(request, extensions);
         }
