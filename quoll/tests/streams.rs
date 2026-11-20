@@ -471,7 +471,15 @@ fn third_party(accepts: Arc<Mutex<Vec<String>>>) -> axum::Router {
                         "Application/X-JSONLines; charset=utf-8",
                         &["{\"id\":5,\"text\":\"e\"}\n"],
                     ),
-                    _ => answer("application/json", &["[{\"id\":1,\"text\":\"a\"}]"]),
+                    // Lines sent as JSON, as the Docker Engine API sends its streams, ended by `\r\n`.
+                    "count=6" => answer(
+                        "application/json",
+                        &[
+                            "{\"id\":6,\"text\":\"f\"}\r\n{\"id\":7,",
+                            "\"text\":\"g\"}\r\n",
+                        ],
+                    ),
+                    _ => answer("text/csv", &["id,text\n1,a\n"]),
                 }
             }),
         )
@@ -565,7 +573,9 @@ async fn json_lines_are_read_from_chunks_cut_anywhere() {
     );
     assert_eq!(
         *accepts.lock().expect("no test panics holding the lock"),
-        ["application/jsonl, application/x-ndjson;q=0.9, application/x-jsonlines;q=0.9"]
+        [
+            "application/jsonl, application/x-ndjson;q=0.9, application/x-jsonlines;q=0.9, application/json;q=0.5"
+        ]
     );
 }
 
@@ -578,6 +588,15 @@ async fn json_lines_are_read_by_the_names_other_apis_give_them() {
 
     assert_eq!(values(all(ndjson).await), [changed(4, "d")]);
     assert_eq!(values(all(jsonlines).await), [changed(5, "e")]);
+}
+
+#[tokio::test]
+async fn json_lines_sent_as_json_are_read_line_by_line() {
+    let (api, _) = third_party_client().await;
+
+    let lines = api.feeds().lines(6).await.expect("application/json");
+
+    assert_eq!(values(all(lines).await), [changed(6, "f"), changed(7, "g")]);
 }
 
 #[tokio::test]
@@ -611,7 +630,7 @@ async fn a_stream_of_another_content_type_is_an_error_with_no_status() {
     let (api, _) = third_party_client().await;
 
     let events = api.feeds().events(3).await.expect_err("JSON");
-    let lines = api.feeds().lines(3).await.expect_err("JSON");
+    let lines = api.feeds().lines(3).await.expect_err("CSV");
 
     no_status(
         &events,
@@ -623,7 +642,7 @@ async fn a_stream_of_another_content_type_is_an_error_with_no_status() {
         &lines,
         "feeds_lines",
         "got an answer that is not its result",
-        "its content type is not `application/jsonl`, `application/x-ndjson` or `application/x-jsonlines`",
+        "its content type is not `application/jsonl`, `application/x-ndjson`, `application/x-jsonlines` or `application/json`",
     );
 }
 

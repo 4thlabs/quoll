@@ -188,8 +188,9 @@ impl<T> fmt::Debug for Events<T> {
 /// client that reads slowly slows it down, and one that goes away drops it, with the connection.
 ///
 /// The client asks for `application/jsonl` with `Accept`, and reads `application/x-ndjson` and
-/// `application/x-jsonlines` too, which some APIs send: an answer of another content type is an error with no status,
-/// as an answer that is not a route's result is. Each line is an item, read as the JSON of a `T`: a line may end with
+/// `application/x-jsonlines` too, which some APIs send, and `application/json`, which others send their lines as, the
+/// Docker Engine API among them: an answer of another content type is an error with no status, as an answer that is
+/// not a route's result is. Each line is an item, read as the JSON of a `T`: a line may end with
 /// `\r\n`, an empty line is skipped, and a last line with no line break is read too. A line that does not read as a
 /// `T` is an error with no status, and the stream goes on. A line longer than 1 MiB, and a body that cannot be read,
 /// are an error with no status, and the stream ends after it.
