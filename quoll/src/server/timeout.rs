@@ -18,8 +18,8 @@ use crate::rest::Error;
 /// detail says the deadline, and the crate logs it once, at `ERROR`.
 ///
 /// It bounds the route's future, which reads the body, calls the handler and ends with the head of its answer, and
-/// not the answer's body: an `Events` or a `JsonLines` stream, whose handler returns as soon as it has the stream,
-/// goes on past it. The handler's future is dropped at the deadline, so that its work stops at its next `.await`.
+/// not the answer's body: an `Events`, a `JsonLines` or a `ByteStream`, whose handler returns as soon as it has the
+/// stream, goes on past it. The handler's future is dropped at the deadline, so that its work stops at its next `.await`.
 ///
 /// ```
 /// use std::time::Duration;

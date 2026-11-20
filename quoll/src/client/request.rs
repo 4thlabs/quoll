@@ -129,7 +129,7 @@ pub fn request_id() -> impl Middleware {
 /// `retry` tries again an attempt whose answer has not begun by then, but not one whose body is too slow: the body is
 /// read once the middleware have returned the answer, past what they see.
 ///
-/// A route whose result is a stream, `Events` or `JsonLines`, has a deadline for the head of its answer alone, its
+/// A route whose result is a stream, `Events`, `JsonLines` or `ByteStream`, has a deadline for the head of its answer alone, its
 /// status and headers: its body lasts as long as the server sends it, which a deadline would cut. That deadline
 /// bounds the middleware after `timeout`, each attempt when it comes after `retry`, and starts again on each hop of
 /// `redirects`; it is an error with no status that `retry` tries again. A request that did not come from the client

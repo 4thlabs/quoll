@@ -64,6 +64,10 @@ impl ResultKind {
         true,
     );
 
+    /// `ByteStream`: 200, of the content type it carries, a chunk at a time.
+    pub(crate) const BYTE_STREAM: Self =
+        Self::new("byte_stream", "ANY", "byte_stream", "ByteStream", false);
+
     const fn new(
         answer: &'static str,
         accept: &'static str,
@@ -187,6 +191,14 @@ pub(crate) const KNOWN: &[Known] = &[
         check: "json_lines",
         wraps: Some("each item"),
         result: Some(ResultKind::JSON_LINES),
+        body: None,
+        stream: true,
+    },
+    Known {
+        name: "ByteStream",
+        check: "byte_stream",
+        wraps: None,
+        result: Some(ResultKind::BYTE_STREAM),
         body: None,
         stream: true,
     },

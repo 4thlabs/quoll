@@ -7,6 +7,7 @@ use std::task::{Context, Poll};
 use axum::body::Body;
 use axum::extract::Request;
 use axum::response::Response;
+use http::{Extensions, HeaderMap, StatusCode, Version};
 use tower_http::compression::predicate::{And, DefaultPredicate, NotForContentType, Predicate};
 use tower_http::compression::{Compression, CompressionLayer as Compressed};
 use tower_layer::Layer;
@@ -14,14 +15,25 @@ use tower_service::Service;
 
 use super::layer::ResponseFuture;
 use crate::__private::content_type::JSON_LINES;
+use crate::rest::Route;
+
+/// Whether an answer is not a route's stream, as its [`Route`] says.
+type NotAStream = fn(StatusCode, Version, &HeaderMap, &Extensions) -> bool;
 
 /// What is compressed: tower-http's default, which leaves out answers of 32 bytes or less, images, gRPC and
-/// server-sent events, and JSON Lines too, whose lines would wait in the encoder rather than leave as they come.
-type Compressible = And<DefaultPredicate, NotForContentType>;
+/// server-sent events, and JSON Lines too, whose lines would wait in the encoder rather than leave as they come; and
+/// every answer of a route whose result is a stream, a `ByteStream` of any content type among them, which may be a
+/// live feed.
+type Compressible = And<And<DefaultPredicate, NotForContentType>, NotAStream>;
+
+/// Whether the answer is not that of a route whose result is a stream, whatever its content type.
+fn not_a_stream(_: StatusCode, _: Version, _: &HeaderMap, extensions: &Extensions) -> bool {
+    !extensions.get::<Route>().is_some_and(|route| route.streams)
+}
 
 /// Compresses each answer as the caller's `Accept-Encoding` asks, with gzip, brotli or zstd, on tower-http's
-/// `Compression`. Answers of 32 bytes or less, images, and streams, `Events` and `JsonLines`, whose values must
-/// leave as they come, are sent as they are.
+/// `Compression`. Answers of 32 bytes or less, images, and streams, `Events`, `JsonLines` and `ByteStream`, whose
+/// values must leave as they come, are sent as they are.
 ///
 /// ```
 /// use quoll::server;
@@ -32,7 +44,9 @@ type Compressible = And<DefaultPredicate, NotForContentType>;
 ///     .into_router(api_router());
 /// ```
 pub fn compression() -> CompressionLayer {
-    let compressible = DefaultPredicate::new().and(NotForContentType::const_new(JSON_LINES));
+    let compressible = DefaultPredicate::new()
+        .and(NotForContentType::const_new(JSON_LINES))
+        .and(not_a_stream as NotAStream);
 
     CompressionLayer(
         Compressed::new()

@@ -1,15 +1,15 @@
-//! The types a contract names that the macro recognizes by their name: `Created`, `Accepted`, `Events` and
-//! `JsonLines` as a result, `Form` as a body, `Text` and `Bytes` as either.
+//! The types a contract names that the macro recognizes by their name: `Created`, `Accepted`, `Events`, `JsonLines`
+//! and `ByteStream` as a result, `Form` as a body, `Text` and `Bytes` as either.
 //!
 //! The macro writes them with the contract's own tokens, so that the user's import is the one that names them. Each
 //! trait here is implemented by the crate's type alone: a type of another crate, or of the user's, that has one of
 //! these names fails on it, with a message that says so. The checks of [`created`], [`accepted`], [`form`], [`text`],
-//! [`bytes`], [`events`] and [`json_lines`] are written whatever the features of `quoll`, so that a contract crate
+//! [`bytes`], [`events`], [`json_lines`] and [`byte_stream`] are written whatever the features of `quoll`, so that a contract crate
 //! built with neither feature checks them too.
 
 use std::borrow::Cow;
 
-use crate::rest::{Accepted, Bytes, Created, Events, Form, JsonLines, Text};
+use crate::rest::{Accepted, ByteStream, Bytes, Created, Events, Form, JsonLines, Text};
 
 pub use crate::rest::stream::Items;
 
@@ -194,6 +194,33 @@ pub trait IsJsonLines: Streamed {}
 
 impl<T> IsJsonLines for JsonLines<T> {}
 
+/// The crate's [`ByteStream`]: its chunks and their content type, which the server sends and the client reads.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not quoll's `ByteStream`, which a result named `ByteStream` is read as",
+    label = "not `quoll::rest::ByteStream`",
+    note = "bring quoll's into scope, `use quoll::rest::ByteStream;`, or name a type of your own otherwise"
+)]
+pub trait IsByteStream: Sized {
+    /// The bytes of `chunks`, of `content_type`, as the client reads them.
+    fn from_parts(chunks: Items<Vec<u8>>, content_type: Cow<'static, str>) -> Self;
+
+    /// The chunks and their content type, as the server sends them.
+    fn into_parts(self) -> (Items<Vec<u8>>, Cow<'static, str>);
+}
+
+impl IsByteStream for ByteStream {
+    fn from_parts(chunks: Items<Vec<u8>>, content_type: Cow<'static, str>) -> Self {
+        Self {
+            chunks,
+            content_type,
+        }
+    }
+
+    fn into_parts(self) -> (Items<Vec<u8>>, Cow<'static, str>) {
+        (self.chunks, self.content_type)
+    }
+}
+
 /// Checks that `T`, a result named `Created`, is the crate's.
 pub const fn created<T: IsCreated>() {}
 
@@ -214,3 +241,6 @@ pub const fn events<T: IsEvents>() {}
 
 /// Checks that `T`, a result named `JsonLines`, is the crate's.
 pub const fn json_lines<T: IsJsonLines>() {}
+
+/// Checks that `T`, a result named `ByteStream`, is the crate's.
+pub const fn byte_stream<T: IsByteStream>() {}

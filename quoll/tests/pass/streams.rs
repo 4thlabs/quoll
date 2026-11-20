@@ -1,4 +1,4 @@
-use quoll::rest::{self, Events, JsonLines};
+use quoll::rest::{self, ByteStream, Events, JsonLines};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +17,9 @@ rest::api! {
              => note_events(id: i64, header("Last-Event-ID") last: Option<String>) -> rest::Events<Change>;
         GET  "/export"         => export() -> JsonLines<Change>;
         POST "/import"         => import(changes: Vec<Change>) -> rest::JsonLines<Change>;
+        GET  "/logs/{id}?follow={follow}"
+             => logs(id: i64, follow: Option<bool>) -> ByteStream;
+        POST "/run"            => run(script: rest::Text) -> rest::ByteStream;
     }
 }
 

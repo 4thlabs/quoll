@@ -164,6 +164,8 @@ pub enum Reply {
     Events(SchemaFn),
     /// `JsonLines<T>`, with the schema of each item.
     JsonLines(SchemaFn),
+    /// `ByteStream`.
+    ByteStream,
 }
 
 /// The authentication of a route.
@@ -586,6 +588,13 @@ impl Builder {
                 "200",
                 json!({
                     "description": "Bytes of the media type `Content-Type` says.",
+                    "content": { "*/*": {} },
+                }),
+            ),
+            Reply::ByteStream => (
+                "200",
+                json!({
+                    "description": "Bytes of the media type `Content-Type` says, sent as they come: a stream, which may not end. A failure aborts the body.",
                     "content": { "*/*": {} },
                 }),
             ),

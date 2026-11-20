@@ -9,3 +9,9 @@ error: `JsonLines` is a stream a route answers, and a route does not read a stre
   |
 8 |         POST "/lines"  => import(lines: JsonLines<Note>);
   |                                         ^^^^^^^^^^^^^^^
+
+error: `ByteStream` is a stream a route answers, and a route does not read a stream as its body: take all the items at once, a `Vec<Note>` as JSON, or `Bytes`
+ --> tests/compile_fail/body_stream.rs:9:40
+  |
+9 |         POST "/logs"   => upload(logs: rest::ByteStream);
+  |                                        ^^^^^^^^^^^^^^^^

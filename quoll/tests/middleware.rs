@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures_util::{StreamExt, stream};
 use http::Extensions;
 use quoll::client::TokenSource;
-use quoll::rest::{self, Authenticate, Bearer, Error, Events, Result, Route, Text};
+use quoll::rest::{self, Authenticate, Bearer, ByteStream, Error, Events, Result, Route, Text};
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware, Next};
 use schemars::JsonSchema;
@@ -43,6 +43,7 @@ rest::api! {
                                      ) -> Seen;
         GET    "/held"            => held();
         GET    "/events"          => events() -> Events<u32>;
+        GET    "/output"          => output() -> ByteStream;
         GET    "/flaky/{status}"  => get(status: u16) -> u32;
         HEAD   "/flaky/{status}"  => head(status: u16);
         PUT    "/flaky/{status}"  => put(status: u16, text: Text) -> u32;
@@ -115,6 +116,18 @@ impl CallsServer for App {
         });
 
         Ok(Events::new(stream::once(async { 1 }).chain(second)))
+    }
+
+    async fn output(&self) -> Result<ByteStream> {
+        let release = Arc::clone(&self.release);
+        let second = stream::once(async move {
+            release.notified().await;
+            b"2".to_vec()
+        });
+
+        Ok(ByteStream::new(
+            stream::once(async { b"1".to_vec() }).chain(second),
+        ))
     }
 
     async fn get(&self, status: u16) -> Result<u32> {
@@ -518,6 +531,18 @@ async fn timeout_leaves_a_stream_that_outlives_it() -> Result<()> {
     app.release.notify_one();
     assert_eq!(events.next().await.expect("an event")?, 2);
     assert!(events.next().await.is_none());
+
+    let mut output = api.calls().output().await?;
+
+    assert_eq!(output.next().await.expect("a chunk")?, b"1");
+
+    let error = api.calls().held().await.expect_err("past its deadline");
+
+    assert!(timed_out(&error), "{error:?}");
+
+    app.release.notify_one();
+    assert_eq!(output.next().await.expect("a chunk")?, b"2");
+    assert!(output.next().await.is_none());
     Ok(())
 }
 
@@ -562,6 +587,27 @@ async fn timeout_bounds_the_wait_for_a_streams_head_which_retry_tries_again() {
         .expect("the deadline ends the call");
     let Err(error) = called else {
         panic!("a server that never answers gave events");
+    };
+
+    assert_eq!(error.status(), None);
+    assert!(format!("{error:?}").contains("deadline"), "{error:?}");
+    assert_eq!(accepted.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn timeout_bounds_the_wait_for_the_head_of_a_byte_stream_which_retry_tries_again() {
+    let (url, accepted) = silent().await;
+    let http = ClientBuilder::new(reqwest::Client::new())
+        .with(quoll::client::retry(2))
+        .with(quoll::client::timeout(Duration::from_millis(100)))
+        .build();
+
+    // A guard that fails the test rather than hang it, were the head never bounded.
+    let called = tokio::time::timeout(Duration::from_secs(10), client(http, &url).calls().output())
+        .await
+        .expect("the deadline ends the call");
+    let Err(error) = called else {
+        panic!("a server that never answers gave bytes");
     };
 
     assert_eq!(error.status(), None);

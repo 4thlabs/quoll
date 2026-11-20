@@ -9,3 +9,9 @@ error: the header `X-Lines` is read from text, which this type is not: use an in
   |
 8 |         GET "/lines" => lines(header("X-Lines") lines: JsonLines<i64>);
   |                                                        ^^^^^^^^^^^^^^
+
+error: the path parameter `logs` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants
+ --> tests/compile_fail/path_param_stream.rs:9:42
+  |
+9 |         GET "/logs/{logs}" => logs(logs: ByteStream);
+  |                                          ^^^^^^^^^^

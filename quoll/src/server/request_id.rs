@@ -36,7 +36,7 @@ pub struct RequestId(HeaderValue);
 
 impl RequestId {
     /// The id of the request whose handler runs, while its future runs; `None` outside a handler, in a task it
-    /// spawned, in the stream an `Events` or a `JsonLines` sends, or with no [`request_id`] layer.
+    /// spawned, in the stream an `Events`, a `JsonLines` or a `ByteStream` sends, or with no [`request_id`] layer.
     ///
     /// ```
     /// use quoll::server::RequestId;

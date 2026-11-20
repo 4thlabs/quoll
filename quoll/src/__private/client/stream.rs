@@ -1,5 +1,5 @@
 //! The results a client reads as a stream: the body of an answer split into its items as its chunks come, server-sent
-//! events or JSON Lines, each read as the JSON of an item.
+//! events or JSON Lines, each read as the JSON of an item; or the chunks themselves, as they come.
 
 use std::mem;
 
@@ -101,6 +101,33 @@ where
 
     // Asked again once it has ended, the stream says so again rather than panic.
     Items::new(items.fuse())
+}
+
+/// The chunks of `response`'s body, each as the connection gave it, read only when the stream is asked for one.
+///
+/// A body that cannot be read is an error, and the stream ends after it, dropping the answer. Dropping the stream
+/// drops the answer too, which closes its connection.
+pub(crate) fn chunks(response: reqwest::Response, route: &'static Route) -> Items<Vec<u8>> {
+    let chunks = stream::unfold(Some(response), move |response| async move {
+        let mut response = response?;
+
+        loop {
+            match response.chunk().await {
+                // hyper may hand over an empty chunk, which says nothing to the caller.
+                Ok(Some(chunk)) if chunk.is_empty() => {}
+                Ok(Some(chunk)) => return Some((Ok(Vec::from(chunk)), Some(response))),
+                Ok(None) => return None,
+                Err(error) => {
+                    let error = no_answer(route, "got an answer whose body cannot be read", error);
+
+                    return Some((Err(error), None));
+                }
+            }
+        }
+    });
+
+    // Asked again once it has ended, the stream says so again rather than panic.
+    Items::new(chunks.fuse())
 }
 
 /// What the error of an item that does not read as the route's says.

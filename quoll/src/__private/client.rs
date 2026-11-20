@@ -18,7 +18,7 @@ use serde_json::Value;
 use crate::__private::content_type::{
     self, FORM, JSON_LINES, OCTET_STREAM, PROBLEM, TEXT_UTF8, media_type_value,
 };
-use crate::__private::known::{IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
+use crate::__private::known::{IsByteStream, IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
 use crate::__private::read::{Deserialized, Read};
 use crate::rest::{Error, Problem, Result, Route};
 
@@ -526,13 +526,39 @@ impl Answer {
 
     /// The body, read as bytes, as [`Answer::bytes`] reads it.
     async fn read_bytes<B: IsBytes>(self) -> Result<B> {
-        let content_type = content_type::media_type(self.response.headers())
-            .map_or(Cow::Borrowed(OCTET_STREAM), |media_type| {
-                Cow::Owned(media_type.to_owned())
-            });
+        let content_type = self.content_type();
         let body = self.read().await?;
 
         Ok(B::from_parts(body.into(), content_type))
+    }
+
+    /// The body, read as its chunks as they come, of any content type: what a route returning `ByteStream` gives. It
+    /// keeps the answer's content type, or `application/octet-stream`, as [`Answer::bytes`] does.
+    ///
+    /// # Errors
+    ///
+    /// None to the read itself; in the stream, an error with no status for a body that cannot be read, after which the
+    /// stream ends.
+    pub fn byte_stream<B: IsByteStream + Send + 'static>(self) -> Read<B> {
+        Read::new(self.read_byte_stream())
+    }
+
+    /// The body, read as its chunks, as [`Answer::byte_stream`] reads it.
+    async fn read_byte_stream<B: IsByteStream>(self) -> Result<B> {
+        let content_type = self.content_type();
+
+        Ok(B::from_parts(
+            stream::chunks(self.response, self.route),
+            content_type,
+        ))
+    }
+
+    /// The answer's content type, or `application/octet-stream` when it has none, or one that is not a media type.
+    fn content_type(&self) -> Cow<'static, str> {
+        content_type::media_type(self.response.headers())
+            .map_or(Cow::Borrowed(OCTET_STREAM), |media_type| {
+                Cow::Owned(media_type.to_owned())
+            })
     }
 
     /// The body, read as server-sent events as they come, each the JSON of an item: what a route returning
