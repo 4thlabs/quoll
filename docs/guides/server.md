@@ -6,6 +6,7 @@ gives the `axum::Router` of the api. `quoll::server::builder()` serves it with i
 ## A server
 
 ```rust,no_run
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -35,38 +36,48 @@ rest::api! {
     }
 }
 
+/// The notes, and the id of the next one: never one a note had, removed or not.
+#[derive(Debug, Default)]
+struct Store {
+    last_id: i64,
+    notes: BTreeMap<i64, Note>,
+}
+
 /// The service: its state is its own fields, shared by its clones.
 #[derive(Debug, Clone, Default)]
 struct App {
-    notes: Arc<Mutex<Vec<Note>>>,
+    store: Arc<Mutex<Store>>,
 }
 
 impl NotesServer for App {
     async fn get(&self, id: i64) -> Result<Note> {
-        let notes = self.notes.lock().expect("no handler panics while holding the lock");
+        let store = self.store.lock().expect("no handler panics while holding the lock");
 
-        notes
-            .iter()
-            .find(|note| note.id == id)
+        store
+            .notes
+            .get(&id)
             .cloned()
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
     async fn create(&self, note: NewNote) -> Result<Created<Note>> {
-        let mut notes = self.notes.lock().expect("no handler panics while holding the lock");
+        let mut store = self.store.lock().expect("no handler panics while holding the lock");
+
+        store.last_id += 1;
+
         let note = Note {
-            id: notes.len() as i64 + 1,
+            id: store.last_id,
             title: note.title,
         };
 
-        notes.push(note.clone());
+        store.notes.insert(note.id, note.clone());
         Ok(Created::at(format!("/api/notes/{}", note.id), note))
     }
 
     async fn remove(&self, id: i64) -> Result<()> {
-        let mut notes = self.notes.lock().expect("no handler panics while holding the lock");
+        let mut store = self.store.lock().expect("no handler panics while holding the lock");
 
-        notes.retain(|note| note.id != id);
+        store.notes.remove(&id);
         Ok(())
     }
 }
