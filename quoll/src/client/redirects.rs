@@ -15,7 +15,8 @@ use super::{Failure, Rank, helper};
 /// Follows up to `hops` redirects of each call, each hop sent through the middleware added after it, on a reqwest
 /// client that follows none, `redirect(Policy::none())`: reqwest's own policy follows them below every middleware,
 /// with the headers of the first request, which `key` and `on_request` may have added. A [`Builder`](super::Builder)
-/// given `redirects` builds its reqwest client so.
+/// given `redirects` builds its reqwest client so, and adds `redirects(10)` itself when it is given a credential and no
+/// `redirects`.
 ///
 /// It comes before every middleware that adds a credential, where a `Builder` puts it, so that they run on each hop
 /// and send nothing to another origin: [`bearer`](super::bearer), [`bearer_from`](super::bearer_from),
