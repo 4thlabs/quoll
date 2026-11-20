@@ -67,28 +67,46 @@ pub(crate) struct Web {
 }
 
 /// A config that cannot be read, with the key at fault.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct ConfigError {
     key: String,
-    message: String,
+    reason: Reason,
+}
+
+#[derive(Debug)]
+enum Reason {
+    /// What the key holds that cannot be, said by quoll.
+    Message(String),
+    /// What serde could not read at the key, its source.
+    Serde(serde_json::Error),
 }
 
 impl ConfigError {
     pub(crate) fn new(key: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             key: key.into(),
-            message: message.into(),
+            reason: Reason::Message(message.into()),
         }
     }
 }
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.key, self.message)
+        match &self.reason {
+            Reason::Message(message) => write!(f, "{}: {message}", self.key),
+            Reason::Serde(_) => f.write_str(&self.key),
+        }
     }
 }
 
-impl std::error::Error for ConfigError {}
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.reason {
+            Reason::Message(_) => None,
+            Reason::Serde(error) => Some(error),
+        }
+    }
+}
 
 impl Config {
     /// Reads the config from the workspace's `metadata`, as `cargo metadata` gives it, and checks it against the
@@ -109,7 +127,10 @@ impl Config {
                 format!("{ROOT}.{path}")
             };
 
-            ConfigError::new(key, error.into_inner().to_string())
+            ConfigError {
+                key,
+                reason: Reason::Serde(error.into_inner()),
+            }
         })?;
 
         let apis = raw
@@ -135,11 +156,13 @@ impl Config {
 
 fn read_api(key: String, raw: RawApi, packages: &[Package]) -> Result<Api, ConfigError> {
     let package = required(&key, "package", raw.package)?;
+
     let Some(found) = packages.iter().find(|candidate| candidate.name == package) else {
         return Err(no_package(&key, &package));
     };
 
     let bin = required(&key, "bin", raw.bin)?;
+
     if !found.has_binary(&bin) {
         return Err(ConfigError::new(
             format!("{key}.bin"),
@@ -148,6 +171,7 @@ fn read_api(key: String, raw: RawApi, packages: &[Package]) -> Result<Api, Confi
     }
 
     let output = required(&key, "output", raw.output)?;
+
     if output.is_empty() {
         return Err(ConfigError::new(
             format!("{key}.output"),
@@ -173,6 +197,7 @@ fn read_api(key: String, raw: RawApi, packages: &[Package]) -> Result<Api, Confi
 
 fn read_server(key: String, raw: RawServer, packages: &[Package]) -> Result<Server, ConfigError> {
     let package = required(&key, "package", raw.package)?;
+
     if !packages.iter().any(|candidate| candidate.name == package) {
         return Err(no_package(&key, &package));
     }
@@ -184,6 +209,14 @@ fn read_server(key: String, raw: RawServer, packages: &[Package]) -> Result<Serv
 
 fn read_web(key: String, raw: RawWeb) -> Result<Web, ConfigError> {
     let dir = required(&key, "dir", raw.dir)?;
+
+    if dir.is_empty() {
+        return Err(ConfigError::new(
+            format!("{key}.dir"),
+            "empty: write the directory of the web side, from the workspace's root",
+        ));
+    }
+
     let dev = raw
         .dev
         .map(|words| command(format!("{key}.dev"), words))
@@ -275,6 +308,7 @@ impl<'de> Deserialize<'de> for Words {
 
             fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Words, A::Error> {
                 let mut words = Vec::new();
+
                 while let Some(word) = seq.next_element::<String>()? {
                     words.push(word);
                 }
@@ -316,8 +350,16 @@ mod tests {
         Config::read(&json!({ "quoll": quoll }), &packages())
     }
 
+    /// The error and its sources, as `cargo quoll` prints them.
+    fn chain(error: &dyn std::error::Error) -> String {
+        match error.source() {
+            Some(source) => format!("{error}: {}", chain(source)),
+            None => error.to_string(),
+        }
+    }
+
     fn error(quoll: Value) -> String {
-        read(quoll).expect_err("the config is refused").to_string()
+        chain(&read(quoll).expect_err("the config is refused"))
     }
 
     fn api() -> Value {
@@ -369,6 +411,7 @@ mod tests {
         assert_eq!(server.url, "http://127.0.0.1:8080");
 
         let web = config.web.expect("the web side is read");
+
         assert_eq!(web.dir, PathBuf::from("web"));
         assert_eq!(
             web.build,
@@ -392,9 +435,8 @@ mod tests {
 
     #[test]
     fn no_config_is_refused() {
-        let error = Config::read(&Value::Null, &packages())
-            .expect_err("no config is refused")
-            .to_string();
+        let error =
+            chain(&Config::read(&Value::Null, &packages()).expect_err("no config is refused"));
 
         assert_eq!(
             error,
@@ -418,6 +460,7 @@ mod tests {
         );
 
         let mut misspelt = api();
+
         misspelt["ouptut"] = misspelt["output"].take();
         assert_eq!(
             error(json!({ "api": [misspelt] })),
@@ -429,6 +472,7 @@ mod tests {
     fn a_missing_key_is_named() {
         for key in ["package", "bin", "output"] {
             let mut incomplete = api();
+
             incomplete
                 .as_object_mut()
                 .expect("an api is a table")
@@ -453,6 +497,7 @@ mod tests {
     #[test]
     fn a_key_of_the_wrong_type_is_named() {
         let mut api = api();
+
         api["output"] = json!(1);
 
         assert_eq!(
@@ -469,6 +514,7 @@ mod tests {
         );
 
         let mut api = api();
+
         api["after"] = json!(["npx", "orval"]);
         assert_eq!(
             error(json!({ "api": [api] })),
@@ -479,6 +525,7 @@ mod tests {
     #[test]
     fn a_word_that_is_not_a_string_is_named() {
         let mut api = api();
+
         api["after"] = json!([["npx", 1]]);
 
         assert_eq!(
@@ -490,6 +537,7 @@ mod tests {
     #[test]
     fn an_empty_command_is_refused() {
         let mut api = api();
+
         api["after"] = json!([["npx", "orval"], []]);
         assert_eq!(
             error(json!({ "api": [api] })),
@@ -503,8 +551,30 @@ mod tests {
     }
 
     #[test]
+    fn a_serde_error_is_the_source() {
+        let error = read(json!({ "apis": [] })).expect_err("the config is refused");
+
+        assert_eq!(error.to_string(), "workspace.metadata.quoll.apis");
+        assert_eq!(
+            std::error::Error::source(&error)
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("unknown field `apis`, expected one of `api`, `server`, `web`")
+        );
+    }
+
+    #[test]
+    fn an_empty_web_dir_is_refused() {
+        assert_eq!(
+            error(json!({ "web": { "dir": "", "build": ["npm", "run", "build"] } })),
+            "workspace.metadata.quoll.web.dir: empty: write the directory of the web side, from the workspace's root"
+        );
+    }
+
+    #[test]
     fn an_empty_output_is_refused() {
         let mut api = api();
+
         api["output"] = json!("");
 
         assert_eq!(
@@ -516,6 +586,7 @@ mod tests {
     #[test]
     fn a_package_outside_the_workspace_is_refused() {
         let mut api = api();
+
         api["package"] = json!("notes-ap");
         assert_eq!(
             error(json!({ "api": [api] })),
@@ -531,6 +602,7 @@ mod tests {
     #[test]
     fn a_binary_the_package_does_not_have_is_refused() {
         let mut api = api();
+
         api["bin"] = json!("notes_api");
 
         assert_eq!(

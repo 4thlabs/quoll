@@ -34,6 +34,7 @@ impl Fixture {
     /// The workspace, with `config` written after its `[workspace]` table.
     fn new(config: &str) -> Self {
         let dir = tempfile::tempdir().expect("a temporary directory");
+
         copy_dir(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixture"),
             dir.path(),
@@ -97,6 +98,11 @@ fn copy_dir(from: &Path, to: &Path) {
         let entry = entry.expect("the fixture is read");
         let target = to.join(entry.file_name());
 
+        // What a build of the fixture where it lies leaves there.
+        if entry.file_name() == "target" || entry.file_name() == "Cargo.lock" {
+            continue;
+        }
+
         if entry.file_type().expect("the fixture is read").is_dir() {
             copy_dir(&entry.path(), &target);
         } else {
@@ -153,9 +159,11 @@ fn gen_writes_the_document_then_runs_after_in_order_in_its_directory() {
 #[test]
 fn gen_leaves_a_document_that_did_not_change_and_runs_after_again() {
     let fixture = Fixture::new(CONFIG);
+
     assert_succeeded(&fixture.cargo_quoll(&["gen"]));
 
     let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(86_400);
+
     File::options()
         .write(true)
         .open(fixture.path("web/openapi.json"))
@@ -174,6 +182,7 @@ fn gen_leaves_a_document_that_did_not_change_and_runs_after_again() {
 #[test]
 fn gen_writes_a_document_that_changed() {
     let fixture = Fixture::new(CONFIG);
+
     fs::create_dir(fixture.path("web")).expect("the directory is made");
     fs::write(fixture.path("web/openapi.json"), "stale").expect("the document is written");
 
@@ -225,6 +234,7 @@ fn a_program_not_on_the_path_fails_gen() {
 #[test]
 fn a_contract_that_does_not_compile_fails_gen_with_cargo_s_output() {
     let fixture = Fixture::new(CONFIG);
+
     fs::write(
         fixture.path("contract/src/bin/openapi.rs"),
         "fn main() { not_rust }\n",
@@ -259,6 +269,7 @@ fn a_config_that_cannot_be_read_names_its_key() {
 #[test]
 fn check_passes_on_a_document_up_to_date_and_runs_nothing() {
     let fixture = Fixture::new(CONFIG);
+
     assert_succeeded(&fixture.cargo_quoll(&["gen"]));
 
     assert_succeeded(&fixture.cargo_quoll(&["gen", "--check"]));
@@ -273,6 +284,7 @@ fn check_passes_on_a_document_up_to_date_and_runs_nothing() {
 #[test]
 fn check_fails_on_a_stale_document_and_writes_nothing() {
     let fixture = Fixture::new(CONFIG);
+
     fs::create_dir(fixture.path("web")).expect("the directory is made");
     fs::write(fixture.path("web/openapi.json"), "stale").expect("the document is written");
 
@@ -281,6 +293,36 @@ fn check_fails_on_a_stale_document_and_writes_nothing() {
     assert_failed_with(&output, &["web/openapi.json: not the one `openapi` prints"]);
     assert_eq!(fixture.document().as_deref(), Some("stale"));
     assert_eq!(fixture.record("web"), "");
+}
+
+#[test]
+fn a_document_checked_out_with_crlf_is_up_to_date() {
+    let fixture = Fixture::new(CONFIG);
+    let crlf = DOCUMENT.replace('\n', "\r\n");
+
+    fs::create_dir(fixture.path("web")).expect("the directory is made");
+    fs::write(fixture.path("web/openapi.json"), &crlf).expect("the document is written");
+
+    assert_succeeded(&fixture.cargo_quoll(&["gen", "--check"]));
+    assert_succeeded(&fixture.cargo_quoll(&["gen"]));
+
+    assert_eq!(
+        fixture.document(),
+        Some(crlf),
+        "the document is not written again"
+    );
+}
+
+#[test]
+fn check_does_not_update_the_cargo_lock() {
+    let fixture = Fixture::new(CONFIG);
+
+    fs::remove_file(fixture.path("Cargo.lock")).expect("the fixture's build wrote its Cargo.lock");
+
+    let output = fixture.cargo_quoll(&["gen", "--check"]);
+
+    assert_failed_with(&output, &["--locked"]);
+    assert!(!fixture.path("Cargo.lock").exists());
 }
 
 #[test]

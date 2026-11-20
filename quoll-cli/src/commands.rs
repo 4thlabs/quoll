@@ -27,6 +27,7 @@ impl Command {
     /// from `dir` when it is written as a path.
     pub(crate) fn run(&self, dir: &Path) -> Result<()> {
         let key = &self.key;
+
         if !dir.is_dir() {
             bail!(
                 "{key}: cannot run `{self}` in {}: no such directory",
@@ -39,6 +40,7 @@ impl Command {
             .with_context(|| format!("{key}: cannot find the program `{program}` on the PATH"))?;
 
         eprintln!("{:>12} `{self}` in {}", "Running", dir.display());
+
         let status = process::Command::new(&resolved)
             .args(&self.words[1..])
             .current_dir(dir)

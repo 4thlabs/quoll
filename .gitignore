@@ -1,3 +1,6 @@
 /target
 **/node_modules
 **/openapi.json
+# What a build of the fixture of quoll-cli's tests, where it lies, leaves there.
+/quoll-cli/tests/fixture/**/target
+/quoll-cli/tests/fixture/**/Cargo.lock
