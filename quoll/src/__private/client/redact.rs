@@ -12,12 +12,14 @@ pub(crate) fn redacted(url: &Url) -> String {
 }
 
 /// Takes the credentials, the query and the fragment out of the URL of each reqwest error `error` holds, which reqwest
-/// writes in the error's message and its debug form: `error` itself, or one that reqwest-middleware or reqwest-retry
-/// wrap, as `retry` and a middleware's `reqwest_middleware::Error::middleware` do. The error stays reqwest's, which a
-/// caller still asks `is_timeout` or `is_connect`, and its URL still says where the call went.
+/// writes in the error's message and its debug form. It reaches the errors of reqwest, of reqwest-middleware and of
+/// reqwest-retry, as the client and its middleware give them: `error` itself, a reqwest error or a
+/// `reqwest_middleware::Error`, and in that error's `anyhow` a reqwest error, a `reqwest_middleware::Error` or a
+/// `RetryError`, as `retry` and a middleware's `reqwest_middleware::Error::middleware` wrap them. The error stays
+/// reqwest's, which a caller still asks `is_timeout` or `is_connect`, and its URL still says where the call went.
 ///
-/// A reqwest error that another type keeps, a source behind `&`, is out of reach: such an error is the application's
-/// own, to write without the URL.
+/// A reqwest error inside an error type of the application's own is out of reach, a source behind `&`: the
+/// application strips it itself, with `reqwest::Error::without_url`.
 pub(crate) fn strip_urls(error: &mut (dyn StdError + Send + Sync + 'static)) {
     if let Some(error) = error.downcast_mut::<reqwest::Error>() {
         strip(error.url_mut());
@@ -35,11 +37,9 @@ fn strip_middleware(error: &mut reqwest_middleware::Error) {
 
     if let Some(error) = error.downcast_mut::<reqwest::Error>() {
         strip(error.url_mut());
-    }
-    if let Some(error) = error.downcast_mut::<reqwest_middleware::Error>() {
+    } else if let Some(error) = error.downcast_mut::<reqwest_middleware::Error>() {
         strip_middleware(error);
-    }
-    if let Some(RetryError::Error(error) | RetryError::WithRetries { err: error, .. }) =
+    } else if let Some(RetryError::Error(error) | RetryError::WithRetries { err: error, .. }) =
         error.downcast_mut::<RetryError>()
     {
         strip_middleware(error);

@@ -606,17 +606,27 @@ async fn trace_opens_a_span_named_by_the_operation() -> Result<()> {
     Ok(())
 }
 
+/// A URL where nothing answers: a port kept bound, whose every connection is closed at once, with no response. A port
+/// freed instead could be taken by another test, which would answer.
+async fn dead_url() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    let address = listener.local_addr().expect("an address");
+
+    tokio::spawn(async move {
+        while let Ok((connection, _)) = listener.accept().await {
+            drop(connection);
+        }
+    });
+
+    format!("http://{address}")
+}
+
 #[tokio::test]
 async fn trace_shows_no_query_of_a_call_that_got_no_answer() {
     let (log, _capture) = support::log::capture(true);
-    // A port nothing listens on: each connection is refused.
-    let url = {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("a free port");
-
-        format!("http://{}", listener.local_addr().expect("an address"))
-    };
+    let url = dead_url().await;
 
     for retried in [false, true] {
         let http = ClientBuilder::new(reqwest::Client::new()).with(rest::client::trace());
@@ -631,7 +641,7 @@ async fn trace_shows_no_query_of_a_call_that_got_no_answer() {
             .keyed()
             .keyed()
             .await
-            .expect_err("a refused connection");
+            .expect_err("a call that got no response");
 
         assert_eq!(error.status(), None);
     }

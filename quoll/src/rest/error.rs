@@ -36,9 +36,11 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 ///
 /// On the client, an answer with an error status is an error with that [status](Error::status), the
 /// [problem](Error::problem) when the body is one, and the [body](Error::body) as it came. A call that got no answer
-/// to read, a connection refused or an answer that is not the route's result, has no status. Its sources, reqwest's
-/// error among them, show the URL of the call by its origin and its path alone: never its credentials, nor its query,
-/// where a query scheme sends its key.
+/// to read, a connection refused or an answer that is not the route's result, has no status. Its sources show the
+/// URL of the call by its origin and its path alone, without its credentials and its query, where a query scheme
+/// sends its key: the errors of reqwest, of reqwest-middleware and of reqwest-retry, as the client and its middleware
+/// give them, are stripped. A reqwest error that a middleware of the application's own wraps in an error type of its
+/// own is out of reach: the middleware strips it, with `reqwest::Error::without_url`.
 ///
 /// A handler that returns an error its own client received answers 502, or 500 when it is the handler's own mistake,
 /// a URL that is not one: the status of another API is not passed on as this one's.
@@ -109,6 +111,11 @@ impl Error {
     /// A 500 for a failure of the server's own. The server logs `error` through `tracing` and never sends it: the
     /// caller sees the status alone.
     ///
+    /// With the `client` feature, the URL of a reqwest error given as `error`, alone or as the error of a
+    /// reqwest-middleware or reqwest-retry chain, keeps its origin and its path alone, as the client's own errors do:
+    /// the log shows no credentials and no query, where a query scheme sends its key. A reqwest error inside an error
+    /// type of the application's own is the application's to strip, with `reqwest::Error::without_url`.
+    ///
     /// ```
     /// use quoll::rest::Error;
     ///
@@ -117,7 +124,11 @@ impl Error {
     /// assert_eq!(error.unwrap_err().status(), Some(http::StatusCode::INTERNAL_SERVER_ERROR));
     /// ```
     pub fn internal(error: impl Into<Box<dyn StdError + Send + Sync>>) -> Self {
-        Self(Box::new(Repr::Internal(error.into())))
+        let error = error.into();
+        #[cfg(feature = "client")]
+        let error = client::without_query(error);
+
+        Self(Box::new(Repr::Internal(error)))
     }
 
     /// What another API answered with an error status, kept as it came.
