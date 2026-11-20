@@ -97,19 +97,24 @@ println!("{}", note.title);
 
 ## What the contract gives
 
-| From the contract | What it is                                                                           |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `NotesServer`     | The trait the server implements: a method per route, the caller as a typed argument |
-| `Api::router`     | An `axum::Router`, which `server::builder()` serves with request id, trace, CORS...  |
-| `Notes`           | The trait the client implements, and test fakes too                                  |
-| `Api::client`     | A reqwest client; `client::builder()` adds tokens, retries and signatures            |
-| `Api::openapi`    | The OpenAPI 3.1 document, with the schemas of the types and the `///` comments       |
+| From the contract | What it is                                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| `NotesServer`     | The trait the server implements: a method per route, the caller as a typed argument             |
+| `Api::router`     | An `axum::Router`, which `server::builder()` serves with request id, trace, CORS...             |
+| `Notes`           | The trait the client implements, and test fakes too                                             |
+| `ApiClient`       | The client that `client::builder().build::<Api>(url)` gives, with tokens, retries, redirects... |
+| `Api::openapi`    | The OpenAPI 3.1 document, with the schemas of the types and the `///` comments                  |
 
 No Rust is generated on disk: the macro expands at compile time, and `cargo expand` shows what it writes.
 
 ## Status
 
-Design: the contract is specified in [`docs/spec.md`](docs/spec.md), validated. There is no code yet.
+The contract is specified in [`docs/spec.md`](docs/spec.md), validated, and the crate implements it: its server, its
+client and its OpenAPI document. It is used from git until it is published.
+
+The API documentation is the crate's own, from `cargo doc -p quoll --all-features --open`. Two examples are built and
+tested with the workspace: [`examples/notes`](examples/notes), the spec's complete example, and
+[`examples/docker`](examples/docker), a client alone of the Docker Engine API.
 
 ## License
 

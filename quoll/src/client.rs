@@ -1,8 +1,24 @@
-//! The client a contract becomes: a [`Builder`] of the client of a contract, and the usual middleware of
-//! reqwest-middleware, which a client runs on each request, in the order they are added: the first sees the request
-//! first, and the answer last.
+//! The client of a contract: [`builder()`], which builds it with middleware, and the usual middleware, on
+//! reqwest-middleware.
 //!
-//! The builder puts the helpers of quoll in the order they work in, whatever the order they are given in, and any
+//! A client runs its middleware on each request in the order they are added: the first sees the request first, and
+//! the answer last.
+//!
+//! | Middleware        | What it does                                                                        |
+//! | ----------------- | ----------------------------------------------------------------------------------- |
+//! | [`bearer()`]      | `Authorization: Bearer`, on the routes that take [`Bearer`]                         |
+//! | [`bearer_from()`] | the same, with a token asked of a [`TokenSource`] before each call, and after a 401 |
+//! | [`basic()`]       | `Authorization: Basic`, on the routes that take [`Basic`]                           |
+//! | [`key()`]         | the credential of a scheme the contract declares, where it travels                  |
+//! | [`on_request()`]  | a closure that changes each request of a contract before it leaves                  |
+//! | [`user_agent()`]  | `User-Agent`, on a request that has none                                            |
+//! | [`request_id()`]  | a new `X-Request-Id` per call, on a request that has none                           |
+//! | [`retry()`]       | a call tried again after a failure that may pass                                    |
+//! | [`timeout()`]     | a deadline per attempt and per hop                                                  |
+//! | [`trace()`]       | a tracing span per call, named by its operation                                     |
+//! | [`redirects()`]   | redirects followed one hop at a time, through the middleware after it               |
+//!
+//! The [`Builder`] puts the helpers of quoll in the order they work in, whatever the order they are given in, and any
 //! other middleware where it is given:
 //!
 //! ```no_run
@@ -94,10 +110,12 @@ pub use retry::retry;
 pub use token::{TokenSource, bearer_from};
 pub use trace::trace;
 
-/// Sends `Authorization: Bearer <token>` on the requests whose [`Route`] takes [`Bearer`], to the api's own origin,
-/// and on no other: a route with `#[auth(none)]`, a request that did not come from the client of a contract and
-/// carries no `Route`, as one sent to another host through the same `ClientWithMiddleware`, or a hop of [`redirects`]
-/// to another origin, never gets the token. A token that expires comes from a source, with [`bearer_from`].
+/// Sends `Authorization: Bearer <token>` on the requests whose [`Route`] takes [`Bearer`].
+///
+/// It sends it to the api's own origin, and on no other request: a route with `#[auth(none)]`, a request that did not
+/// come from the client of a contract and carries no `Route`, as one sent to another host through the same
+/// `ClientWithMiddleware`, or a hop of [`redirects`] to another origin, never gets the token. A token that expires
+/// comes from a source, with [`bearer_from`].
 ///
 /// The header is marked sensitive, so that a log of the request does not show it. The token is an RFC 6750
 /// `b64token`, letters, digits, `-._~+/` and `=` at its end, which is all a server of a contract reads: any other, as
@@ -170,8 +188,9 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
     ))
 }
 
-/// Sends `value`, the credential of the scheme `K` that the contract declares, where `K` says it travels, on the
-/// requests whose [`Route`] takes `K`, and on no other, as [`bearer`] sends its token:
+/// Sends `value`, the credential of the scheme `K` that the contract declares, where `K` says it travels.
+///
+/// It sends it on the requests whose [`Route`] takes `K`, and on no other, as [`bearer`] sends its token:
 ///
 /// - `scheme Key = header "X-Api-Key";`: in the header, marked sensitive;
 /// - `scheme Session = cookie "session";`: as the cookie `session`, after the cookies the request already has, all in

@@ -68,8 +68,10 @@ pub trait TokenSource: Send + Sync + 'static {
     fn refresh(&self, refused: &str) -> impl Future<Output = Result<String>> + Send;
 }
 
-/// Sends `Authorization: Bearer <token>` on the requests whose [`Route`] takes [`Bearer`], to the api's own origin,
-/// as [`bearer`](super::bearer) does, with a token asked of `source` before each of them.
+/// Sends `Authorization: Bearer <token>`, with a token asked of `source` before each call.
+///
+/// It sends it on the requests whose [`Route`] takes [`Bearer`], to the api's own origin, as
+/// [`bearer`](super::bearer) does.
 ///
 /// A call answered 401 is sent once more with the token [`TokenSource::refresh`] gives, and its second answer is the
 /// call's, a 401 again included. It is not sent again when the source gives back the token refused, or when its body

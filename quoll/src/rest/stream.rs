@@ -190,13 +190,15 @@ impl<T> fmt::Debug for Events<T> {
 /// and nothing while no value comes. It asks the stream for a value only once the connection has taken the last one: a
 /// client that reads slowly slows it down, and one that goes away drops it, with the connection.
 ///
-/// The client asks for `application/jsonl` with `Accept`, and reads `application/x-ndjson` and
-/// `application/x-jsonlines` too, which some APIs send, and `application/json`, which others send their lines as, the
-/// Docker Engine API among them: an answer of another content type is an error with no status, as an answer that is
-/// not a route's result is. Each line is an item, read as the JSON of a `T`: a line may end with
-/// `\r\n`, an empty line is skipped, and a last line with no line break is read too. A line that does not read as a
-/// `T` is an error with no status, and the stream goes on. A line longer than 1 MiB, and a body that cannot be read,
-/// are an error with no status, and the stream ends after it.
+/// The client reads `application/jsonl`, `application/x-ndjson` and `application/x-jsonlines`, which some APIs send,
+/// and `application/json`, which others send their lines as, the Docker Engine API among them. It asks for them in
+/// that order with `Accept`, `application/json` last. An answer of another content type is an error with no status,
+/// as an answer that is not a route's result is.
+///
+/// Each line is an item, read as the JSON of a `T`: a line may end with `\r\n`, an empty line is skipped, and a last
+/// line with no line break is read too. A line that does not read as a `T` is an error with no status, and the stream
+/// goes on. A line longer than 1 MiB, and a body that cannot be read, are an error with no status, and the stream ends
+/// after it.
 ///
 /// An answer of `application/json` is read so too, line by line: a document written over several lines, as a
 /// pretty-printed array, is read as broken lines, each an item that does not read as a `T`.
@@ -282,16 +284,17 @@ impl<T> fmt::Debug for JsonLines<T> {
 /// # }
 /// ```
 ///
-/// The server answers 200 with its content type, `X-Content-Type-Options: nosniff` as for [`Bytes`](crate::rest::Bytes),
-/// `Cache-Control: no-cache` and `X-Accel-Buffering: no`, so that neither a browser, a cache nor a proxy such as nginx
-/// reads it otherwise or holds it back. It sends each chunk as it comes, as it is. It asks the stream for a chunk only
-/// once the connection has taken the last one: a client that reads slowly slows it down, and one that goes away drops
-/// it, with the connection.
+/// The server answers 200 with its content type, `X-Content-Type-Options: nosniff` as for
+/// [`Bytes`](crate::rest::Bytes), `Cache-Control: no-cache` and `X-Accel-Buffering: no`, so that neither a browser, a
+/// cache nor a proxy such as nginx reads it otherwise or holds it back. It sends each chunk as it comes, as it is. It
+/// asks the stream for a chunk only once the connection has taken the last one: a client that reads slowly slows it
+/// down, and one that goes away drops it, with the connection.
 ///
-/// The client asks for any content type, `Accept: */*`, and reads an answer of any, as it reads [`Bytes`](crate::rest::Bytes):
-/// its content type, or `application/octet-stream` when it has none, or one that is not a media type. Each chunk is
-/// one the connection gave, of whatever size, never empty: what the bytes mean, their lines or their frames, is the
-/// caller's to read. A body that cannot be read is an error with no status, and the stream ends after it.
+/// The client asks for any content type, `Accept: */*`, and reads an answer of any, as it reads
+/// [`Bytes`](crate::rest::Bytes): its content type, or `application/octet-stream` when it has none, or one that is not
+/// a media type. Each chunk is one the connection gave, of whatever size, never empty: what the bytes mean, their lines
+/// or their frames, is the caller's to read. A body that cannot be read is an error with no status, and the stream ends
+/// after it.
 ///
 /// Dropping the stream closes its connection. The client does not call the route again when the stream ends.
 pub struct ByteStream {
@@ -338,9 +341,9 @@ impl ByteStream {
     /// The same chunks, of `content_type`, a media type as `Content-Type` writes it: `text/plain; charset=utf-8`, or
     /// `application/vnd.docker.multiplexed-stream`.
     ///
-    /// It is checked when it is sent: a server answers a content type that is not a media type with a 500, logged, before
-    /// it sends any chunk. As for [`Bytes`](crate::rest::Bytes), a server never answers a content type a client gave as
-    /// it is: a browser runs `text/html` on the API's own site.
+    /// It is checked when it is sent: a server answers a content type that is not a media type with a 500, logged,
+    /// before it sends any chunk. As for [`Bytes`](crate::rest::Bytes), a server never answers a content type a client
+    /// gave as it is: a browser runs `text/html` on the API's own site.
     #[must_use]
     pub fn with_content_type(self, content_type: impl Into<String>) -> Self {
         Self {

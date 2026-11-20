@@ -108,9 +108,10 @@ fn made() -> HeaderValue {
     HeaderValue::try_from(text).expect("hex digits and `-` are a header's value")
 }
 
-/// Gives each request an id: the caller's `X-Request-Id` when it is one to keep, or a new one, a UUID v4. A caller's
-/// id is kept when it is 1 to 128 bytes of printable ASCII with no space; one given twice, or any other, is replaced,
-/// and the request served.
+/// Gives each request an id: the caller's `X-Request-Id` when it is one to keep, or a new one, a UUID v4.
+///
+/// A caller's id is kept when it is 1 to 128 bytes of printable ASCII with no space; one given twice, or any other, is
+/// replaced, and the request served.
 ///
 /// The id is set as the request's `X-Request-Id`, sent back as the answer's, and given to the span of [`trace`]
 /// (whichever of the two layers runs first) and to the handler, through [`RequestId::current`].

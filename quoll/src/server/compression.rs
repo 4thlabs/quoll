@@ -31,9 +31,10 @@ fn not_a_stream(_: StatusCode, _: Version, _: &HeaderMap, extensions: &Extension
     !extensions.get::<Route>().is_some_and(|route| route.streams)
 }
 
-/// Compresses each answer as the caller's `Accept-Encoding` asks, with gzip, brotli or zstd, on tower-http's
-/// `Compression`. Answers of 32 bytes or less, images, and streams, `Events`, `JsonLines` and `ByteStream`, whose
-/// values must leave as they come, are sent as they are.
+/// Compresses each answer as the caller's `Accept-Encoding` asks, with gzip, brotli or zstd.
+///
+/// It is built on tower-http's `Compression`. Answers of 32 bytes or less, images, and streams, `Events`, `JsonLines`
+/// and `ByteStream`, whose values must leave as they come, are sent as they are.
 ///
 /// ```
 /// use quoll::server;

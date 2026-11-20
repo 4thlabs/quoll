@@ -6,11 +6,13 @@ use http::Method;
 
 use crate::rest::Scheme;
 
-/// The route of the contract a request calls. The client puts it in the extensions of each request it sends, where a
-/// reqwest-middleware middleware reads it, to name a span after the operation or to send a credential to the routes
-/// that take it. The server puts it in the extensions of each answer of a route, where a tower layer reads it, to
-/// count the answers of each operation; an answer no route made has none, as axum's 404 and the 503 of
-/// `server::timeout`.
+/// The route of the contract a request calls, which a middleware reads.
+///
+/// The client puts it in the extensions of each request it sends, where a reqwest-middleware middleware reads it, to
+/// name a span after the operation or to send a credential to the routes that take it. The server puts it in the
+/// extensions of each answer of a route, where a tower layer reads it, to count the answers of each operation. An
+/// answer no route made has none: axum's 404 and 405, and the answers a layer makes before the route or instead of
+/// it, as a 503 of `server::timeout` and an early 413 of `server::body_limit`.
 ///
 /// ```
 /// use quoll::rest::Route;
