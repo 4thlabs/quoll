@@ -26,6 +26,8 @@ tracing-subscriber = "0.3"
 [dev-dependencies]
 notes-api = { path = "../api", features = ["client"] }
 reqwest = { version = "0.13", default-features = false }
+# A temporary directory for the store on a file, removed when the test ends, whatever happens.
+tempfile = "3"
 
 [lints]
 workspace = true

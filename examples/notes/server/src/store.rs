@@ -4,11 +4,18 @@
 //! threads, through `spawn_blocking`, and so does the hashing of a password, which takes its time on purpose. A user's
 //! password is stored as an Argon2 hash, an operator's key as its SHA-256: a key is 32 random bytes, which a fast hash
 //! keeps out of reach, and is looked up by its hash, so that no comparison of the key itself leaks its bytes.
+//!
+//! An Argon2 hash takes 19 MiB and a core for a while: no more of them run at once than the machine has cores, so that
+//! a flood of logins waits for its turn rather than exhaust the memory.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::{self, Write};
+use std::num::NonZero;
 use std::path::Path;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use argon2::Argon2;
 use argon2::password_hash::{self, PasswordHasher, PasswordVerifier};
@@ -16,13 +23,16 @@ use futures_util::{Stream, stream};
 use notes_api::{NewNote, Note, NoteEvent, NoteFilter, Stats};
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
-use tokio::sync::broadcast;
+use tokio::sync::{Semaphore, broadcast};
 use tokio::task::{self, JoinError};
 
 use crate::{Operator, User};
 
 /// How many notes a page of a search holds.
 pub const PAGE_SIZE: u32 = 20;
+
+/// How long a session lasts from its opening: its token is refused after it, and its user signs in again.
+pub const SESSION_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// How many changes of a note a watcher may fall behind by: one further behind misses the oldest, and reads on from
 /// the next, which says the note as it is.
@@ -61,6 +71,7 @@ const SCHEMA: &str = "
 #[derive(Debug, Clone)]
 pub struct Store {
     inner: Arc<Mutex<Inner>>,
+    hashes: Arc<Hashes>,
 }
 
 /// What the lock of the store guards: the connection, and the watchers of the notes, so that a note is checked and
@@ -71,13 +82,62 @@ struct Inner {
     watchers: HashMap<i64, broadcast::Sender<NoteEvent>>,
 }
 
-/// Why the store failed: a call of SQLite, the hashing of a password, or a task of the store that did not end.
+/// The hashes of passwords: the permits of those that run at once, one held from before the hash's task starts to
+/// its end, which comes even when the request that asked for it is dropped.
+#[derive(Debug)]
+struct Hashes {
+    permits: Arc<Semaphore>,
+    /// How many hashes run, and the most that ran at once, which the tests read.
+    #[cfg(test)]
+    running: AtomicUsize,
+    #[cfg(test)]
+    peak: AtomicUsize,
+}
+
+impl Hashes {
+    /// Permits for `at_once` hashes.
+    fn new(at_once: usize) -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(at_once)),
+            #[cfg(test)]
+            running: AtomicUsize::new(0),
+            #[cfg(test)]
+            peak: AtomicUsize::new(0),
+        }
+    }
+}
+
+/// A hash running, counted while it runs, in the tests.
+#[cfg(test)]
+struct Running<'a>(&'a Hashes);
+
+#[cfg(test)]
+impl<'a> Running<'a> {
+    fn start(hashes: &'a Hashes) -> Self {
+        let running = hashes.running.fetch_add(1, Ordering::SeqCst) + 1;
+
+        hashes.peak.fetch_max(running, Ordering::SeqCst);
+        Self(hashes)
+    }
+}
+
+#[cfg(test)]
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        self.0.running.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Why the store failed: a call of SQLite, a password that could not be hashed or checked, or a task of the store
+/// that did not end.
 #[derive(Debug)]
 pub enum StoreError {
     /// SQLite failed, or refused a change: a user or an operator whose name is taken.
     Database(rusqlite::Error),
-    /// A password could not be hashed, or its stored hash is not one.
-    Password(password_hash::Error),
+    /// A password could not be hashed, as a user was added.
+    Hashing(password_hash::Error),
+    /// The stored hash of a user's password is not one Argon2 checks a password against.
+    StoredHash(password_hash::Error),
     /// The blocking task of a call panicked, or was cancelled as the runtime stopped.
     Task(JoinError),
 }
@@ -86,7 +146,8 @@ impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Database(_) => f.write_str("the database failed"),
-            Self::Password(_) => f.write_str("a password could not be hashed"),
+            Self::Hashing(_) => f.write_str("a password could not be hashed"),
+            Self::StoredHash(_) => f.write_str("the stored hash of a password cannot be checked"),
             Self::Task(_) => f.write_str("a call of the store did not end"),
         }
     }
@@ -96,7 +157,7 @@ impl std::error::Error for StoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Database(error) => Some(error),
-            Self::Password(error) => Some(error),
+            Self::Hashing(error) | Self::StoredHash(error) => Some(error),
             Self::Task(error) => Some(error),
         }
     }
@@ -108,12 +169,6 @@ impl From<rusqlite::Error> for StoreError {
     }
 }
 
-impl From<password_hash::Error> for StoreError {
-    fn from(error: password_hash::Error) -> Self {
-        Self::Password(error)
-    }
-}
-
 impl From<JoinError> for StoreError {
     fn from(error: JoinError) -> Self {
         Self::Task(error)
@@ -121,7 +176,8 @@ impl From<JoinError> for StoreError {
 }
 
 impl Store {
-    /// Opens the database at `path`, created with its tables when it is missing.
+    /// Opens the database at `path`, created with its tables when it is missing. The hash an unknown user's password is
+    /// checked against is made then too, so that the first refusal takes no longer than the next.
     ///
     /// # Errors
     ///
@@ -133,12 +189,18 @@ impl Store {
         Self::with(connection).await
     }
 
-    /// A store with nothing in it, in memory, for the tests.
+    /// A store with nothing in it, in memory, for the tests. The hash an unknown user's password is checked against is
+    /// made by the first check of one, as making it here would block.
     ///
     /// # Panics
     ///
     /// When SQLite cannot open a database in memory, which needs no file and only fails with no memory left.
     pub fn in_memory() -> Self {
+        Self::in_memory_hashing(hashes_at_once())
+    }
+
+    /// A store in memory, which runs `at_once` hashes of passwords at most at once.
+    fn in_memory_hashing(at_once: usize) -> Self {
         // A database in memory touches no file: opening it does not block, so that `App::in_memory` needs no `await`.
         let connection = Connection::open_in_memory().expect("SQLite opens a database in memory");
 
@@ -146,28 +208,54 @@ impl Store {
             .execute_batch(SCHEMA)
             .expect("the tables are created in an empty database");
 
-        Self::from_connection(connection)
+        Self::from_connection(connection, at_once)
     }
 
     /// The store of `connection`, once its tables are there.
     async fn with(connection: Connection) -> Result<Self, StoreError> {
         let connection = task::spawn_blocking(move || {
             connection.execute_batch(SCHEMA)?;
+            LazyLock::force(&UNKNOWN_USER);
 
             Ok::<_, rusqlite::Error>(connection)
         })
         .await??;
 
-        Ok(Self::from_connection(connection))
+        Ok(Self::from_connection(connection, hashes_at_once()))
     }
 
-    fn from_connection(connection: Connection) -> Self {
+    fn from_connection(connection: Connection, hashes_at_once: usize) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 connection,
                 watchers: HashMap::new(),
             })),
+            hashes: Arc::new(Hashes::new(hashes_at_once)),
         }
+    }
+
+    /// Runs `hash`, the hashing of a password, on a blocking thread, once fewer hashes run than the store allows.
+    async fn hash<T, F>(&self, hash: F) -> Result<T, StoreError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        let permit = Arc::clone(&self.hashes.permits)
+            .acquire_owned()
+            .await
+            .expect("the permits of the hashes are never closed");
+        #[cfg(test)]
+        let hashes = Arc::clone(&self.hashes);
+
+        Ok(task::spawn_blocking(move || {
+            #[cfg(test)]
+            let _running = Running::start(&hashes);
+            let hashed = hash();
+
+            drop(permit);
+            hashed
+        })
+        .await?)
     }
 
     /// Runs `call` with the lock of the store held, on a blocking thread.
@@ -186,13 +274,18 @@ impl Store {
     /// # Errors
     ///
     /// When the name is another user's already, or the database or the hashing fails.
-    pub async fn add_user(&self, name: &str, password: &str) -> Result<User, StoreError> {
-        let password = password.to_owned();
-        let hash =
-            task::spawn_blocking(move || Argon2::default().hash_password(password.as_bytes()))
-                .await??
-                .to_string();
-        let name = name.to_owned();
+    pub async fn add_user(
+        &self,
+        name: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Result<User, StoreError> {
+        let password = password.into();
+        let hash = self
+            .hash(move || Argon2::default().hash_password(password.as_bytes()))
+            .await?
+            .map_err(StoreError::Hashing)?
+            .to_string();
+        let name = name.into();
 
         self.run(move |inner| {
             inner.connection.execute(
@@ -216,10 +309,10 @@ impl Store {
     /// When the database fails, or the stored hash is not one.
     pub async fn check_password(
         &self,
-        name: &str,
-        password: &str,
+        name: impl Into<String>,
+        password: impl Into<String>,
     ) -> Result<Option<User>, StoreError> {
-        let name = name.to_owned();
+        let name = name.into();
         let found = self
             .run(move |inner| {
                 let found = inner
@@ -234,10 +327,10 @@ impl Store {
                 Ok(found.map(|(id, hash)| (User { id, name }, hash)))
             })
             .await?;
-        let password = password.to_owned();
+        let password = password.into();
 
         // The hash is checked with the lock released: it takes its time, and the other calls go on meanwhile.
-        task::spawn_blocking(move || {
+        self.hash(move || {
             let hash = found
                 .as_ref()
                 .map_or(UNKNOWN_USER.as_str(), |(_, hash)| hash);
@@ -245,7 +338,7 @@ impl Store {
             match Argon2::default().verify_password(password.as_bytes(), hash) {
                 Ok(()) => Ok(found.map(|(user, _)| user)),
                 Err(password_hash::Error::PasswordInvalid) => Ok(None),
-                Err(error) => Err(error.into()),
+                Err(error) => Err(StoreError::StoredHash(error)),
             }
         })
         .await?
@@ -261,10 +354,10 @@ impl Store {
     /// # Panics
     ///
     /// When the system gives no random bytes.
-    pub async fn add_operator(&self, name: &str) -> Result<String, StoreError> {
+    pub async fn add_operator(&self, name: impl Into<String>) -> Result<String, StoreError> {
         let key = random_hex();
         let hash = key_hash(&key);
-        let name = name.to_owned();
+        let name = name.into();
 
         self.run(move |inner| {
             inner.connection.execute(
@@ -303,7 +396,10 @@ impl Store {
     }
 
     /// The notes of the user `owner` that match `filter`, a page of [`PAGE_SIZE`] at a time, in the order they were
-    /// written.
+    /// written. An empty key is no key, and the tag is cut as the tags of a note are: `milk,` is `milk`.
+    ///
+    /// A `contains` of more than [`notes_api::CONTAINS_LIMIT`] characters is the caller's to refuse: past SQLite's
+    /// limit on the pattern of `LIKE`, 50,000 bytes, the database fails.
     ///
     /// # Errors
     ///
@@ -313,8 +409,12 @@ impl Store {
         let contains = filter
             .contains
             .as_deref()
+            .filter(|text| !text.is_empty())
             .map(|text| format!("%{}%", escape_like(text)));
-        let tag = filter.tag.as_deref().map(normalized_tag);
+        let tag = filter
+            .tag
+            .as_deref()
+            .and_then(|tag| tag_of(tag.strip_prefix('#').unwrap_or(tag)));
         let offset = i64::from(filter.page.unwrap_or(1).max(1) - 1) * i64::from(PAGE_SIZE);
 
         self.run(move |inner| {
@@ -448,8 +548,8 @@ impl Store {
         .await
     }
 
-    /// The changes of the note `id` of the user `owner` from now on, until it is removed: its removal is the last.
-    /// A note that does not exist, or that is another user's, has none: its stream ends at once.
+    /// The changes of the note `id` of the user `owner` from now on, until it is removed: its removal is the last. A
+    /// note that does not exist, or that is another user's, is `None`.
     ///
     /// # Errors
     ///
@@ -458,8 +558,8 @@ impl Store {
         &self,
         owner: i64,
         id: i64,
-    ) -> Result<impl Stream<Item = NoteEvent> + Send + 'static, StoreError> {
-        let changes = self
+    ) -> Result<Option<impl Stream<Item = NoteEvent> + Send + 'static>, StoreError> {
+        let Some(changes) = self
             .run(move |inner| {
                 if find(&inner.connection, owner, id)?.is_none() {
                     return Ok(None);
@@ -477,20 +577,21 @@ impl Store {
 
                 Ok(Some(watchers.subscribe()))
             })
-            .await?;
+            .await?
+        else {
+            return Ok(None);
+        };
 
-        Ok(stream::unfold(changes, |changes| async move {
-            let mut changes = changes?;
-
+        Ok(Some(stream::unfold(changes, |mut changes| async move {
             loop {
                 match changes.recv().await {
-                    Ok(event) => return Some((event, Some(changes))),
+                    Ok(event) => return Some((event, changes)),
                     // The oldest changes were missed: the ones that follow say the note as it is.
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => return None,
                 }
             }
-        }))
+        })))
     }
 
     /// How many users and notes the store holds.
@@ -510,6 +611,11 @@ impl Store {
         })
         .await
     }
+}
+
+/// How many hashes of passwords run at once: as many as the machine has cores.
+fn hashes_at_once() -> usize {
+    std::thread::available_parallelism().map_or(1, NonZero::get)
 }
 
 /// The hash an unknown user's password is checked against, so that refusing them takes as long as a wrong password.
@@ -553,27 +659,24 @@ fn tag(connection: &Connection, id: i64, note: &NewNote) -> rusqlite::Result<()>
     Ok(())
 }
 
-/// The tags of `note`: each word of its title or its text that starts with `#`, up to the first character that is
-/// not a letter, a digit, `-` or `_`, in lowercase. `#milk,` is `milk`, and a lone `#` no tag.
+/// The tags of `note`: each word of its title or its text that starts with `#`, cut as [`tag_of`] cuts it. `#milk,`
+/// is `milk`, and a lone `#` no tag.
 fn tags(note: &NewNote) -> BTreeSet<String> {
     [&note.title, &note.body]
         .into_iter()
         .flat_map(|text| text.split_whitespace())
-        .filter_map(|word| word.strip_prefix('#'))
-        .map(|word| {
-            let end = word
-                .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
-                .unwrap_or(word.len());
-
-            normalized_tag(&word[..end])
-        })
-        .filter(|tag| !tag.is_empty())
+        .filter_map(|word| word.strip_prefix('#').and_then(tag_of))
         .collect()
 }
 
-/// A tag as the store keeps it: in lowercase, without its `#`.
-fn normalized_tag(tag: &str) -> String {
-    tag.strip_prefix('#').unwrap_or(tag).to_lowercase()
+/// The tag `word` stands for, without its `#`: up to the first character that is not a letter, a digit, `-` or `_`, in
+/// lowercase, and none when that leaves nothing.
+fn tag_of(word: &str) -> Option<String> {
+    let end = word
+        .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+        .unwrap_or(word.len());
+
+    (end > 0).then(|| word[..end].to_lowercase())
 }
 
 /// `text` with the wildcards of `LIKE`, and its escape, escaped.
@@ -596,13 +699,45 @@ fn key_hash(key: &str) -> String {
     hex(&Sha256::digest(key.as_bytes()))
 }
 
-/// The tokens given out, each standing for its user, in memory: they end with the server.
-#[derive(Clone, Default)]
+/// The tokens given out, each standing for its user, in memory, until their session's lifetime has passed: they end
+/// with the server too.
+///
+/// A session past its lifetime is dropped when its token is met, and every one past it when a session opens, so that
+/// the sessions kept are about those opened in a lifetime.
+#[derive(Clone)]
 pub struct Sessions {
-    users: Arc<Mutex<HashMap<String, User>>>,
+    lifetime: Duration,
+    open: Arc<Mutex<HashMap<String, Session>>>,
+}
+
+/// An open session: its user, and when it was opened.
+struct Session {
+    user: User,
+    opened: Instant,
+}
+
+impl Session {
+    fn is_past(&self, lifetime: Duration) -> bool {
+        self.opened.elapsed() >= lifetime
+    }
+}
+
+/// Sessions of [`SESSION_LIFETIME`].
+impl Default for Sessions {
+    fn default() -> Self {
+        Self::with_lifetime(SESSION_LIFETIME)
+    }
 }
 
 impl Sessions {
+    /// Sessions that last `lifetime` from their opening.
+    pub fn with_lifetime(lifetime: Duration) -> Self {
+        Self {
+            lifetime,
+            open: Arc::default(),
+        }
+    }
+
     /// Opens a session for `user`, and gives its token: 32 random bytes, in hex, which no one can guess.
     ///
     /// # Panics
@@ -610,22 +745,39 @@ impl Sessions {
     /// When the system gives no random bytes.
     pub fn open(&self, user: User) -> String {
         let token = random_hex();
+        let mut open = lock(&self.open);
 
-        lock(&self.users).insert(token.clone(), user);
+        open.retain(|_, session| !session.is_past(self.lifetime));
+        open.insert(
+            token.clone(),
+            Session {
+                user,
+                opened: Instant::now(),
+            },
+        );
         token
     }
 
-    /// The user `token` stands for, if it is the token of an open session.
+    /// The user `token` stands for, if it is the token of a session opened less than its lifetime ago.
     pub fn user(&self, token: &str) -> Option<User> {
-        lock(&self.users).get(token).cloned()
+        let mut open = lock(&self.open);
+        let session = open.get(token)?;
+
+        if session.is_past(self.lifetime) {
+            open.remove(token);
+            return None;
+        }
+
+        Some(session.user.clone())
     }
 }
 
-/// Shows how many sessions are open, never their tokens.
+/// Shows the lifetime of the sessions and how many are kept, never their tokens.
 impl fmt::Debug for Sessions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Sessions")
-            .field("open", &lock(&self.users).len())
+            .field("lifetime", &self.lifetime)
+            .field("open", &lock(&self.open).len())
             .finish()
     }
 }
@@ -682,6 +834,50 @@ mod tests {
         assert_eq!(
             tags.into_iter().collect::<Vec<_>>(),
             ["2026-11", "dairy", "fresh", "shopping"]
+        );
+    }
+
+    #[test]
+    fn a_tag_is_cut_at_its_first_other_character() {
+        assert_eq!(tag_of("Milk,").as_deref(), Some("milk"));
+        assert_eq!(tag_of("oat-milk_2!").as_deref(), Some("oat-milk_2"));
+        assert_eq!(tag_of(""), None);
+        assert_eq!(tag_of(",milk"), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_hashes_of_passwords_run_a_few_at_once() {
+        let store = Store::in_memory_hashing(2);
+        let added = store
+            .add_user("ana", "correct horse")
+            .await
+            .expect("ana is added");
+        let checks: Vec<_> = (0..8)
+            .map(|i| {
+                let store = store.clone();
+                // Half for ana, half for unknown users: both hash.
+                let name = if i % 2 == 0 {
+                    "ana".to_owned()
+                } else {
+                    format!("user {i}")
+                };
+
+                tokio::spawn(async move { store.check_password(name, "correct horse").await })
+            })
+            .collect();
+
+        for (i, check) in checks.into_iter().enumerate() {
+            let user = check
+                .await
+                .expect("the check does not panic")
+                .expect("the check does not fail");
+
+            assert_eq!(user.as_ref(), (i % 2 == 0).then_some(&added));
+        }
+
+        assert!(
+            (1..=2).contains(&store.hashes.peak.load(Ordering::SeqCst)),
+            "at most 2 hashes ran at once"
         );
     }
 

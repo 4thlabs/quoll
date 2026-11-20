@@ -3,6 +3,8 @@
 //!
 //! The crate passes quoll's features on: the server depends on it with `server`, a client with `client`.
 
+use std::fmt;
+
 use quoll::rest::{self, Created, Events, Form};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -27,12 +29,16 @@ pub struct NewNote {
     pub body: String,
 }
 
-/// Which notes a search gives: each key that is given narrows it.
+/// The most characters a search's `contains` holds.
+pub const CONTAINS_LIMIT: usize = 1000;
+
+/// Which notes a search gives: each key that is given, and not empty, narrows it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NoteFilter {
-    /// Notes whose title or text holds this, whatever the case of its ASCII letters.
+    /// Notes whose title or text holds this, whatever the case of its ASCII letters: 1000 characters at most.
+    #[schemars(length(max = CONTAINS_LIMIT))]
     pub contains: Option<String>,
-    /// Notes tagged so, by a `#word` of their title or their text, with or without its `#`.
+    /// Notes tagged so, by a `#word` of their title or their text: `#milk` or `milk,` is `milk`.
     pub tag: Option<String>,
     /// The page, of 20 notes in the order they were written, from 1, the first when it is missing.
     pub page: Option<u32>,
@@ -52,7 +58,7 @@ pub enum NoteEvent {
 }
 
 /// A user's name and password, traded for a token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Login {
     /// The user's name.
     pub user: String,
@@ -60,11 +66,27 @@ pub struct Login {
     pub password: String,
 }
 
+/// Shows the user, never the password.
+impl fmt::Debug for Login {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Login")
+            .field("user", &self.user)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The token a login gives, which the routes of the notes take as a bearer token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenResponse {
     /// The token, sent as `Authorization: Bearer <token>`.
     pub access_token: String,
+}
+
+/// Shows that there is a token, never the token.
+impl fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenResponse").finish_non_exhaustive()
+    }
 }
 
 /// What the server holds, for its operators.

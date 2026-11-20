@@ -272,11 +272,12 @@
         "operationId": "notes_search",
         "parameters": [
           {
-            "description": "Notes whose title or text holds this, whatever the case of its ASCII letters.",
+            "description": "Notes whose title or text holds this, whatever the case of its ASCII letters: 1000 characters at most.",
             "in": "query",
             "name": "contains",
             "required": false,
             "schema": {
+              "maxLength": 1000,
               "type": "string"
             }
           },
@@ -292,7 +293,7 @@
             }
           },
           {
-            "description": "Notes tagged so, by a `#word` of their title or their text, with or without its `#`.",
+            "description": "Notes tagged so, by a `#word` of their title or their text: `#milk` or `milk,` is `milk`.",
             "in": "query",
             "name": "tag",
             "required": false,

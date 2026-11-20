@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
         "user" => {
             let password = std::env::var("NOTES_PASSWORD")
                 .context("the password of the user is read from NOTES_PASSWORD")?;
-            let user = store.add_user(name, &password).await?;
+            let user = store.add_user(name, password).await?;
 
             println!("added the user {}, of id {}", user.name, user.id);
         }
