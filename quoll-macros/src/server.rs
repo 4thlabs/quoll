@@ -10,9 +10,9 @@ use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::descriptor::{Cx, GroupRef, descriptor_name, table};
+use crate::docs::{doc_attrs, route_docs};
 use crate::model::{Api, Bounds, Param, Route, is_vec};
 use crate::scheme::{scheme_type, schemes_type};
-use crate::{doc_attrs, route_docs};
 
 /// The server's code of a group, behind the feature `server` of `quoll`: its trait, and the function of its
 /// descriptor that serves its routes.
