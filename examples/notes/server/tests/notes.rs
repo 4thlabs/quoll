@@ -16,7 +16,7 @@ fn served(app: notes_server::App) -> axum::Router {
 
 #[tokio::test]
 async fn a_created_note_reads_back() -> anyhow::Result<()> {
-    let app = notes_server::App::in_memory();
+    let app = notes_server::App::default();
     let token = app.sessions.open(User {
         id: 1,
         name: "ana".into(),
@@ -41,7 +41,7 @@ async fn a_created_note_reads_back() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
-    let url = quoll::test::spawn(served(notes_server::App::in_memory())).await;
+    let url = quoll::test::spawn(served(notes_server::App::default())).await;
     let api = Api::client(&url)?;
 
     let error = api.notes().get(1).await.unwrap_err();
@@ -58,7 +58,7 @@ struct Served {
 
 impl Served {
     async fn start() -> Self {
-        let app = notes_server::App::in_memory();
+        let app = notes_server::App::default();
         let store = app.store.clone();
         let sessions = app.sessions.clone();
         let url = quoll::test::spawn(served(app)).await;
@@ -161,7 +161,6 @@ async fn a_login_gives_a_token_for_its_user() -> anyhow::Result<()> {
         served
             .store
             .note(user.id, created.id)
-            .await?
             .map(|note| note.title),
         Some("Milk".into())
     );
@@ -194,7 +193,7 @@ async fn a_wrong_password_and_an_unknown_user_are_refused() -> anyhow::Result<()
 
 #[tokio::test]
 async fn a_user_whose_name_is_taken_is_not_added() -> anyhow::Result<()> {
-    let store = Store::in_memory();
+    let store = Store::default();
 
     store.add_user("ana", "correct horse").await?;
 
@@ -238,7 +237,6 @@ async fn a_search_by_contains_reads_the_title_and_the_body() -> anyhow::Result<(
             ..Default::default()
         })
         .await?;
-    // `%` is the text itself, not a wildcard of `LIKE`.
     let percent = api
         .notes()
         .search(NoteFilter {
@@ -349,12 +347,6 @@ async fn a_contains_past_its_limit_is_refused() -> anyhow::Result<()> {
         .search(contains("a".repeat(CONTAINS_LIMIT + 1)))
         .await
         .unwrap_err();
-    // Past SQLite's own limit on a pattern of `LIKE`, 50,000 bytes, too, which would fail the query.
-    let far_past = api
-        .notes()
-        .search(contains("a".repeat(50_001)))
-        .await
-        .unwrap_err();
 
     assert!(at_limit.is_empty());
     assert_eq!(past_limit.status(), Some(StatusCode::BAD_REQUEST));
@@ -362,7 +354,6 @@ async fn a_contains_past_its_limit_is_refused() -> anyhow::Result<()> {
         past_limit.problem().and_then(|problem| problem.detail()),
         Some("`contains` holds more than 1000 characters")
     );
-    assert_eq!(far_past.status(), Some(StatusCode::BAD_REQUEST));
     Ok(())
 }
 
@@ -630,7 +621,7 @@ async fn an_operator_reads_the_stats_with_their_key() -> anyhow::Result<()> {
     let served = Served::start().await;
     let ana = served.store.add_user("ana", "correct horse").await?;
     let bob = served.store.add_user("bob", "battery staple").await?;
-    let key = served.store.add_operator("ops").await?;
+    let key = served.store.add_operator("ops");
 
     served
         .client_as(ana)?
@@ -660,7 +651,7 @@ async fn an_operator_reads_the_stats_with_their_key() -> anyhow::Result<()> {
 #[tokio::test]
 async fn the_stats_are_refused_without_an_operators_key() -> anyhow::Result<()> {
     let served = Served::start().await;
-    let key = served.store.add_operator("ops").await?;
+    let key = served.store.add_operator("ops");
     let wrong_key = client::builder()
         .with(client::key::<Key>(format!("{key}0")))
         .build::<Api>(&served.url)?;
@@ -673,27 +664,6 @@ async fn the_stats_are_refused_without_an_operators_key() -> anyhow::Result<()> 
         assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
     }
 
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_store_on_a_file_keeps_its_users_and_notes() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("notes.db");
-
-    let store = Store::open(&path).await?;
-    let user = store.add_user("ana", "correct horse").await?;
-    let note = store.add(user.id, titled("Milk")).await?;
-
-    drop(store);
-
-    let store = Store::open(&path).await?;
-
-    assert_eq!(
-        store.check_password("ana", "correct horse").await?,
-        Some(user.clone())
-    );
-    assert_eq!(store.note(user.id, note.id).await?, Some(note));
     Ok(())
 }
 
@@ -759,7 +729,7 @@ fn a_session_lasts_a_day() {
 #[tokio::test]
 async fn a_token_past_its_lifetime_is_refused() -> anyhow::Result<()> {
     let app = notes_server::App {
-        store: Store::in_memory(),
+        store: Store::default(),
         sessions: Sessions::with_lifetime(Duration::ZERO),
     };
     let token = app.sessions.open(ana());

@@ -45,8 +45,6 @@ impl Authenticate<Key> for App {
     async fn authenticate(&self, key: String) -> Result<Operator> {
         self.store
             .operator(&key)
-            .await
-            .map_err(Error::internal)?
             .ok_or_else(|| Error::unauthorized("unknown key"))
     }
 }

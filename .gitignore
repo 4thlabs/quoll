@@ -1,5 +1,3 @@
 /target
 **/node_modules
 **/openapi.json
-# The database of the notes example, which its server and its seed write where they run.
-**/notes.db
