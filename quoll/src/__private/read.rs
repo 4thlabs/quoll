@@ -15,6 +15,7 @@ use serde::de::DeserializeOwned;
 use crate::rest::Result;
 
 /// A read of a `T`, boxed: one allocation per call, against the one error a type that cannot be read gets.
+#[must_use = "a read does nothing unless it is awaited"]
 pub struct Read<T>(Pin<Box<dyn Future<Output = Result<T>> + Send>>);
 
 impl<T> Read<T> {

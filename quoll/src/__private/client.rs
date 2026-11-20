@@ -478,7 +478,7 @@ impl Answer {
     ///
     /// # Errors
     ///
-    /// An error with no status when the body cannot be read, or is not the JSON of `T`.
+    /// The read resolves to an error with no status when the body cannot be read, or is not the JSON of `T`.
     pub fn json<T: Deserialized + Send + 'static>(self) -> Read<T> {
         Read::new(self.read_json())
     }
@@ -495,8 +495,8 @@ impl Answer {
     ///
     /// # Errors
     ///
-    /// An error with no status when the answer is not `text/plain`, names a charset other than UTF-8, or its body
-    /// cannot be read or is not UTF-8.
+    /// The read resolves to an error with no status when the answer is not `text/plain`, names a charset other than
+    /// UTF-8, or its body cannot be read or is not UTF-8.
     pub fn text<T: IsText + Send + 'static>(self) -> Read<T> {
         Read::new(self.read_text())
     }
@@ -518,7 +518,7 @@ impl Answer {
     ///
     /// # Errors
     ///
-    /// An error with no status when the body cannot be read.
+    /// The read resolves to an error with no status when the body cannot be read.
     pub fn bytes<B: IsBytes + Send + 'static>(self) -> Read<B> {
         Read::new(self.read_bytes())
     }
@@ -540,10 +540,10 @@ impl Answer {
     ///
     /// # Errors
     ///
-    /// An error with no status when the answer is not `text/event-stream`. Then, in the stream, an error with no
-    /// status for an event that does not read as an item; the error of an answer for an `event: problem`, with the
-    /// problem's status and the problem; and an error with no status for an event or a line longer than 1 MiB, or a
-    /// body that cannot be read. The stream ends after any of them but the first.
+    /// The read resolves to an error with no status when the answer is not `text/event-stream`. Then, in the stream,
+    /// an error with no status for an event that does not read as an item; the error of an answer for an
+    /// `event: problem`, with the problem's status and the problem; and an error with no status for an event or a line
+    /// longer than 1 MiB, or a body that cannot be read. The stream ends after any of them but the first.
     pub fn events<E>(self) -> Read<E>
     where
         E: IsEvents + Send + 'static,
@@ -573,8 +573,8 @@ impl Answer {
     ///
     /// # Errors
     ///
-    /// An error with no status when the answer is not `application/jsonl`, `application/x-ndjson` or
-    /// `application/x-jsonlines`. Then, in the stream, an error with no status for a line that does not read as an
+    /// The read resolves to an error with no status when the answer is not `application/jsonl`, `application/x-ndjson`
+    /// or `application/x-jsonlines`. Then, in the stream, an error with no status for a line that does not read as an
     /// item; and for a line longer than 1 MiB, or a body that cannot be read, after which the stream ends.
     pub fn json_lines<L>(self) -> Read<L>
     where
