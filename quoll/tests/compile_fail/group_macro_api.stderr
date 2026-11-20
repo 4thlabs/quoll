@@ -1,0 +1,5 @@
+error: a `rest::group!` holds a group, which an api lists: write the api in a `rest::api!`, as `pub api Api = "/api" { notes::Notes };`
+ --> tests/compile_fail/group_macro_api.rs:4:9
+  |
+4 |     pub api Api = "/api";
+  |         ^^^

@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: the scheme `Key` is less visible than the group `Notes` that takes it, whose server trait names it: write `pub scheme Key`
+  --> tests/compile_fail_neither/group_listed_scheme_less_visible.rs:15:35
+   |
+15 |     pub api Api = "/api" { notes::Notes };
+   |                                   ^^^^^ evaluation of `_::_` failed here

@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: the query key `token` carries the credential of `Token`, which the route `Notes::list` takes: name the argument's key otherwise
+  --> tests/compile_fail/group_list_query_key_of_scheme.rs:17:35
+   |
+17 |     pub api Api = "/api" { notes::Notes };
+   |                                   ^^^^^ evaluation of `_::_` failed here

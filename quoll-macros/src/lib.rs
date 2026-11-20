@@ -1,6 +1,7 @@
 //! The proc macros of `quoll`, which re-exports them: users depend on `quoll`, never on this crate.
 
 mod client;
+mod descriptor;
 mod known;
 mod model;
 mod openapi;
@@ -16,9 +17,10 @@ use syn::Ident;
 use syn::ext::IdentExt;
 use syn::spanned::Spanned;
 
+use crate::descriptor::Cx;
 use crate::known::Known;
-use crate::model::{Api, Group, Route};
-use crate::syntax::Contract;
+use crate::model::{Api, Route};
+use crate::syntax::{Contract, GroupContract};
 
 /// Reads a REST contract and checks it.
 ///
@@ -41,6 +43,9 @@ use crate::syntax::Contract;
 /// Key = header "X-Api-Key";`, or a type implementing `rest::Scheme`; `#[auth(Bearer | Key)]` takes either,
 /// `#[auth(Bearer, optional)]` a request with none, and `#[auth(Bearer, scopes("repo"))]` a caller with the scope.
 ///
+/// The api may list groups that `rest::group!` blocks write in other modules, by their paths, after its prefix:
+/// `pub api Api = "/api" { auth::Auth, notes::Notes };`, the groups of its own block coming after them.
+///
 /// A mistake in the contract is a compile error on the token at fault. The api becomes its type, with its comments;
 /// with the feature `server` of `quoll`, a server trait per group, `ApiServices` and `Api::router` come too; with the
 /// feature `client`, a trait per group, its client, `ApiClient`, `Api::client` and `Api::client_with`. Whatever the
@@ -54,12 +59,60 @@ pub fn api(input: TokenStream) -> TokenStream {
     }
 }
 
-/// What a contract becomes: the api's type, the check of the types it names, its OpenAPI document, the server's code
-/// behind the feature `server` of `quoll`, and the client's behind its feature `client`.
+/// Reads a group of a REST contract written in a module of its own, which an api lists, and checks it.
+///
+/// ```text
+/// rest::group! {
+///     /// The signed-in user's notes.
+///     #[auth(Bearer)]
+///     pub group Notes {
+///         GET "/notes/{id}" => get(id: i64) -> Note;
+///     }
+/// }
+///
+/// rest::api! {
+///     pub api Api = "/api" { notes::Notes };
+/// }
+/// ```
+///
+/// The group is written as in `rest::api!`, and becomes the same items: its server trait, `NotesServer`, its client's
+/// trait and its client, `Notes` and `NotesClient`, each behind its feature. A scheme it takes is the crate's, or a
+/// type implementing `rest::Scheme` named by its path or imported, as a scheme an api declares: `#[auth(crate::Key)]`.
+/// The group has an OpenAPI document, for which each type it names implements `schemars::JsonSchema`, unless it says
+/// `#[openapi(none)]`, as the group of an api that has none.
+///
+/// The api that lists it, by its path, reads its routes through a hidden descriptor, `__QuollGroupNotes`, and serves
+/// and calls them under its own prefix; it checks them, at compile time, against its own and its other groups'.
+#[proc_macro]
+pub fn group(input: TokenStream) -> TokenStream {
+    match syn::parse::<GroupContract>(input) {
+        Ok(GroupContract(alone)) => {
+            let cx = Cx {
+                group: &alone.groups[0],
+                api: None,
+                openapi: alone.openapi,
+            };
+
+            expand_group(&cx).into()
+        }
+        Err(error) => error.into_compile_error().into(),
+    }
+}
+
+/// What a contract becomes: the api's type, its schemes, each group its block writes, its OpenAPI document, the checks
+/// of the groups it lists, the server's code behind the feature `server` of `quoll`, and the client's behind its
+/// feature `client`.
 fn expand(api: &Api) -> proc_macro2::TokenStream {
     let api_type = api_type(api);
     let schemes = scheme::expand(api);
-    let known = known_types(api);
+    let groups = api.groups.iter().map(|group| {
+        expand_group(&Cx {
+            group,
+            api: Some(api),
+            openapi: api.openapi,
+        })
+    });
+    let checks = descriptor::api_checks(api);
     let openapi = openapi::expand(api);
     let server = server::expand(api);
     let client = client::expand(api);
@@ -67,26 +120,46 @@ fn expand(api: &Api) -> proc_macro2::TokenStream {
     quote! {
         #api_type
         #schemes
-        #known
+        #(#groups)*
+        #checks
         #openapi
         #server
         #client
     }
 }
 
-/// Checks that each type of quoll's the contract names, which the macro recognizes by its name, is the crate's, and,
-/// for a contract with no OpenAPI document, whose `Api::openapi` checks it, that each scheme of the application's it
-/// names is a scheme. The types are the contract's tokens, so that the user's import names them; and the check is
-/// written whatever the features of `quoll`, so that the import is used, and the type checked, with neither of them.
-fn known_types(api: &Api) -> proc_macro2::TokenStream {
-    // With a document, `Api::openapi` names each scheme once, which checks it.
-    let mut checks = if api.openapi {
-        Vec::new()
+/// What a group becomes: its descriptor, the check of the types it names, its OpenAPI document, its server's code and
+/// its client's.
+fn expand_group(cx: &Cx) -> proc_macro2::TokenStream {
+    let descriptor = descriptor::expand(cx);
+    let known = known_types(cx);
+    let alone = if cx.api.is_none() {
+        descriptor::alone_checks(cx)
     } else {
-        scheme::checks(api)
+        proc_macro2::TokenStream::new()
     };
+    let openapi = openapi::group(cx);
+    let server = server::group(cx);
+    let client = client::group(cx);
 
-    for route in api.groups.iter().flat_map(|group| &group.routes) {
+    quote! {
+        #descriptor
+        #known
+        #alone
+        #openapi
+        #server
+        #client
+    }
+}
+
+/// Checks that each type of quoll's a group names, which the macro recognizes by its name, is the crate's. The types
+/// are the contract's tokens, so that the user's import names them; and the check is written whatever the features
+/// of `quoll`, so that the import is used, and the type checked, with neither of them. The schemes a group takes are
+/// checked by its descriptor, which names each one.
+fn known_types(cx: &Cx) -> proc_macro2::TokenStream {
+    let mut checks = Vec::new();
+
+    for route in &cx.group.routes {
         let result = route
             .reply
             .as_deref()
@@ -119,9 +192,17 @@ pub(crate) fn doc_attrs(lines: &[String]) -> proc_macro2::TokenStream {
 }
 
 /// The comments of a route's method, on the server's trait and the client's: the contract's, then the method and the
-/// path, `GET /api/notes/{id}`, and the scheme it takes.
-pub(crate) fn route_docs(api: &Api, route: &Route) -> proc_macro2::TokenStream {
-    let mut line = format!(" `{} {}`", route.method.as_str(), shown_path(api, route));
+/// path, `GET /api/notes/{id}` under the prefix of the api of the block, or below the prefix of the api that lists
+/// the group, and the scheme it takes.
+pub(crate) fn route_docs(prefix: Option<&str>, route: &Route) -> proc_macro2::TokenStream {
+    let mut line = format!(
+        " `{} {}`",
+        route.method.as_str(),
+        shown_path(prefix.unwrap_or_default(), route)
+    );
+    if prefix.is_none() {
+        line.push_str(", under the prefix of the api");
+    }
     if let Some(auth) = &route.auth {
         let words: Vec<String> = auth
             .schemes
@@ -158,48 +239,9 @@ pub(crate) fn route_docs(api: &Api, route: &Route) -> proc_macro2::TokenStream {
     doc_attrs(&lines)
 }
 
-/// `static NAME: rest::Route = ...;`, the route a request calls: the client puts it in the extensions of each request
-/// it sends, and the server in those of each answer, where middleware and layers read it.
-pub(crate) fn route_static_item(
-    api: &Api,
-    group: &Group,
-    route: &Route,
-    name: &Ident,
-) -> proc_macro2::TokenStream {
-    let operation_id = route.operation_id(group);
-    let group_name = group.name.unraw().to_string();
-    let method = Ident::new(route.method.as_str(), Span::call_site());
-    let path = route.full_path(&api.prefix);
-    // The name and the type of each scheme come from the scheme itself, which writes its name once.
-    let schemes: Vec<_> = route.schemes().map(scheme::scheme_type).collect();
-    let names = schemes
-        .iter()
-        .map(|scheme| quote! { <#scheme as ::quoll::rest::Scheme>::NAME });
-    let types = schemes
-        .iter()
-        .map(|scheme| quote! { ::core::any::TypeId::of::<#scheme>() });
-    let streams = route
-        .reply
-        .as_deref()
-        .and_then(|returned| returned.known)
-        .is_some_and(|known| known.stream);
-
-    quote! {
-        static #name: ::quoll::rest::Route = ::quoll::__private::route(
-            #operation_id,
-            #group_name,
-            ::quoll::__private::http::Method::#method,
-            #path,
-            &[#(#names),*],
-            &[#(#types),*],
-            #streams,
-        );
-    }
-}
-
 /// The path with its query, as the docs show it: `/api/notes?page={page}`.
-fn shown_path(api: &Api, route: &Route) -> String {
-    let mut path = route.full_path(&api.prefix);
+fn shown_path(prefix: &str, route: &Route) -> String {
+    let mut path = route.full_path(prefix);
     let query = route
         .query_params()
         .map(|(param, key)| format!("{key}={{{}}}", param.name.unraw()));
@@ -323,10 +365,12 @@ mod tests {
             }
         });
 
-        // Once for the server, once for the client.
-        let route = r#""admin_tools_match" , "AdminTools" , :: quoll :: __private :: http :: Method :: GET , "/api/admin/{service}""#;
+        // Once, in the group's descriptor, below the prefix, which the api's tables put it under.
+        let route = r#"id : "admin_tools_match" , function : "match" , method : :: quoll :: __private :: group :: Verb :: Get , path : "/admin/{service}""#;
+        let table = r#"table ! (__QUOLL_ROUTES , "/api" , __QuollGroupAdminTools)"#;
 
-        assert_eq!(tokens.matches(route).count(), 2, "{tokens}");
+        assert_eq!(tokens.matches(route).count(), 1, "{tokens}");
+        assert_eq!(tokens.matches(table).count(), 2, "{tokens}");
     }
 
     #[test]
@@ -343,11 +387,11 @@ mod tests {
         });
 
         assert!(
-            tokens.contains(r#""/api/notes/{id}" , & [< :: quoll :: rest :: Bearer as :: quoll :: rest :: Scheme > :: NAME] , & [:: core :: any :: TypeId :: of :: < :: quoll :: rest :: Bearer > ()]"#),
+            tokens.contains(r#"path : "/notes/{id}" , headers : & [] , query : & [] , schemes : & [< :: quoll :: rest :: Bearer as :: quoll :: rest :: Scheme > :: NAME] , scheme_types : & [:: core :: any :: TypeId :: of :: < :: quoll :: rest :: Bearer > ()]"#),
             "{tokens}"
         );
         assert!(
-            tokens.contains(r#""/api/public" , & [] , & []"#),
+            tokens.contains(r#"path : "/public" , headers : & [] , query : & [] , schemes : & [] , scheme_types : & []"#),
             "{tokens}"
         );
         assert!(

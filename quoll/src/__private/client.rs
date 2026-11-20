@@ -167,7 +167,8 @@ impl<'a> Call<'a> {
         }
     }
 
-    /// Adds `text` to the path as it is: what the contract writes between its parameters, `/api/notes`.
+    /// Adds `text` to the path as it is: the api's prefix, `/api`, and what the contract writes between its parameters,
+    /// `/notes`. A path left empty is `/`.
     #[must_use]
     pub fn path(mut self, text: &'static str) -> Self {
         self.path.push_str(text);
@@ -392,6 +393,8 @@ impl<'a> Call<'a> {
         } = self;
         let Inner { http, base, origin } = &*client.0;
         let mut url = base.clone();
+        // The route `"/"` of an api with no prefix.
+        let path = if path.is_empty() { "/" } else { path.as_str() };
         url.set_path(&format!("{}{path}", base.path().trim_end_matches('/')));
         url.set_query(query.as_deref());
 

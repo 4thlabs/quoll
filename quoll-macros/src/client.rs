@@ -1,5 +1,5 @@
-//! What the client side of a contract becomes: a trait per group, its client, `ApiClient`, `Api::client` and
-//! `Api::client_with`.
+//! What the client side of a contract becomes: a trait per group, its client, with the function of its descriptor that
+//! builds it, and `ApiClient`, `Api::client` and `Api::client_with`, which give each group's client by its descriptor.
 //!
 //! All of it goes through `::quoll::__private::client!`, which writes it out only when `quoll` has the feature
 //! `client`. Each method writes the route's path, query and body through a helper of `quoll`, which sends the request
@@ -9,34 +9,53 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Group, Param, Route};
+use crate::descriptor::{Cx, descriptor_name, table};
+use crate::model::{Api, Param, Route};
 use crate::path::Segment;
-use crate::{doc_attrs, route_docs, route_static_item};
+use crate::{doc_attrs, route_docs};
+
+/// The client's code of a group, behind the feature `client` of `quoll`: its trait, its client, and the function of
+/// its descriptor that builds the client.
+pub(crate) fn group(cx: &Cx) -> TokenStream {
+    let group_trait = group_trait(cx);
+    let group_client = group_client(cx);
+
+    quote! {
+        ::quoll::__private::client! {
+            #group_trait
+            #group_client
+        }
+    }
+}
 
 /// The client's code of the api, behind the feature `client` of `quoll`.
 pub(crate) fn expand(api: &Api) -> TokenStream {
-    let traits = api.groups.iter().map(|group| group_trait(api, group));
-    let clients = api.groups.iter().map(|group| group_client(api, group));
     let api_client = api_client(api);
 
     quote! {
         ::quoll::__private::client! {
-            #(#traits)*
-            #(#clients)*
             #api_client
         }
     }
 }
 
-fn group_trait(api: &Api, group: &Group) -> TokenStream {
+/// Where the client of a group is given: `` `ApiClient::notes` `` in the api's block, any api's client otherwise.
+fn given_by(cx: &Cx) -> String {
+    match cx.api {
+        Some(api) => format!("`{}::{}`", api.client(), cx.group.field().unraw()),
+        None => "the client of each api that lists the group".to_owned(),
+    }
+}
+
+fn group_trait(cx: &Cx) -> TokenStream {
+    let group = cx.group;
     let vis = &group.vis;
     let name = &group.name;
     let fallback = format!(" The client of the group `{}`.", group.name.unraw());
     let usage = format!(
-        " Implemented by `{}`, which `{}::{}` gives, and by a fake in a test.",
+        " Implemented by `{}`, which {} gives, and by a fake in a test.",
         group.client(),
-        api.client(),
-        group.field().unraw(),
+        given_by(cx),
     );
     let mut lines = if group.docs.0.is_empty() {
         vec![fallback]
@@ -46,7 +65,7 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     lines.extend([String::new(), usage]);
     let docs = doc_attrs(&lines);
     let methods = group.routes.iter().map(|route| {
-        let docs = route_docs(api, route);
+        let docs = route_docs(cx.prefix(), route);
         let signature = signature(route);
 
         quote! {
@@ -86,39 +105,64 @@ fn signature(route: &Route) -> TokenStream {
     }
 }
 
-fn group_client(api: &Api, group: &Group) -> TokenStream {
+fn group_client(cx: &Cx) -> TokenStream {
+    let group = cx.group;
     let vis = &group.vis;
     let name = &group.name;
     let client = group.client();
+    let descriptor = descriptor_name(&group.name);
+    let count = group.routes.len();
     let docs = format!(
-        " The client of the group `{}`, which `{}::{}` gives: it implements `{}`.",
+        " The client of the group `{}`, which {} gives: it implements `{}`.",
         group.name.unraw(),
-        api.client(),
-        group.field().unraw(),
+        given_by(cx),
         group.name.unraw(),
     );
-    let methods = group.routes.iter().map(|route| method(api, group, route));
+    let methods = group
+        .routes
+        .iter()
+        .enumerate()
+        .map(|(index, route)| method(index, route));
+    let http = Ident::new("client", Span::mixed_site());
+    let prefix = Ident::new("prefix", Span::mixed_site());
+    let routes = Ident::new("routes", Span::mixed_site());
 
     quote! {
         #[doc = #docs]
         #[derive(::core::fmt::Debug, ::core::clone::Clone)]
         #vis struct #client {
             client: ::quoll::__private::client::Client,
+            prefix: &'static str,
+            routes: &'static [::quoll::rest::Route; #count],
         }
 
         impl #name for #client {
             #(#methods)*
         }
+
+        impl #descriptor {
+            /// The group's client, calling through `client` the routes of `routes`, the table of the api that lists
+            /// the group, each path under `prefix`, the api's.
+            pub fn client(
+                #http: ::quoll::__private::client::Client,
+                #prefix: &'static str,
+                #routes: &'static [::quoll::rest::Route; #count],
+            ) -> #client {
+                #client {
+                    client: #http,
+                    prefix: #prefix,
+                    routes: #routes,
+                }
+            }
+        }
     }
 }
 
 /// A route's method on the group's client: the route, then its path, query and body written from the arguments.
-fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
+fn method(index: usize, route: &Route) -> TokenStream {
     let signature = signature(route);
-    let route_static = Ident::new("__QUOLL_ROUTE", Span::mixed_site());
-    let route_item = route_static_item(api, group, route, &route_static);
 
-    let path_calls = path_calls(api, route);
+    let path_calls = path_calls(route);
     let (query_type, query_call) = query(route).unzip();
     let query_struct = route.query_struct().map(|param| {
         let (name, ty) = (&param.name, &param.ty);
@@ -161,12 +205,11 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
 
     quote! {
         #signature {
-            #route_item
-
             #query_type
 
             async move {
-                ::quoll::__private::client::Call::new(&self.client, &#route_static)
+                ::quoll::__private::client::Call::new(&self.client, &self.routes[#index])
+                    .path(self.prefix)
                     #(#path_calls)*
                     #query_call
                     #query_struct
@@ -181,11 +224,12 @@ fn method(api: &Api, group: &Group, route: &Route) -> TokenStream {
     }
 }
 
-/// The calls that write the path: `.path("/api/notes")` for the text between parameters, `.segment("id", &id)?` for
-/// each parameter.
-fn path_calls(api: &Api, route: &Route) -> Vec<TokenStream> {
+/// The calls that write the path after the api's prefix: `.path("/notes")` for the text between parameters,
+/// `.segment("id", &id)?` for each parameter. The route `"/"` is the prefix alone, or `/` with none, which the call
+/// writes itself.
+fn path_calls(route: &Route) -> Vec<TokenStream> {
     let mut calls = Vec::new();
-    let mut text = api.prefix.clone();
+    let mut text = String::new();
     let mut params = route.path_params();
 
     for segment in &route.path {
@@ -209,9 +253,6 @@ fn path_calls(api: &Api, route: &Route) -> Vec<TokenStream> {
         }
     }
 
-    if route.path.is_empty() && text.is_empty() {
-        text.push('/');
-    }
     if !text.is_empty() {
         calls.push(quote! { .path(#text) });
     }
@@ -260,17 +301,22 @@ fn api_client(api: &Api) -> TokenStream {
         name.unraw(),
         name.unraw(),
     );
-    let groups = api.groups.iter().map(|group| {
+    let groups = api.refs().into_iter().map(|group| {
         let method = group.field();
         let group_client = group.client();
+        let descriptor = group.descriptor();
+        let table = table(api, &group);
+        let prefix = &api.prefix;
         let docs = format!(" The client of the group `{}`.", group.name.unraw());
+
+        let call = quote_spanned! {group.span()=>
+            #descriptor::client(::core::clone::Clone::clone(&self.client), #prefix, #table)
+        };
 
         quote! {
             #[doc = #docs]
             #vis fn #method(&self) -> #group_client {
-                #group_client {
-                    client: ::core::clone::Clone::clone(&self.client),
-                }
+                #call
             }
         }
     });

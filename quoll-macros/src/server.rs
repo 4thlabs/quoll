@@ -1,4 +1,5 @@
-//! What the server side of a contract becomes: a trait per group, `ApiServices` and `Api::router`.
+//! What the server side of a contract becomes: a trait per group, with the function of its descriptor that serves its
+//! routes, and `ApiServices` and `Api::router`, which serve the api's groups by their descriptors.
 //!
 //! All of it goes through `::quoll::__private::server!`, which writes it out only when `quoll` has the feature
 //! `server`. The router's code authenticates the request and reads each argument through a helper of `quoll`, and
@@ -8,34 +9,51 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
-use crate::model::{Api, Bounds, Group, Param, Route, is_vec};
+use crate::descriptor::{Cx, GroupRef, descriptor_name, table};
+use crate::model::{Api, Bounds, Param, Route, is_vec};
 use crate::scheme::{scheme_type, schemes_type};
-use crate::{doc_attrs, route_docs, route_static_item};
+use crate::{doc_attrs, route_docs};
 
-/// The server's code of the api, behind the feature `server` of `quoll`.
+/// The server's code of a group, behind the feature `server` of `quoll`: its trait, and the function of its
+/// descriptor that serves its routes.
+pub(crate) fn group(cx: &Cx) -> TokenStream {
+    let group_trait = group_trait(cx);
+    let serve = serve_fn(cx);
+
+    quote! {
+        ::quoll::__private::server! {
+            #group_trait
+            #serve
+        }
+    }
+}
+
+/// The server's code of the api, behind the feature `server` of `quoll`: `ApiServices` and `Api::router`.
 pub(crate) fn expand(api: &Api) -> TokenStream {
-    let traits = api.groups.iter().map(|group| group_trait(api, group));
     let services = services_struct(api);
     let router = router_fn(api);
 
     quote! {
         ::quoll::__private::server! {
-            #(#traits)*
             #services
             #router
         }
     }
 }
 
-fn group_trait(api: &Api, group: &Group) -> TokenStream {
+fn group_trait(cx: &Cx) -> TokenStream {
+    let group = cx.group;
     let vis = &group.vis;
     let name = group.server_trait();
     let fallback = format!(" The server of the group `{}`.", group.name.unraw());
-    let usage = format!(
-        " Implemented by the group's service, which `{}` holds for `{}::router`.",
-        api.services(),
-        api.name.unraw(),
-    );
+    let usage = match cx.api {
+        Some(api) => format!(
+            " Implemented by the group's service, which `{}` holds for `{}::router`.",
+            api.services(),
+            api.name.unraw(),
+        ),
+        None => " Implemented by the group's service, which the services of each api that lists the group hold for its router.".to_owned(),
+    };
     let mut lines = if group.docs.0.is_empty() {
         vec![fallback]
     } else {
@@ -57,7 +75,10 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     }
 
     let docs = doc_attrs(&lines);
-    let methods = group.routes.iter().map(|route| method(api, &bounds, route));
+    let methods = group
+        .routes
+        .iter()
+        .map(|route| method(cx.prefix(), &bounds, route));
     let authenticate = bounds.0.iter().map(|bound| {
         let scheme = scheme_type(bound.scheme);
         let span = bound.scheme.span();
@@ -83,8 +104,8 @@ fn group_trait(api: &Api, group: &Group) -> TokenStream {
     }
 }
 
-fn method(api: &Api, bounds: &Bounds, route: &Route) -> TokenStream {
-    let docs = route_docs(api, route);
+fn method(prefix: Option<&str>, bounds: &Bounds, route: &Route) -> TokenStream {
+    let docs = route_docs(prefix, route);
     let name = &route.name;
     let args = route
         .params
@@ -127,14 +148,15 @@ fn services_struct(api: &Api) -> TokenStream {
         api.name.unraw(),
         api.name.unraw(),
     );
-    let generics = api.groups.iter().map(|group| &group.name);
-    let fields = api.groups.iter().map(|group| {
+    let refs = api.refs();
+    let generics = refs.iter().map(|group| group.name);
+    let fields = refs.iter().map(|group| {
         let field = group.field();
-        let ty = &group.name;
+        let ty = group.name;
         let docs = format!(
-            " The service of the group `{}`, implementing `{}`.",
+            " The service of the group `{}`, implementing `{}Server`.",
             group.name.unraw(),
-            group.server_trait(),
+            group.name.unraw(),
         );
 
         quote! {
@@ -167,12 +189,12 @@ fn router_fn(api: &Api) -> TokenStream {
     };
     let services = Ident::new("services", Span::mixed_site());
     let router = Ident::new("router", Span::mixed_site());
-    let bounds = api.groups.iter().map(|group| {
+    let refs = api.refs();
+    let bounds = refs.iter().map(|group| {
         let name = group.server_trait();
         quote! { impl #name }
     });
-    let locals: Vec<Ident> = api
-        .groups
+    let locals: Vec<Ident> = refs
         .iter()
         .map(|group| {
             Ident::new(
@@ -181,17 +203,13 @@ fn router_fn(api: &Api) -> TokenStream {
             )
         })
         .collect();
-    let fields = api.groups.iter().map(Group::field);
-    let groups = api.groups.iter().zip(&locals).map(|(group, local)| {
-        let routes = group
-            .routes
-            .iter()
-            .map(|route| route_call(api, group, route));
+    let fields = refs.iter().map(GroupRef::field);
+    let groups = refs.iter().zip(&locals).map(|(group, local)| {
+        let descriptor = group.descriptor();
+        let table = table(api, group);
 
-        quote! {
-            let #router = ::quoll::__private::server::Group::new(#router, #local)
-                #(#routes)*
-                .finish();
+        quote_spanned! {group.span()=>
+            let #router = #descriptor::serve(#router, #local, #table);
         }
     });
 
@@ -209,15 +227,46 @@ fn router_fn(api: &Api) -> TokenStream {
     }
 }
 
+/// The function of a group's descriptor that serves its routes, by the service given, on a router: each route takes
+/// its `rest::Route` from the table of the api, under its prefix.
+fn serve_fn(cx: &Cx) -> TokenStream {
+    let group = cx.group;
+    let descriptor = descriptor_name(&group.name);
+    let server_trait = group.server_trait();
+    let count = group.routes.len();
+    let router = Ident::new("router", Span::mixed_site());
+    let service = Ident::new("service", Span::mixed_site());
+    let routes_table = Ident::new("routes", Span::mixed_site());
+    let routes = group
+        .routes
+        .iter()
+        .enumerate()
+        .map(|(index, route)| route_call(&routes_table, index, route));
+
+    quote! {
+        impl #descriptor {
+            /// Serves the group's routes by `service` on `router`, each with its route of `routes`, the table of the
+            /// api that lists the group.
+            pub fn serve(
+                #router: ::quoll::__private::axum::Router,
+                #service: impl #server_trait,
+                #routes_table: &'static [::quoll::rest::Route; #count],
+            ) -> ::quoll::__private::axum::Router {
+                ::quoll::__private::server::Group::new(#router, #service)
+                    #(#routes)*
+                    .finish()
+            }
+        }
+    }
+}
+
 /// `.route::<Schemes, _, _>(&ROUTE, handler)`: the handler authenticates the request, reads the path, the query and
 /// the body, calls the service and answers; a 401 carries the challenges of `Schemes`, and every answer the route.
-fn route_call(api: &Api, group: &Group, route: &Route) -> TokenStream {
+fn route_call(routes: &Ident, index: usize, route: &Route) -> TokenStream {
     let service = Ident::new("service", Span::mixed_site());
     let request = Ident::new("request", Span::mixed_site());
     let caller = Ident::new("caller", Span::mixed_site());
 
-    let route_static = Ident::new("__QUOLL_ROUTE", Span::mixed_site());
-    let route_item = route_static_item(api, group, route, &route_static);
     let challenges = schemes_type(route.auth.as_ref().map_or(&[], |auth| &auth.schemes));
     let mut reads = Vec::new();
 
@@ -354,11 +403,7 @@ fn route_call(api: &Api, group: &Group, route: &Route) -> TokenStream {
 
     quote! {
         .route::<#challenges, _, _>(
-            {
-                #route_item
-
-                &#route_static
-            },
+            &#routes[#index],
             |#service, #request_pattern| async move {
                 #(#reads)*
                 #answer

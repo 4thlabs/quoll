@@ -4,12 +4,6 @@
 //! features of the user's crate. So the code of each side goes through a macro defined here, which writes it out when
 //! `quoll` has the feature and drops it when it does not.
 
-use std::any::TypeId;
-
-use http::Method;
-
-use crate::rest::Route;
-
 pub use http;
 
 #[cfg(feature = "server")]
@@ -22,6 +16,7 @@ pub use serde;
 
 pub mod auth;
 pub(crate) mod content_type;
+pub mod group;
 pub mod known;
 pub mod openapi;
 
@@ -31,19 +26,18 @@ pub mod server;
 #[cfg(feature = "client")]
 pub mod client;
 
-/// The route a request calls, which the macro writes as a `static` per route: the client puts it in the extensions of
-/// each request, the server in those of each answer. `streams` says that its result is a stream, `Events` or
-/// `JsonLines`, whose body lasts as long as the server sends it.
-pub const fn route(
+/// A route, as the unit tests of each side build one.
+#[cfg(all(test, any(feature = "server", feature = "client")))]
+pub(crate) const fn route(
     operation_id: &'static str,
     group: &'static str,
-    method: Method,
+    method: http::Method,
     path: &'static str,
     schemes: &'static [&'static str],
-    scheme_types: &'static [TypeId],
+    scheme_types: &'static [std::any::TypeId],
     streams: bool,
-) -> Route {
-    Route {
+) -> crate::rest::Route {
+    crate::rest::Route {
         operation_id,
         group,
         method,

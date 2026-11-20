@@ -1,6 +1,7 @@
 //! The description of an api that `Api::openapi` hands to the crate, which builds its OpenAPI 3.1 document: what the
 //! macro knows of each route, and the schemas of its types, which only schemars knows once they are compiled.
 
+use std::any::TypeId;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
@@ -41,17 +42,31 @@ pub fn inline<T: ?Sized + Documented>(generator: &mut SchemaGenerator) -> Schema
 /// An api, as `rest::api!` describes it.
 #[derive(Debug)]
 pub struct Api {
+    /// The name of the api, `Api`, which a message names.
+    pub name: &'static str,
     /// The `///` comments of the api, as rustc gives them.
     pub docs: &'static [&'static str],
     /// The name of the contract's crate.
     pub title: &'static str,
     /// The version of the contract's crate.
     pub version: &'static str,
-    /// Each scheme of the api once: the ones the contract declares, in the order it writes them, then the others its
-    /// routes take.
+    /// What every path starts with, `/api`, or nothing.
+    pub prefix: &'static str,
+    /// The schemes the contract declares, in the order it writes them.
     pub schemes: &'static [SchemeRef],
-    /// The groups, in the order the contract writes them.
-    pub groups: &'static [Group],
+    /// The groups, in the order the api lists them, then the ones it writes.
+    pub groups: &'static [&'static Group],
+}
+
+/// The document of a group, which `rest::group!` writes unless the group says `#[openapi(none)]`.
+#[diagnostic::on_unimplemented(
+    message = "the group has no OpenAPI document, which the document of the api that lists it holds",
+    label = "a group with `#[openapi(none)]`",
+    note = "remove `#[openapi(none)]` from the group's `rest::group!`, or write it on the api, whose document is then left out"
+)]
+pub trait GroupDocument {
+    /// The group, as the document describes it.
+    const GROUP: Group;
 }
 
 /// A group: a tag of the document.
@@ -72,7 +87,7 @@ pub struct Route {
     pub id: &'static str,
     /// The method, in lowercase as OpenAPI writes it.
     pub method: &'static str,
-    /// The path under the api's prefix, without the query: `/api/notes/{id}`.
+    /// The path below the api's prefix, without the query: `/notes/{id}`, and empty for `"/"`.
     pub path: &'static str,
     /// Its `///` comments.
     pub docs: &'static [&'static str],
@@ -154,8 +169,8 @@ pub enum Reply {
 /// The authentication of a route.
 #[derive(Debug)]
 pub struct Auth {
-    /// The schemes it takes, any of them, as indices in the api's.
-    pub schemes: &'static [usize],
+    /// The schemes it takes, any of them, in the order of its `#[auth(...)]`.
+    pub schemes: &'static [SchemeRef],
     /// Whether a request with no credential passes.
     pub optional: bool,
     /// The scopes it needs, all of them.
@@ -170,8 +185,13 @@ pub struct SchemeRef {
     /// `Scheme::openapi`.
     pub openapi: fn() -> SecurityScheme,
     /// Whether the scheme answers 403 to a request from another origin that changes things: a cookie scheme the
-    /// contract declares, which checks it as it reads its cookie.
+    /// contract declares, which checks it as it reads its cookie. A route's scheme says `false`, and the document
+    /// finds out from the api's declared schemes.
     pub checks_origin: bool,
+    /// The scheme's type, which tells two schemes of one name apart.
+    pub type_id: fn() -> TypeId,
+    /// The scheme's type, as a message names it.
+    pub type_name: fn() -> &'static str,
 }
 
 /// Whether two names of schemes are one, which a compile-time check of the api refuses: the document names each
@@ -254,23 +274,25 @@ enum Side {
 }
 
 /// The document of `api`.
+///
+/// # Panics
+///
+/// When two schemes of different types have one name, which names a scheme in the document: the macro refuses them
+/// in one block, and the groups of other blocks reach the api only here.
 pub fn document(api: &'static Api) -> Document {
+    let refs = schemes_of(api);
     let mut builder = Builder {
-        refs: api.schemes,
+        schemes: refs.iter().map(|scheme| (scheme.openapi)()).collect(),
+        refs,
         read: generator(Contract::Deserialize),
         written: generator(Contract::Serialize),
-        schemes: api
-            .schemes
-            .iter()
-            .map(|scheme| (scheme.openapi)())
-            .collect(),
         errors: BTreeSet::new(),
     };
 
     let mut paths = Map::new();
     let mut tags = Vec::new();
 
-    for group in api.groups {
+    for &group in api.groups {
         let mut tag = Map::new();
         tag.insert("name".into(), group.name.into());
         if let Some(description) = text(group.docs) {
@@ -279,9 +301,13 @@ pub fn document(api: &'static Api) -> Document {
         tags.push(Value::Object(tag));
 
         for route in group.routes {
-            let operation = builder.operation(api, group, route);
+            let operation = builder.operation(group, route);
+            let path = match (api.prefix, route.path) {
+                ("", "") => "/".to_owned(),
+                (prefix, path) => format!("{prefix}{path}"),
+            };
             let item = paths
-                .entry(route.path)
+                .entry(path)
                 .or_insert_with(|| Value::Object(Map::new()));
 
             if let Some(item) = item.as_object_mut() {
@@ -297,7 +323,7 @@ pub fn document(api: &'static Api) -> Document {
         info.insert("description".into(), description.into());
     }
 
-    let mut components = builder.responses_and_schemes(api);
+    let mut components = builder.responses_and_schemes();
     let mut paths = Value::Object(paths);
     let schemas = schemas::Schemas {
         read: builder.read.take_definitions(true),
@@ -316,6 +342,40 @@ pub fn document(api: &'static Api) -> Document {
     document.insert("components".into(), Value::Object(components));
 
     Document::new(Value::Object(document))
+}
+
+/// The schemes of `api`, each once by its name: the declared ones, in the order the contract writes them, then the
+/// others its routes take, in the order they come.
+///
+/// # Panics
+///
+/// When two schemes of different types have one name, which names a scheme in the document. The macro refuses them
+/// when it sees both, in one contract's block; the groups an api lists come from other blocks, whose schemes it does
+/// not see.
+fn schemes_of(api: &'static Api) -> Vec<&'static SchemeRef> {
+    let mut schemes: Vec<&'static SchemeRef> = api.schemes.iter().collect();
+    let taken = api
+        .groups
+        .iter()
+        .flat_map(|group| group.routes)
+        .filter_map(|route| route.auth.as_ref())
+        .flat_map(|auth| auth.schemes);
+
+    for scheme in taken {
+        match schemes.iter().find(|listed| listed.name == scheme.name) {
+            Some(listed) if (listed.type_id)() == (scheme.type_id)() => {}
+            Some(listed) => panic!(
+                "the schemes `{}` and `{}` of the api `{}` have one `NAME`, `{}`, which names a scheme in the OpenAPI document: give each scheme its own",
+                (listed.type_name)(),
+                (scheme.type_name)(),
+                api.name,
+                scheme.name,
+            ),
+            None => schemes.push(scheme),
+        }
+    }
+
+    schemes
 }
 
 /// A generator of schemas under `components/schemas`, for `contract`, with the problem of errors registered first, so
@@ -338,9 +398,9 @@ struct Builder {
     read: SchemaGenerator,
     /// The schemas of what clients receive.
     written: SchemaGenerator,
-    /// The api's schemes.
-    refs: &'static [SchemeRef],
-    /// The api's schemes, as they describe themselves, in the order of the api's.
+    /// The api's schemes, each once: the declared ones, then the others its routes take.
+    refs: Vec<&'static SchemeRef>,
+    /// The api's schemes, as they describe themselves, in the order of `refs`.
     schemes: Vec<SecurityScheme>,
     /// The names of the responses of errors some route lists.
     errors: BTreeSet<&'static str>,
@@ -359,7 +419,7 @@ impl Builder {
         }
     }
 
-    fn operation(&mut self, api: &Api, group: &Group, route: &Route) -> Value {
+    fn operation(&mut self, group: &Group, route: &Route) -> Value {
         let mut operation = Map::new();
         operation.insert("operationId".into(), route.id.into());
         operation.insert("tags".into(), json!([group.name]));
@@ -384,7 +444,7 @@ impl Builder {
         operation.insert("responses".into(), self.responses(route));
 
         if let Some(auth) = &route.auth {
-            operation.insert("security".into(), security(api, auth));
+            operation.insert("security".into(), security(auth));
         }
 
         Value::Object(operation)
@@ -468,8 +528,8 @@ impl Builder {
             let checks_origin = auth
                 .schemes
                 .iter()
-                .filter_map(|&index| self.refs.get(index))
-                .any(|scheme| scheme.checks_origin);
+                .filter_map(|scheme| self.index(scheme))
+                .any(|index| self.refs[index].checks_origin);
 
             !auth.scopes.is_empty() || (changes && checks_origin)
         });
@@ -493,7 +553,15 @@ impl Builder {
             .auth
             .iter()
             .flat_map(|auth| auth.schemes)
-            .filter_map(|&index| self.schemes.get(index))
+            .filter_map(|scheme| self.index(scheme))
+            .map(|index| &self.schemes[index])
+    }
+
+    /// Where `scheme` is among the api's, found by its name.
+    fn index(&self, scheme: &SchemeRef) -> Option<usize> {
+        self.refs
+            .iter()
+            .position(|listed| listed.name == scheme.name)
     }
 
     fn success(&mut self, reply: &Reply) -> (&'static str, Value) {
@@ -562,7 +630,7 @@ impl Builder {
     }
 
     /// The components but the schemas: the responses of errors the routes list, and the api's schemes.
-    fn responses_and_schemes(&self, api: &Api) -> Map<String, Value> {
+    fn responses_and_schemes(&self) -> Map<String, Value> {
         let problem = json!({
             "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } },
         });
@@ -594,7 +662,7 @@ impl Builder {
         components.insert("responses".into(), Value::Object(responses));
 
         let mut schemes = Map::new();
-        for (scheme, described) in api.schemes.iter().zip(&self.schemes) {
+        for (scheme, described) in self.refs.iter().zip(&self.schemes) {
             let described = serde_json::to_value(described)
                 .expect("a security scheme serializes as a map of strings");
 
@@ -610,11 +678,10 @@ impl Builder {
 
 /// The requirements of a route: any of its schemes, each with all its scopes, or none at all when its credential is
 /// optional.
-fn security(api: &Api, auth: &Auth) -> Value {
+fn security(auth: &Auth) -> Value {
     let mut requirements: Vec<Value> = auth
         .schemes
         .iter()
-        .filter_map(|&index| api.schemes.get(index))
         .map(|scheme| json!({ scheme.name: auth.scopes }))
         .collect();
 
