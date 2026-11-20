@@ -1,0 +1,4 @@
+[package]
+name = "contract"
+edition = "2024"
+publish = false

@@ -2,6 +2,7 @@
 members = [
     "quoll",
     "quoll-macros",
+    "quoll-cli",
     "examples/notes/api",
     "examples/notes/server",
     "examples/notes/cli",
@@ -9,6 +10,8 @@ members = [
     "examples/docker/cli",
     "docs/guides",
 ]
+# The workspace that the tests of quoll-cli copy and run `cargo quoll` on.
+exclude = ["quoll-cli/tests/fixture"]
 resolver = "3"
 
 [workspace.package]
@@ -20,3 +23,14 @@ repository = "https://github.com/4thlabs/quoll"
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
+
+# The config of `cargo quoll`, for the notes example. The `after` that runs orval and the `web` table come with its web
+# page: until then, `cargo quoll gen` writes the document alone, which is gitignored.
+[[workspace.metadata.quoll.api]]
+package = "notes-api"
+bin = "openapi"
+output = "examples/notes/web/openapi.json"
+
+[[workspace.metadata.quoll.server]]
+package = "notes-server"
+url = "http://127.0.0.1:8080"
