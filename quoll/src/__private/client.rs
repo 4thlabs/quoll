@@ -25,7 +25,7 @@ mod redact;
 mod stream;
 mod text;
 
-pub(crate) use redact::redacted;
+pub(crate) use redact::{redacted, strip_urls};
 
 pub use crate::__private::content_type::{EVENT_STREAM, JSON, TEXT};
 pub use http::HeaderName;
@@ -451,10 +451,21 @@ fn no_answer(
 }
 
 /// An answer with a success status, read as the route's result.
-#[derive(Debug)]
 pub struct Answer {
     response: reqwest::Response,
     route: &'static Route,
+}
+
+/// Shows the route, the status and the URL of the answer by its origin and its path, without its query, which may
+/// hold a key: reqwest's `Debug` of a response shows the whole URL.
+impl fmt::Debug for Answer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Answer")
+            .field("operation_id", &self.route.operation_id)
+            .field("status", &self.response.status())
+            .field("url", &redacted(self.response.url()))
+            .finish()
+    }
 }
 
 impl Answer {
@@ -677,6 +688,7 @@ mod tests {
     use super::*;
     use crate::__private::route;
     use http::Method;
+    use reqwest::ResponseBuilderExt;
 
     static ROUTE: Route = route(
         "notes_get",
@@ -842,6 +854,24 @@ mod tests {
                 "{shown}"
             );
         }
+    }
+
+    #[test]
+    fn an_answer_shows_its_url_without_its_query() {
+        let url = Url::parse("http://localhost:8080/api/notes/1?token=secret").expect("a url");
+        let response = http::Response::builder()
+            .url(url)
+            .body("")
+            .expect("a response");
+        let answer = Answer {
+            response: response.into(),
+            route: &ROUTE,
+        };
+
+        assert_eq!(
+            format!("{answer:?}"),
+            r#"Answer { operation_id: "notes_get", status: 200, url: "http://localhost:8080/api/notes/1" }"#
+        );
     }
 
     #[test]

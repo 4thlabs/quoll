@@ -1,6 +1,6 @@
 //! What a client's error shows of the URL of its call: its origin and its path, never its query, where a query scheme
-//! sends its key. Each call fails against a port nothing listens on, or a server of raw TCP that answers what no
-//! server of a contract would.
+//! sends its key. Each call fails against a server of raw TCP that closes its connections with no answer, or answers
+//! what no server of a contract would.
 
 #![cfg(feature = "client")]
 
@@ -12,7 +12,7 @@ use http::Extensions;
 use quoll::rest::{self, Error};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware, Next};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 rest::api! {
     api Api = "/api";
@@ -65,43 +65,49 @@ async fn call(http: ClientBuilder, url: &str) -> Error {
         .expect_err("the call fails")
 }
 
-/// The URL of a port nothing listens on, where each connection is refused.
-async fn refused() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("a free port");
-
-    format!("http://{}", listener.local_addr().expect("an address"))
+/// A URL where nothing answers: a port kept bound, whose every connection is closed at once, with no response. A port
+/// freed instead could be taken by another test, which would answer.
+async fn dead_url() -> String {
+    answers_once(None).await
 }
 
-/// A server of raw TCP that writes `answer` on the first connection it accepts, then closes it, and closes each
-/// later one at once: its URL.
-async fn answers_once(answer: &'static [u8]) -> String {
+/// A server of raw TCP that reads the head of the first request and writes `answer` on its connection, then closes
+/// it, and closes each later connection at once, as it closes the first when there is no `answer`: its URL.
+async fn answers_once(answer: Option<&'static [u8]>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("a free port");
     let url = format!("http://{}", listener.local_addr().expect("an address"));
 
     tokio::spawn(async move {
-        let (mut connection, _) = listener.accept().await.expect("a connection");
-        let mut head = Vec::new();
-        let mut buffer = [0; 1024];
-
-        while !head.windows(4).any(|window| window == b"\r\n\r\n") {
-            let read = connection.read(&mut buffer).await.expect("a request");
-
-            if read == 0 {
-                return;
-            }
-            head.extend_from_slice(&buffer[..read]);
-        }
-        connection.write_all(answer).await.expect("an answer");
-        drop(connection);
-
-        loop {
+        if let Some(answer) = answer {
             let (connection, _) = listener.accept().await.expect("a connection");
 
+            answer_once(connection, answer).await;
+        }
+
+        while let Ok((connection, _)) = listener.accept().await {
             drop(connection);
         }
     });
 
     url
+}
+
+/// Reads the head of a request on `connection`, then writes `answer` and closes it.
+async fn answer_once(mut connection: TcpStream, answer: &[u8]) {
+    let mut head = Vec::new();
+    let mut buffer = [0; 1024];
+
+    while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+        let read = connection.read(&mut buffer).await.expect("a request");
+
+        if read == 0 {
+            return;
+        }
+
+        head.extend_from_slice(&buffer[..read]);
+    }
+
+    connection.write_all(answer).await.expect("an answer");
 }
 
 /// A middleware of the application's own that fails a call with the error of the rest of the chain inside its own,
@@ -137,8 +143,8 @@ where
 }
 
 #[tokio::test]
-async fn a_refused_connection_shows_no_key() {
-    let url = refused().await;
+async fn a_call_that_got_no_response_shows_no_key() {
+    let url = dead_url().await;
 
     let error = call(ClientBuilder::new(reqwest::Client::new()), &url).await;
 
@@ -146,8 +152,8 @@ async fn a_refused_connection_shows_no_key() {
 }
 
 #[tokio::test]
-async fn a_refused_connection_tried_again_shows_no_key() {
-    let url = refused().await;
+async fn a_failure_tried_again_shows_no_key() {
+    let url = dead_url().await;
     let http = ClientBuilder::new(reqwest::Client::new()).with(rest::client::retry(1));
 
     let error = call(http, &url).await;
@@ -156,8 +162,18 @@ async fn a_refused_connection_tried_again_shows_no_key() {
 }
 
 #[tokio::test]
-async fn a_refused_connection_in_the_error_of_a_middleware_shows_no_key() {
-    let url = refused().await;
+async fn a_failure_retry_does_not_try_again_shows_no_key() {
+    let url = dead_url().await;
+    let http = ClientBuilder::new(reqwest::Client::new()).with(rest::client::retry(0));
+
+    let error = call(http, &url).await;
+
+    assert_shows_no_key(&error, "/api/keyed");
+}
+
+#[tokio::test]
+async fn a_failure_in_the_error_of_a_middleware_shows_no_key() {
+    let url = dead_url().await;
 
     for whole in [false, true] {
         let http = ClientBuilder::new(reqwest::Client::new()).with(wrapping(whole));
@@ -170,9 +186,9 @@ async fn a_refused_connection_in_the_error_of_a_middleware_shows_no_key() {
 
 #[tokio::test]
 async fn a_hop_of_redirects_that_got_no_response_shows_no_key() {
-    let url = answers_once(
+    let url = answers_once(Some(
         b"HTTP/1.1 302 Found\r\nLocation: /api/moved\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-    )
+    ))
     .await;
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -187,12 +203,29 @@ async fn a_hop_of_redirects_that_got_no_response_shows_no_key() {
 
 #[tokio::test]
 async fn a_body_cut_short_shows_no_key() {
-    let url = answers_once(
+    let url = answers_once(Some(
         b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n\"cut",
-    )
+    ))
     .await;
 
     let error = call(ClientBuilder::new(reqwest::Client::new()), &url).await;
 
     assert_shows_no_key(&error, "/api/keyed");
+}
+
+#[tokio::test]
+async fn an_internal_error_logs_no_key_of_a_reqwest_error() {
+    let url = format!("{}/api/keyed?token={KEY}", dead_url().await);
+    let direct = reqwest::get(&url).await.expect_err("no response");
+    let http = ClientBuilder::new(reqwest::Client::new())
+        .with(rest::client::retry(0))
+        .build();
+    let chained = http.get(&url).send().await.expect_err("no response");
+
+    for error in [Error::internal(direct), Error::internal(chained)] {
+        let shown = shown(&error);
+
+        assert!(!shown.contains(KEY), "{shown}");
+        assert!(shown.contains("/api/keyed"), "{shown}");
+    }
 }
