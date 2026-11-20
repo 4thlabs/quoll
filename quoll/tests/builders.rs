@@ -3,6 +3,8 @@
 
 #![cfg(all(feature = "server", feature = "client"))]
 
+use std::cell::Cell;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -59,6 +61,7 @@ impl CallsServer for App {
         let mut ids = self.ids.lock().expect("no test panics with the lock");
 
         ids.push(id.unwrap_or_default());
+
         if ids.len() <= 2 {
             return Err(Error::new(StatusCode::SERVICE_UNAVAILABLE, "not yet"));
         }
@@ -459,6 +462,7 @@ async fn a_server_told_to_stop_ends_the_requests_it_serves() -> Result<()> {
 
 #[tokio::test]
 async fn a_server_told_to_stop_waits_no_longer_than_its_grace_for_a_stream() -> Result<()> {
+    let (log, _capture) = support::log::capture(false);
     let app = App::default();
     let (url, stop, serving) = served(server::builder().grace(DEADLINE), &app).await;
     let events = Api::client(&url)?.calls().endless().await?;
@@ -472,24 +476,70 @@ async fn a_server_told_to_stop_waits_no_longer_than_its_grace_for_a_stream() -> 
         .expect("the server's task does not panic")
         .expect("the server stops with no error");
     drop(events);
+
+    let lines = quoll_lines(&log);
+    let warned: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains(" WARN "))
+        .collect();
+
+    assert_eq!(warned.len(), 1, "{lines:#?}");
+    assert!(warned[0].contains("the grace ran out"), "{lines:#?}");
+    assert!(warned[0].contains("grace=100ms"), "{lines:#?}");
     Ok(())
 }
 
 #[tokio::test]
 async fn a_server_binds_an_address() {
-    let served = server::builder()
-        .shutdown(async {})
-        .serve("127.0.0.1:0", router(&App::default()))
-        .await;
+    let any_port: SocketAddr = "127.0.0.1:0".parse().expect("an address");
 
-    assert!(served.is_ok(), "{served:?}");
+    for served in [
+        server::builder()
+            .shutdown(async {})
+            .serve("127.0.0.1:0", router(&App::default()))
+            .await,
+        server::builder()
+            .shutdown(async {})
+            .serve(String::from("127.0.0.1:0"), router(&App::default()))
+            .await,
+        server::builder()
+            .shutdown(async {})
+            .serve(any_port, router(&App::default()))
+            .await,
+    ] {
+        assert!(served.is_ok(), "{served:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_server_on_an_address_bound_already_fails() {
+    let taken = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port of 127.0.0.1 is free");
+    let address = taken.local_addr().expect("a bound listener has an address");
 
     let refused = server::builder()
         .shutdown(async {})
-        .serve("256.0.0.1:0", router(&App::default()))
+        .serve(address, router(&App::default()))
         .await;
 
-    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(
+        refused.expect_err("the address is bound already").kind(),
+        std::io::ErrorKind::AddrInUse
+    );
+}
+
+#[test]
+fn a_setting_of_the_http_client_need_not_be_sync() {
+    fn shared<T: Send + Sync>(_: &T) {}
+
+    // A `Cell` is `Send` but not `Sync`: the setting is called once, by value, and the builder stays both.
+    let seconds = Cell::new(30);
+    let built = client::builder()
+        .http(move |http| http.pool_idle_timeout(Duration::from_secs(seconds.get())));
+
+    shared(&built);
+    assert!(built.build_http().is_ok());
 }
 
 #[test]

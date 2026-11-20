@@ -4,8 +4,9 @@
 use std::any::TypeId;
 use std::convert::Infallible;
 use std::fmt;
-use std::future::{Future, IntoFuture, pending};
+use std::future::{Future, IntoFuture};
 use std::io;
+use std::net::SocketAddr;
 use std::pin::{Pin, pin};
 use std::time::Duration;
 
@@ -14,9 +15,10 @@ use axum::extract::Request;
 use axum::response::IntoResponse;
 use axum::routing::Route;
 use axum::serve::Listener;
+use futures_core::Stream;
 use futures_util::future::{Either, select};
+use futures_util::{StreamExt, stream};
 use sync_wrapper::SyncWrapper;
-use tokio::net::{TcpListener, ToSocketAddrs};
 use tokio::sync::oneshot;
 use tower_layer::Layer;
 use tower_service::Service;
@@ -34,6 +36,9 @@ type Add = dyn FnOnce(Router) -> Router + Send + Sync;
 
 /// What tells a server to stop.
 type Signal = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// The signals a server is told to stop by: the first starts its grace, the next ends it.
+type Signals = Pin<Box<dyn Stream<Item = ()> + Send>>;
 
 /// A builder of a server with no layer yet, which stops on Ctrl-C, or on `SIGTERM` on Unix.
 ///
@@ -139,8 +144,8 @@ impl Builder {
     /// # Errors
     ///
     /// When `address` cannot be bound, or the signals of the system cannot be listened to.
-    pub async fn serve(self, address: impl ToSocketAddrs, router: Router) -> io::Result<()> {
-        let listener = TcpListener::bind(address).await?;
+    pub async fn serve(self, address: impl Address, router: Router) -> io::Result<()> {
+        let listener = address.bind().await?;
 
         self.serve_on(listener, router).await
     }
@@ -149,9 +154,14 @@ impl Builder {
     /// `UnixListener`, until it is told to stop: on Ctrl-C, or `SIGTERM` on Unix, which `docker stop` sends, unless
     /// [`shutdown`](Self::shutdown) says otherwise.
     ///
-    /// Once told, it accepts no more connections, closes those that wait for a request, and returns when the requests
-    /// it serves have ended, or once [`grace`](Self::grace) has passed: the connections still open then end with the
-    /// tokio runtime, as when `main` returns.
+    /// Once told, it accepts no more connections, closes those that wait for a request, and returns `Ok` when the
+    /// requests it serves have ended. It returns `Ok` too once [`grace`](Self::grace) has passed, or when it is told a
+    /// second time, by a second Ctrl-C or `SIGTERM`, and logs it at `WARN`: the connections still open are left to the
+    /// tokio runtime, and their handlers may still run after it has returned, until the runtime ends, as when `main`
+    /// returns.
+    ///
+    /// Ctrl-C and `SIGTERM` are tokio's from the first call on, and stay so once it has returned: the process does not
+    /// get their default action back, and a later Ctrl-C does not end it.
     ///
     /// ```no_run
     /// use quoll::server;
@@ -180,29 +190,101 @@ impl Builder {
             shutdown,
             grace,
         } = self;
-        let signal = match shutdown {
-            Some(signal) => signal.into_inner(),
-            None => Box::pin(terminated()?),
-        };
-        let (stopping, stopped) = oneshot::channel::<()>();
-        let signal = async move {
-            signal.await;
-            // The receiver is gone once the server has returned, when there is no deadline left to start.
-            let _ = stopping.send(());
-        };
-        let serving = axum::serve(listener, layered(layers, router))
-            .with_graceful_shutdown(signal)
-            .into_future();
-        let deadline = async move {
-            match stopped.await {
-                Ok(()) => tokio::time::sleep(grace).await,
-                Err(_) => pending().await,
-            }
+        let signals: Signals = match shutdown {
+            Some(signal) => Box::pin(stream::once(signal.into_inner()).chain(stream::pending())),
+            None => terminated()?,
         };
 
-        match select(pin!(serving), pin!(deadline)).await {
-            Either::Left((served, _)) => served,
-            Either::Right(((), _)) => Ok(()),
+        run(listener, layered(layers, router), signals, grace).await
+    }
+}
+
+/// An address [`Builder::serve`] binds: a `&str` or a `String`, as `"0.0.0.0:8080"` or `"localhost:8080"`, whose host
+/// is looked up without blocking, or a `SocketAddr`.
+pub trait Address: sealed::Bind {}
+
+impl Address for &str {}
+
+impl Address for String {}
+
+impl Address for SocketAddr {}
+
+mod sealed {
+    use std::future::Future;
+    use std::io;
+    use std::net::SocketAddr;
+
+    use tokio::net::TcpListener;
+
+    /// How an address is bound, which no application calls.
+    pub trait Bind: Send {
+        /// A listener bound to the address.
+        fn bind(self) -> impl Future<Output = io::Result<TcpListener>> + Send;
+    }
+
+    impl Bind for &str {
+        fn bind(self) -> impl Future<Output = io::Result<TcpListener>> + Send {
+            TcpListener::bind(self)
+        }
+    }
+
+    impl Bind for String {
+        async fn bind(self) -> io::Result<TcpListener> {
+            TcpListener::bind(self.as_str()).await
+        }
+    }
+
+    impl Bind for SocketAddr {
+        fn bind(self) -> impl Future<Output = io::Result<TcpListener>> + Send {
+            TcpListener::bind(self)
+        }
+    }
+}
+
+/// Serves `router` on `listener` until the first of `signals`, then for the requests it serves, up to `grace` or the
+/// next of `signals`.
+async fn run<L>(
+    listener: L,
+    router: Router,
+    mut signals: Signals,
+    grace: Duration,
+) -> io::Result<()>
+where
+    L: Listener,
+    L::Addr: fmt::Debug,
+{
+    let (stop, stopped) = oneshot::channel::<()>();
+    let serving = axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            // The sender lives until the server is told to stop, or has returned.
+            let _ = stopped.await;
+        })
+        .into_future();
+    let mut serving = pin!(serving);
+
+    if let Either::Left((served, _)) = select(serving.as_mut(), signals.next()).await {
+        return served;
+    }
+
+    // The receiver lives in the server's future, which has not returned: the send cannot fail.
+    let _ = stop.send(());
+
+    let deadline = pin!(tokio::time::sleep(grace));
+
+    match select(serving, select(deadline, signals.next())).await {
+        Either::Left((served, _)) => served,
+        Either::Right((Either::Left(_), _)) => {
+            tracing::warn!(
+                ?grace,
+                "the grace ran out with connections still open: they are left to the runtime, their handlers may still run"
+            );
+            Ok(())
+        }
+        Either::Right((Either::Right(_), _)) => {
+            tracing::warn!(
+                "a second signal ended the grace with connections still open: they are left to the runtime, their handlers may still run"
+            );
+            Ok(())
         }
     }
 }
@@ -261,25 +343,88 @@ fn layered(layers: Vec<(Option<Rank>, Box<Add>)>, router: Router) -> Router {
         .fold(router, |router, add| add(router))
 }
 
-/// Ends on Ctrl-C, or `SIGTERM`, which `docker stop` and Kubernetes send.
+/// Ctrl-C and `SIGTERM`, which `docker stop` and Kubernetes send, each time they come.
 #[cfg(unix)]
-fn terminated() -> io::Result<impl Future<Output = ()> + Send> {
+fn terminated() -> io::Result<Signals> {
     use tokio::signal::unix::{SignalKind, signal};
 
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
+    let interrupt = signal(SignalKind::interrupt())?;
+    let terminate = signal(SignalKind::terminate())?;
 
-    Ok(async move {
-        select(pin!(interrupt.recv()), pin!(terminate.recv())).await;
-    })
+    Ok(Box::pin(stream::unfold(
+        (interrupt, terminate),
+        |(mut interrupt, mut terminate)| async move {
+            {
+                let interrupted = pin!(interrupt.recv());
+                let terminated = pin!(terminate.recv());
+
+                select(interrupted, terminated).await;
+            }
+
+            Some(((), (interrupt, terminate)))
+        },
+    )))
 }
 
-/// Ends on Ctrl-C.
+/// Ctrl-C, each time it comes.
 #[cfg(not(unix))]
-fn terminated() -> io::Result<impl Future<Output = ()> + Send> {
-    let mut ctrl_c = tokio::signal::windows::ctrl_c()?;
+fn terminated() -> io::Result<Signals> {
+    let ctrl_c = tokio::signal::windows::ctrl_c()?;
 
-    Ok(async move {
+    Ok(Box::pin(stream::unfold(ctrl_c, |mut ctrl_c| async move {
         ctrl_c.recv().await;
-    })
+        Some(((), ctrl_c))
+    })))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::{Body, Bytes};
+    use tokio::net::TcpListener;
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    /// Signals sent through a channel, as the system sends Ctrl-C: the sender, and what the server is told by.
+    fn sent() -> (mpsc::UnboundedSender<()>, Signals) {
+        let (send, received) = mpsc::unbounded_channel();
+        let signals = stream::unfold(received, |mut received| async move {
+            received.recv().await.map(|()| ((), received))
+        });
+
+        (send, Box::pin(signals))
+    }
+
+    #[tokio::test]
+    async fn a_second_signal_ends_the_grace_at_once() {
+        let router = Router::new().route(
+            "/endless",
+            axum::routing::get(|| async {
+                Body::from_stream(stream::pending::<io::Result<Bytes>>())
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port of 127.0.0.1 is free");
+        let url = format!(
+            "http://{}/endless",
+            listener
+                .local_addr()
+                .expect("a bound listener has an address")
+        );
+        let (signal, signals) = sent();
+        let serving = tokio::spawn(run(listener, router, signals, Duration::from_secs(3600)));
+        let answer = reqwest::get(url).await.expect("the server answers");
+
+        signal.send(()).expect("the server listens");
+        signal.send(()).expect("the server listens");
+
+        // The grace is an hour: only the second signal ends it before this bound.
+        tokio::time::timeout(Duration::from_secs(10), serving)
+            .await
+            .expect("the second signal ends the grace")
+            .expect("the server's task does not panic")
+            .expect("the server stops with no error");
+        drop(answer);
+    }
 }

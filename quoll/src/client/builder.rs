@@ -7,13 +7,16 @@ use std::sync::Arc;
 
 use reqwest::redirect::Policy;
 use reqwest_middleware::{ClientWithMiddleware, Middleware};
+use sync_wrapper::SyncWrapper;
 
 use super::{Helper, Rank};
 use crate::order::arrange;
 use crate::rest::{Error, Result};
 
-/// What configures the reqwest client of a [`Builder`].
-type Configure = dyn FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder + Send + Sync;
+/// What configures the reqwest client of a [`Builder`], called once, by value: never shared, so that it need not be
+/// `Sync`.
+type Configure =
+    SyncWrapper<Box<dyn FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder + Send>>;
 
 /// A builder of a client with no middleware yet, on a reqwest client with reqwest's defaults.
 ///
@@ -84,7 +87,7 @@ pub fn builder() -> Builder {
 /// ```
 #[derive(Default)]
 pub struct Builder {
-    http: Vec<Box<Configure>>,
+    http: Vec<Configure>,
     middleware: Vec<(Option<Rank>, Arc<dyn Middleware>)>,
 }
 
@@ -119,9 +122,9 @@ impl Builder {
     /// ```
     pub fn http<F>(mut self, configure: F) -> Self
     where
-        F: FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder + Send + Sync + 'static,
+        F: FnOnce(reqwest::ClientBuilder) -> reqwest::ClientBuilder + Send + 'static,
     {
-        self.http.push(Box::new(configure));
+        self.http.push(SyncWrapper::new(Box::new(configure)));
         self
     }
 
@@ -149,8 +152,9 @@ impl Builder {
         let mut http = reqwest::Client::builder();
 
         for configure in self.http {
-            http = configure(http);
+            http = (configure.into_inner())(http);
         }
+
         if redirects {
             http = http.redirect(Policy::none());
         }
