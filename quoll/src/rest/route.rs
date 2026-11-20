@@ -29,7 +29,8 @@ pub struct Route {
     pub(crate) path: &'static str,
     pub(crate) schemes: &'static [&'static str],
     pub(crate) scheme_types: &'static [TypeId],
-    /// Whether the result is a stream, whose body `client::timeout` leaves without a deadline.
+    /// Whether the result is a stream, whose body `client::timeout` leaves without a deadline and
+    /// `server::compression` leaves as it is.
     pub(crate) streams: bool,
 }
 
