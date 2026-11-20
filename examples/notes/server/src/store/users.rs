@@ -82,9 +82,12 @@ impl Store {
 
         Ok(task::spawn_blocking(move || {
             #[cfg(test)]
-            let _running = Running::start(&hashes);
+            let running = Running::start(&hashes);
             let hashed = hash();
 
+            // Counted out before the permit goes, so that the next hash is never counted beside this one.
+            #[cfg(test)]
+            drop(running);
             drop(permit);
             hashed
         })
@@ -190,9 +193,11 @@ mod tests {
             assert_eq!(user.as_ref(), (i % 2 == 0).then_some(&added));
         }
 
+        let peak = store.hashes.peak.load(Ordering::SeqCst);
+
         assert!(
-            (1..=2).contains(&store.hashes.peak.load(Ordering::SeqCst)),
-            "at most 2 hashes ran at once"
+            (1..=2).contains(&peak),
+            "at most 2 hashes ran at once, not {peak}"
         );
     }
 }
