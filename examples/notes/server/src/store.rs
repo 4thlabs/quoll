@@ -1,13 +1,3 @@
-//! Where the server keeps its users, its operators and their notes, in SQLite, and the sessions it opens, in memory.
-//!
-//! The store holds one connection, behind a lock. SQLite's calls block: each method runs them on tokio's blocking
-//! threads, through `spawn_blocking`, and so does the hashing of a password, which takes its time on purpose. A user's
-//! password is stored as an Argon2 hash, an operator's key as its SHA-256: a key is 32 random bytes, which a fast hash
-//! keeps out of reach, and is looked up by its hash, so that no comparison of the key itself leaks its bytes.
-//!
-//! An Argon2 hash takes 19 MiB and a core for a while: no more of them run at once than the machine has cores, so that
-//! a flood of logins waits for its turn rather than exhaust the memory.
-
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::{self, Write};
 use std::num::NonZero;
@@ -28,19 +18,14 @@ use tokio::task::{self, JoinError};
 
 use crate::{Operator, User};
 
-/// How many notes a page of a search holds.
 pub const PAGE_SIZE: u32 = 20;
 
-/// How long a session lasts from its opening: its token is refused after it, and its user signs in again.
 pub const SESSION_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// How many changes of a note a watcher may fall behind by: one further behind misses the oldest, and reads on from
-/// the next, which says the note as it is.
 const CHANGES_KEPT: usize = 16;
 
-/// The tables, created when they are missing. A note's id is never given again, `AUTOINCREMENT`, so that a removed
-/// note's id names no other. A note's owner is the id of the user a session stands for, with no foreign key to
-/// `users`: the tests open sessions for users they never add.
+/// `AUTOINCREMENT`, so that a removed note's id names no other. No foreign key on `owner`: the tests open sessions for
+/// users they never add.
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
@@ -67,27 +52,24 @@ const SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS tags_by_note ON tags (note);
 ";
 
-/// The users, the operators and the notes, in SQLite, and the watchers of each note.
 #[derive(Debug, Clone)]
 pub struct Store {
     inner: Arc<Mutex<Inner>>,
     hashes: Arc<Hashes>,
 }
 
-/// What the lock of the store guards: the connection, and the watchers of the notes, so that a note is checked and
-/// watched, or changed and its watchers told, in one step.
+/// One lock for both, so that a note is checked and watched, or changed and its watchers told, in one step.
 #[derive(Debug)]
 struct Inner {
     connection: Connection,
     watchers: HashMap<i64, broadcast::Sender<NoteEvent>>,
 }
 
-/// The hashes of passwords: the permits of those that run at once, one held from before the hash's task starts to
-/// its end, which comes even when the request that asked for it is dropped.
+/// An Argon2 hash takes 19 MiB and a core: no more run at once than there are cores, so that a flood of logins waits
+/// rather than exhaust the memory. A permit is held to the end of the hash's task, even when its request is dropped.
 #[derive(Debug)]
 struct Hashes {
     permits: Arc<Semaphore>,
-    /// How many hashes run, and the most that ran at once, which the tests read.
     #[cfg(test)]
     running: AtomicUsize,
     #[cfg(test)]
@@ -95,7 +77,6 @@ struct Hashes {
 }
 
 impl Hashes {
-    /// Permits for `at_once` hashes.
     fn new(at_once: usize) -> Self {
         Self {
             permits: Arc::new(Semaphore::new(at_once)),
@@ -107,7 +88,6 @@ impl Hashes {
     }
 }
 
-/// A hash running, counted while it runs, in the tests.
 #[cfg(test)]
 struct Running<'a>(&'a Hashes);
 
@@ -128,17 +108,11 @@ impl Drop for Running<'_> {
     }
 }
 
-/// Why the store failed: a call of SQLite, a password that could not be hashed or checked, or a task of the store
-/// that did not end.
 #[derive(Debug)]
 pub enum StoreError {
-    /// SQLite failed, or refused a change: a user or an operator whose name is taken.
     Database(rusqlite::Error),
-    /// A password could not be hashed, as a user was added.
     Hashing(password_hash::Error),
-    /// The stored hash of a user's password is not one Argon2 checks a password against.
     StoredHash(password_hash::Error),
-    /// The blocking task of a call panicked, or was cancelled as the runtime stopped.
     Task(JoinError),
 }
 
@@ -176,12 +150,7 @@ impl From<JoinError> for StoreError {
 }
 
 impl Store {
-    /// Opens the database at `path`, created with its tables when it is missing. The hash an unknown user's password is
-    /// checked against is made then too, so that the first refusal takes no longer than the next.
-    ///
-    /// # Errors
-    ///
-    /// When SQLite cannot open the file, or create the tables in it.
+    /// Makes the unknown user's hash too, so that the first refusal takes no longer than the next.
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let path = path.as_ref().to_owned();
         let connection = task::spawn_blocking(move || Connection::open(path)).await??;
@@ -189,17 +158,11 @@ impl Store {
         Self::with(connection).await
     }
 
-    /// A store with nothing in it, in memory, for the tests. The hash an unknown user's password is checked against is
-    /// made by the first check of one, as making it here would block.
-    ///
-    /// # Panics
-    ///
-    /// When SQLite cannot open a database in memory, which needs no file and only fails with no memory left.
+    /// The unknown user's hash is made by the first check of one, as making it here would block.
     pub fn in_memory() -> Self {
         Self::in_memory_hashing(hashes_at_once())
     }
 
-    /// A store in memory, which runs `at_once` hashes of passwords at most at once.
     fn in_memory_hashing(at_once: usize) -> Self {
         // A database in memory touches no file: opening it does not block, so that `App::in_memory` needs no `await`.
         let connection = Connection::open_in_memory().expect("SQLite opens a database in memory");
@@ -211,7 +174,6 @@ impl Store {
         Self::from_connection(connection, at_once)
     }
 
-    /// The store of `connection`, once its tables are there.
     async fn with(connection: Connection) -> Result<Self, StoreError> {
         let connection = task::spawn_blocking(move || {
             connection.execute_batch(SCHEMA)?;
@@ -234,7 +196,6 @@ impl Store {
         }
     }
 
-    /// Runs `hash`, the hashing of a password, on a blocking thread, once fewer hashes run than the store allows.
     async fn hash<T, F>(&self, hash: F) -> Result<T, StoreError>
     where
         T: Send + 'static,
@@ -258,7 +219,7 @@ impl Store {
         .await?)
     }
 
-    /// Runs `call` with the lock of the store held, on a blocking thread.
+    /// SQLite's calls block: they run on tokio's blocking threads.
     async fn run<T, F>(&self, call: F) -> Result<T, StoreError>
     where
         T: Send + 'static,
@@ -269,11 +230,6 @@ impl Store {
         task::spawn_blocking(move || call(&mut lock(&inner))).await?
     }
 
-    /// Adds a user who signs in with `name` and `password`, of which only an Argon2 hash is kept.
-    ///
-    /// # Errors
-    ///
-    /// When the name is another user's already, or the database or the hashing fails.
     pub async fn add_user(
         &self,
         name: impl Into<String>,
@@ -301,12 +257,6 @@ impl Store {
         .await
     }
 
-    /// The user `name`, if `password` is theirs. An unknown user takes as long to refuse as a wrong password, so that
-    /// the time of the answer does not tell which names are users.
-    ///
-    /// # Errors
-    ///
-    /// When the database fails, or the stored hash is not one.
     pub async fn check_password(
         &self,
         name: impl Into<String>,
@@ -344,16 +294,6 @@ impl Store {
         .await?
     }
 
-    /// Adds an operator named `name`, and gives their key, 32 random bytes in hex, of which only a SHA-256 is kept:
-    /// the key is shown once, here.
-    ///
-    /// # Errors
-    ///
-    /// When the name is another operator's already, or the database fails.
-    ///
-    /// # Panics
-    ///
-    /// When the system gives no random bytes.
     pub async fn add_operator(&self, name: impl Into<String>) -> Result<String, StoreError> {
         let key = random_hex();
         let hash = key_hash(&key);
@@ -372,11 +312,6 @@ impl Store {
         Ok(key)
     }
 
-    /// The operator whose key is `key`, found by its hash.
-    ///
-    /// # Errors
-    ///
-    /// When the database fails.
     pub async fn operator(&self, key: &str) -> Result<Option<Operator>, StoreError> {
         let hash = key_hash(key);
 
@@ -395,15 +330,6 @@ impl Store {
         .await
     }
 
-    /// The notes of the user `owner` that match `filter`, a page of [`PAGE_SIZE`] at a time, in the order they were
-    /// written. An empty key is no key, and the tag is cut as the tags of a note are: `milk,` is `milk`.
-    ///
-    /// A `contains` of more than [`notes_api::CONTAINS_LIMIT`] characters is the caller's to refuse: past SQLite's
-    /// limit on the pattern of `LIKE`, 50,000 bytes, the database fails.
-    ///
-    /// # Errors
-    ///
-    /// When the database fails.
     pub async fn notes(&self, owner: i64, filter: &NoteFilter) -> Result<Vec<Note>, StoreError> {
         // `LIKE` compares ASCII letters whatever their case, and reads `%` and `_` as wildcards, escaped here.
         let contains = filter
@@ -435,22 +361,11 @@ impl Store {
         .await
     }
 
-    /// The note `id` of the user `owner`. A note of another user is none of theirs: `None`, as one that does not
-    /// exist.
-    ///
-    /// # Errors
-    ///
-    /// When the database fails.
     pub async fn note(&self, owner: i64, id: i64) -> Result<Option<Note>, StoreError> {
         self.run(move |inner| Ok(find(&inner.connection, owner, id)?))
             .await
     }
 
-    /// Adds a note of the user `owner`, under a new id, tagged by the `#words` of its title and its text.
-    ///
-    /// # Errors
-    ///
-    /// When the database fails.
     pub async fn add(&self, owner: i64, note: NewNote) -> Result<Note, StoreError> {
         self.run(move |inner| {
             let transaction = inner.connection.transaction()?;
@@ -474,12 +389,6 @@ impl Store {
         .await
     }
 
-    /// Writes the note `id` of the user `owner` again, and tells its watchers. A note that does not exist, or that is
-    /// another user's, is `None`, and is left as it is.
-    ///
-    /// # Errors
-    ///
-    /// When the database fails.
     pub async fn replace(
         &self,
         owner: i64,
@@ -517,12 +426,6 @@ impl Store {
         .await
     }
 
-    /// Removes the note `id` of the user `owner`, tells its watchers, and ends their streams. A note that does not
-    /// exist, or that is another user's, is left as it is, and is no error: a removal asked twice removes once.
-    ///
-    /// # Errors
-    ///
-    /// When the database fails.
     pub async fn remove(&self, owner: i64, id: i64) -> Result<(), StoreError> {
         self.run(move |inner| {
             let transaction = inner.connection.transaction()?;
@@ -548,12 +451,6 @@ impl Store {
         .await
     }
 
-    /// The changes of the note `id` of the user `owner` from now on, until it is removed: its removal is the last. A
-    /// note that does not exist, or that is another user's, is `None`.
-    ///
-    /// # Errors
-    ///
-    /// When the database fails.
     pub async fn watch(
         &self,
         owner: i64,
@@ -594,11 +491,6 @@ impl Store {
         })))
     }
 
-    /// How many users and notes the store holds.
-    ///
-    /// # Errors
-    ///
-    /// When the database fails.
     pub async fn stats(&self) -> Result<Stats, StoreError> {
         self.run(|inner| {
             let (users, notes) = inner.connection.query_row(
@@ -613,13 +505,11 @@ impl Store {
     }
 }
 
-/// How many hashes of passwords run at once: as many as the machine has cores.
 fn hashes_at_once() -> usize {
     std::thread::available_parallelism().map_or(1, NonZero::get)
 }
 
-/// The hash an unknown user's password is checked against, so that refusing them takes as long as a wrong password.
-/// It hashes the empty password with a salt of zeros: whether a password matches it or not, an unknown user is refused.
+/// Checked for an unknown user, so that refusing one takes as long as a wrong password and tells no names.
 static UNKNOWN_USER: LazyLock<String> = LazyLock::new(|| {
     Argon2::default()
         .hash_password_with_salt(b"", &[0; 16])
@@ -627,7 +517,6 @@ static UNKNOWN_USER: LazyLock<String> = LazyLock::new(|| {
         .to_string()
 });
 
-/// The note `id` of the user `owner`, if there is one.
 fn find(connection: &Connection, owner: i64, id: i64) -> rusqlite::Result<Option<Note>> {
     connection
         .query_row(
@@ -638,7 +527,6 @@ fn find(connection: &Connection, owner: i64, id: i64) -> rusqlite::Result<Option
         .optional()
 }
 
-/// The note of a row of `id`, `title` and `body`.
 fn read_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     Ok(Note {
         id: row.get(0)?,
@@ -647,7 +535,6 @@ fn read_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     })
 }
 
-/// Tags the note `id` with the `#words` of `note`.
 fn tag(connection: &Connection, id: i64, note: &NewNote) -> rusqlite::Result<()> {
     let mut statement =
         connection.prepare_cached("INSERT INTO tags (tag, note) VALUES (?1, ?2)")?;
@@ -659,8 +546,6 @@ fn tag(connection: &Connection, id: i64, note: &NewNote) -> rusqlite::Result<()>
     Ok(())
 }
 
-/// The tags of `note`: each word of its title or its text that starts with `#`, cut as [`tag_of`] cuts it. `#milk,`
-/// is `milk`, and a lone `#` no tag.
 fn tags(note: &NewNote) -> BTreeSet<String> {
     [&note.title, &note.body]
         .into_iter()
@@ -669,8 +554,6 @@ fn tags(note: &NewNote) -> BTreeSet<String> {
         .collect()
 }
 
-/// The tag `word` stands for, without its `#`: up to the first character that is not a letter, a digit, `-` or `_`, in
-/// lowercase, and none when that leaves nothing.
 fn tag_of(word: &str) -> Option<String> {
     let end = word
         .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
@@ -679,7 +562,6 @@ fn tag_of(word: &str) -> Option<String> {
     (end > 0).then(|| word[..end].to_lowercase())
 }
 
-/// `text` with the wildcards of `LIKE`, and its escape, escaped.
 fn escape_like(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
 
@@ -694,23 +576,18 @@ fn escape_like(text: &str) -> String {
     escaped
 }
 
-/// The hash an operator's key is stored and looked up by: its SHA-256, in hex.
+/// A fast hash keeps 32 random bytes out of reach, and a lookup by hash compares no byte of the key.
 fn key_hash(key: &str) -> String {
     hex(&Sha256::digest(key.as_bytes()))
 }
 
-/// The tokens given out, each standing for its user, in memory, until their session's lifetime has passed: they end
-/// with the server too.
-///
-/// A session past its lifetime is dropped when its token is met, and every one past it when a session opens, so that
-/// the sessions kept are about those opened in a lifetime.
+/// An expired session goes when its token is met, and all of them when a session opens, so that they do not pile up.
 #[derive(Clone)]
 pub struct Sessions {
     lifetime: Duration,
     open: Arc<Mutex<HashMap<String, Session>>>,
 }
 
-/// An open session: its user, and when it was opened.
 struct Session {
     user: User,
     opened: Instant,
@@ -722,7 +599,6 @@ impl Session {
     }
 }
 
-/// Sessions of [`SESSION_LIFETIME`].
 impl Default for Sessions {
     fn default() -> Self {
         Self::with_lifetime(SESSION_LIFETIME)
@@ -730,7 +606,6 @@ impl Default for Sessions {
 }
 
 impl Sessions {
-    /// Sessions that last `lifetime` from their opening.
     pub fn with_lifetime(lifetime: Duration) -> Self {
         Self {
             lifetime,
@@ -738,11 +613,6 @@ impl Sessions {
         }
     }
 
-    /// Opens a session for `user`, and gives its token: 32 random bytes, in hex, which no one can guess.
-    ///
-    /// # Panics
-    ///
-    /// When the system gives no random bytes.
     pub fn open(&self, user: User) -> String {
         let token = random_hex();
         let mut open = lock(&self.open);
@@ -758,7 +628,6 @@ impl Sessions {
         token
     }
 
-    /// The user `token` stands for, if it is the token of a session opened less than its lifetime ago.
     pub fn user(&self, token: &str) -> Option<User> {
         let mut open = lock(&self.open);
         let session = open.get(token)?;
@@ -772,7 +641,7 @@ impl Sessions {
     }
 }
 
-/// Shows the lifetime of the sessions and how many are kept, never their tokens.
+/// Never shows the tokens.
 impl fmt::Debug for Sessions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Sessions")
@@ -782,11 +651,6 @@ impl fmt::Debug for Sessions {
     }
 }
 
-/// 32 random bytes, in hex: a token or a key no one can guess.
-///
-/// # Panics
-///
-/// When the system gives no random bytes.
 fn random_hex() -> String {
     let mut bytes = [0; 32];
 
@@ -794,7 +658,6 @@ fn random_hex() -> String {
     hex(&bytes)
 }
 
-/// `bytes` in lowercase hex.
 fn hex(bytes: &[u8]) -> String {
     let mut text = String::with_capacity(2 * bytes.len());
 
@@ -805,8 +668,7 @@ fn hex(bytes: &[u8]) -> String {
     text
 }
 
-/// Locks `mutex`. No code panics while holding a lock of the store, so a poisoned one is a bug: it stops the call,
-/// rather than go on with what a panic left half written.
+/// A poisoned lock is a bug: the call stops, rather than go on with what a panic left half written.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()

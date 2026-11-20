@@ -1,6 +1,3 @@
-//! The server of the notes example: the contract's routes served from SQLite, each user's notes behind their token,
-//! and the statistics behind an operator's key.
-
 use std::time::Duration;
 
 use notes_api::*;
@@ -11,37 +8,24 @@ mod store;
 
 pub use store::{PAGE_SIZE, SESSION_LIFETIME, Sessions, Store, StoreError};
 
-/// Who a request comes from, once its token is checked. Never sent: the server alone builds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
-    /// The user's id, which their notes are kept under.
     pub id: i64,
-    /// Their name.
     pub name: String,
 }
 
-/// An operator, known by its key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Operator {
-    /// The operator's name.
     pub name: String,
 }
 
-/// The service of every group: the store and the open sessions.
 #[derive(Debug, Clone)]
 pub struct App {
-    /// The users, the operators and their notes.
     pub store: Store,
-    /// The tokens given out, each standing for its user.
     pub sessions: Sessions,
 }
 
 impl App {
-    /// An app with nothing in its store, kept in memory, and no session.
-    ///
-    /// # Panics
-    ///
-    /// When SQLite cannot open a database in memory.
     pub fn in_memory() -> Self {
         Self {
             store: Store::in_memory(),
@@ -157,7 +141,6 @@ impl Authenticate<Key> for App {
     }
 }
 
-/// The router of the api, served by `app`.
 pub fn router(app: App) -> axum::Router {
     Api::router(ApiServices {
         auth: app.clone(),
@@ -166,8 +149,7 @@ pub fn router(app: App) -> axum::Router {
     })
 }
 
-/// The server, with its layers in any order: a request gets its id, then its span, then its deadline and its body's
-/// limit.
+/// The layers go in any order: a request gets its id, then its span, then its deadline and its body's limit.
 pub fn server() -> server::Builder {
     server::builder()
         .with(server::request_id())

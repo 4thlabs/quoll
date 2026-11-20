@@ -391,30 +391,22 @@ use quoll::rest::{self, Created, Events, Form};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// A note, as it is read back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Note {
-    /// The note's id, given by the server.
     pub id: i64,
-    /// Its title.
     pub title: String,
-    /// Its text, where a `#word` tags it.
     pub body: String,
 }
 
-/// A note to write: what a note holds, but its id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NewNote {
-    /// Its title.
     pub title: String,
-    /// Its text, where a `#word` tags it.
     pub body: String,
 }
 
-/// The most characters a search's `contains` holds.
 pub const CONTAINS_LIMIT: usize = 1000;
 
-/// Which notes a search gives: each key that is given, and not empty, narrows it.
+/// Each key given, and not empty, narrows the search.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NoteFilter {
     /// Notes whose title or text holds this, whatever the case of its ASCII letters: 1000 characters at most.
@@ -426,29 +418,23 @@ pub struct NoteFilter {
     pub page: Option<u32>,
 }
 
-/// A change of a note, as it happens.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NoteEvent {
-    /// The note was written again: as it is now.
     Edited(Note),
-    /// The note was removed: the last event of its stream.
+    /// The last event of the note's stream.
     Removed {
-        /// The id of the note.
         id: i64,
     },
 }
 
-/// A user's name and password, traded for a token.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Login {
-    /// The user's name.
     pub user: String,
-    /// Their password.
     pub password: String,
 }
 
-/// Shows the user, never the password.
+/// Never shows the password.
 impl fmt::Debug for Login {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Login")
@@ -457,26 +443,22 @@ impl fmt::Debug for Login {
     }
 }
 
-/// The token a login gives, which the routes of the notes take as a bearer token.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenResponse {
-    /// The token, sent as `Authorization: Bearer <token>`.
+    /// Sent as `Authorization: Bearer <token>` to the routes of the notes.
     pub access_token: String,
 }
 
-/// Shows that there is a token, never the token.
+/// Never shows the token.
 impl fmt::Debug for TokenResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TokenResponse").finish_non_exhaustive()
     }
 }
 
-/// What the server holds, for its operators.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Stats {
-    /// How many users can sign in.
     pub users: u64,
-    /// How many notes they keep, all users together.
     pub notes: u64,
 }
 
@@ -484,7 +466,6 @@ rest::api! {
     /// Notes, kept per user.
     pub api Api = "/api";
 
-    /// The key of an operator's scripts.
     pub scheme Key = header "X-Api-Key";
 
     pub group Auth {
@@ -492,16 +473,13 @@ rest::api! {
         POST "/token" => token(login: Form<Login>) -> TokenResponse;
     }
 
-    /// The signed-in user's notes.
     #[auth(Bearer)]
     pub group Notes {
-        /// Notes matching the filter, a page at a time.
         GET    "/notes"             => search(query filter: NoteFilter) -> Vec<Note>;
         GET    "/notes/{id}"        => get(id: i64) -> Note;
         POST   "/notes"             => create(note: NewNote) -> Created<Note>;
         PUT    "/notes/{id}"        => update(id: i64, note: NewNote) -> Note;
         DELETE "/notes/{id}"        => remove(id: i64);
-        /// The changes of a note, as they happen.
         GET    "/notes/{id}/events" => events(id: i64) -> Events<NoteEvent>;
     }
 
@@ -533,37 +511,24 @@ mod store;
 
 pub use store::{PAGE_SIZE, SESSION_LIFETIME, Sessions, Store, StoreError};
 
-/// Who a request comes from, once its token is checked. Never sent: the server alone builds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
-    /// The user's id, which their notes are kept under.
     pub id: i64,
-    /// Their name.
     pub name: String,
 }
 
-/// An operator, known by its key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Operator {
-    /// The operator's name.
     pub name: String,
 }
 
-/// The service of every group: the store and the open sessions.
 #[derive(Debug, Clone)]
 pub struct App {
-    /// The users, the operators and their notes.
     pub store: Store,
-    /// The tokens given out, each standing for its user.
     pub sessions: Sessions,
 }
 
 impl App {
-    /// An app with nothing in its store, kept in memory, and no session.
-    ///
-    /// # Panics
-    ///
-    /// When SQLite cannot open a database in memory.
     pub fn in_memory() -> Self {
         Self {
             store: Store::in_memory(),
@@ -679,7 +644,6 @@ impl Authenticate<Key> for App {
     }
 }
 
-/// The router of the api, served by `app`.
 pub fn router(app: App) -> axum::Router {
     Api::router(ApiServices {
         auth: app.clone(),
@@ -688,8 +652,7 @@ pub fn router(app: App) -> axum::Router {
     })
 }
 
-/// The server, with its layers in any order: a request gets its id, then its span, then its deadline and its body's
-/// limit.
+/// The layers go in any order: a request gets its id, then its span, then its deadline and its body's limit.
 pub fn server() -> server::Builder {
     server::builder()
         .with(server::request_id())
@@ -726,7 +689,6 @@ use notes_api::{Api, NewNote, Notes};
 use notes_server::User;
 use quoll::client;
 
-/// The router of `app` with the layers of its server, as `main` serves it.
 fn served(app: notes_server::App) -> axum::Router {
     notes_server::server().into_router(notes_server::router(app))
 }

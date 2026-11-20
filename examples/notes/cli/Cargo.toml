@@ -18,5 +18,5 @@ axum = { version = "0.8", default-features = false }
 notes-server = { path = "../server" }
 tokio = { version = "1", features = ["process", "sync", "time"] }
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "forbid"

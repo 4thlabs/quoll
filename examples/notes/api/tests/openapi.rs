@@ -1,9 +1,3 @@
-//! The OpenAPI document of the notes contract: the snapshot committed beside this test, `openapi.snapshot.json`, and
-//! valid OpenAPI 3.1.
-//!
-//! A change to the contract changes the document: `SNAPSHOT=overwrite cargo test -p notes-api --test openapi` writes
-//! it again, and the diff shows what the generators of TypeScript will see.
-
 use std::path::Path;
 
 use serde_json::Value;

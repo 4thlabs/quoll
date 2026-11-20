@@ -1,6 +1,3 @@
-//! The command line, run against the notes server served on a free port: what it prints, from the sign-in to the end
-//! of the note's stream, which the test ends by removing the note.
-
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -11,8 +8,7 @@ use quoll::client;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
-/// How long the command line may take, from its start to its end: a bound, so that a stream that does not end fails
-/// the test rather than hang it. The test waits for what it checks, never for this.
+/// A bound, so that a stream that does not end fails the test rather than hang it.
 const BOUND: Duration = Duration::from_secs(60);
 
 #[tokio::test]

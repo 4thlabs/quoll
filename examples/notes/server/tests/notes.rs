@@ -1,5 +1,3 @@
-//! The notes server, served on a free port and called by the contract's client.
-
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -12,7 +10,6 @@ use quoll::client;
 use quoll::rest::{self, Form};
 use reqwest::StatusCode;
 
-/// The router of `app` with the layers of its server, as `main` serves it.
 fn served(app: notes_server::App) -> axum::Router {
     notes_server::server().into_router(notes_server::router(app))
 }
@@ -53,8 +50,6 @@ async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The server, in memory, on a free port: its URL, its store and its sessions, where a test adds the users and opens
-/// the sessions it calls with.
 struct Served {
     url: String,
     store: Store,
@@ -62,7 +57,6 @@ struct Served {
 }
 
 impl Served {
-    /// Serves an app with nothing in its store and no session.
     async fn start() -> Self {
         let app = notes_server::App::in_memory();
         let store = app.store.clone();
@@ -76,25 +70,21 @@ impl Served {
         }
     }
 
-    /// A client signed in as `user`, through a session opened for them.
     fn client_as(&self, user: User) -> rest::Result<ApiClient> {
         self.client_with(self.sessions.open(user))
     }
 
-    /// A client sending `token`.
     fn client_with(&self, token: String) -> rest::Result<ApiClient> {
         client::builder()
             .with(client::bearer(token))
             .build::<Api>(&self.url)
     }
 
-    /// A client sending no credential.
     fn anonymous(&self) -> rest::Result<ApiClient> {
         Api::client(&self.url)
     }
 }
 
-/// The user of most tests.
 fn ana() -> User {
     User {
         id: 1,
@@ -102,7 +92,6 @@ fn ana() -> User {
     }
 }
 
-/// Another user, whose notes are not ana's.
 fn bob() -> User {
     User {
         id: 2,
@@ -110,7 +99,6 @@ fn bob() -> User {
     }
 }
 
-/// A note with a title and an empty body.
 fn titled(title: &str) -> NewNote {
     NewNote {
         title: title.into(),
@@ -118,7 +106,6 @@ fn titled(title: &str) -> NewNote {
     }
 }
 
-/// A note with a title and a body.
 fn written(title: &str, body: &str) -> NewNote {
     NewNote {
         title: title.into(),
@@ -126,7 +113,6 @@ fn written(title: &str, body: &str) -> NewNote {
     }
 }
 
-/// The login of `user` with `password`, as a form.
 fn login(user: &str, password: &str) -> Form<Login> {
     Form(Login {
         user: user.into(),
@@ -134,7 +120,6 @@ fn login(user: &str, password: &str) -> Form<Login> {
     })
 }
 
-/// The titles of `notes`, in their order.
 fn titles(notes: &[Note]) -> Vec<&str> {
     notes.iter().map(|note| note.title.as_str()).collect()
 }
@@ -693,7 +678,6 @@ async fn the_stats_are_refused_without_an_operators_key() -> anyhow::Result<()> 
 
 #[tokio::test]
 async fn a_store_on_a_file_keeps_its_users_and_notes() -> anyhow::Result<()> {
-    // A directory of its own, removed when the guard is dropped, whether the test passes, fails or panics.
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("notes.db");
 
