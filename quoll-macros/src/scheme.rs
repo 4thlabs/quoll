@@ -156,9 +156,10 @@ pub(crate) fn schemes_type(schemes: &[Scheme]) -> TokenStream {
     }
 }
 
-/// The challenge of each scheme of the application's a group takes, evaluated in a constant: a `CHALLENGE` that is not
-/// a header's value fails as the contract compiles, whatever the features, rather than as the server is built, when
-/// the code that sends it is instantiated. The crate's schemes and the declared ones have a challenge the macro checks.
+/// The challenge of each scheme of the application's that a route of the group takes, evaluated in a constant: a
+/// `CHALLENGE` that is not a header's value fails as the contract compiles, whatever the features, rather than as the
+/// server is built, when the code that sends it is instantiated. The crate's schemes and the declared ones have a
+/// challenge the macro checks.
 pub(crate) fn challenge_checks(group: &Group) -> TokenStream {
     let mut seen: Vec<String> = Vec::new();
     let mut checks = Vec::new();

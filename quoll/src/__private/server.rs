@@ -341,8 +341,9 @@ impl Request {
     ///
     /// # Errors
     ///
-    /// A 400 when the body is not the JSON of `T`, a 415 when the request does not say it sends JSON or names more
-    /// than one content type, and the status axum gives when the body cannot be read, as a 413 for one too large.
+    /// The read resolves to a 400 when the body is not the JSON of `T`, a 415 when the request does not say it sends
+    /// JSON or names more than one content type, and the status axum gives when the body cannot be read, as a 413 for
+    /// one too large.
     pub fn json<T: Deserialized + Send + 'static>(self) -> Read<T> {
         Read::new(self.read_json())
     }
@@ -379,9 +380,9 @@ impl Request {
     ///
     /// # Errors
     ///
-    /// A 415 when the request does not say it sends `application/x-www-form-urlencoded`, or names a charset other than
-    /// UTF-8; a 400 when the form does not read as `T` or a value is not UTF-8 once decoded, and the status axum gives
-    /// when the body cannot be read.
+    /// The read resolves to a 415 when the request does not say it sends `application/x-www-form-urlencoded`, or names
+    /// a charset other than UTF-8; a 400 when the form does not read as `T` or a value is not UTF-8 once decoded, and
+    /// the status axum gives when the body cannot be read.
     pub fn form<F>(self) -> Read<F>
     where
         F: IsForm + Send + 'static,
@@ -407,8 +408,8 @@ impl Request {
     ///
     /// # Errors
     ///
-    /// A 415 when the request does not say it sends `text/plain`, or names a charset other than UTF-8; a 400 when the
-    /// body is not UTF-8, and the status axum gives when the body cannot be read.
+    /// The read resolves to a 415 when the request does not say it sends `text/plain`, or names a charset other than
+    /// UTF-8; a 400 when the body is not UTF-8, and the status axum gives when the body cannot be read.
     pub fn text<T: IsText + Send + 'static>(self) -> Read<T> {
         Read::new(self.read_text())
     }
@@ -428,8 +429,9 @@ impl Request {
     ///
     /// # Errors
     ///
-    /// A 415 when the request names no content type, more than one, one that is not a media type, or one of the
-    /// three a browser sends to another site without asking, and the status axum gives when the body cannot be read.
+    /// The read resolves to a 415 when the request names no content type, more than one, one that is not a media type,
+    /// or one of the three a browser sends to another site without asking, and the status axum gives when the body
+    /// cannot be read.
     pub fn bytes<B: IsBytes + Send + 'static>(self) -> Read<B> {
         Read::new(self.read_bytes())
     }

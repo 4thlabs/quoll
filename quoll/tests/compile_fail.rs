@@ -13,6 +13,11 @@
 //!   quoll's; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to
 //!   the document of a contract that has none; and the mistakes of a group of another block: a group listed and not in
 //!   scope, or not a group, a group or a scheme less visible than what names it, and a scheme twice in an alternative.
+//!
+//! A message of rustc's own is kept as rustc writes it, the name it gives a hidden item included: the future of a
+//! trait's method is `{anon_assoc#0}` in `handler_wrong_return`, `handler_not_async`, `fake_not_async`,
+//! `fake_returns_created` and `fake_returns_accepted`. A rustc that names it otherwise changes those `.stderr`, which
+//! are accepted again with `TRYBUILD=overwrite`.
 
 #[test]
 fn a_mistake_is_an_error_on_the_token_at_fault() {
@@ -80,7 +85,7 @@ fn with_neither_feature_only_the_api_type_is_written() {
 
 #[cfg(not(any(feature = "server", feature = "client")))]
 #[test]
-fn a_type_named_as_one_of_quolls_is_quolls_with_neither_feature() {
+fn with_neither_feature_the_mistakes_each_side_would_repeat_are_one_error() {
     let cases = trybuild::TestCases::new();
 
     cases.compile_fail("tests/compile_fail_neither/*.rs");
