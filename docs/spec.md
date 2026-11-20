@@ -363,7 +363,7 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 
 ## A complete example
 
-Notes kept per user: a token for a login, notes to list, read, write and watch, and statistics for operators holding a key. The web page and the command line use bearer tokens, the operators' scripts a key.
+Notes kept per user: a token for a login, notes to list, read, write and watch, and statistics for operators holding a key. The web page and the command line use bearer tokens, the operators' scripts a key. The store, `server/src/store.rs`, keeps them in SQLite, and is not shown here.
 
 `api/Cargo.toml`
 
@@ -385,51 +385,98 @@ serde = { version = "1", features = ["derive"] }
 `api/src/lib.rs`
 
 ```rust
+use std::fmt;
+
 use quoll::rest::{self, Created, Events, Form};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+/// A note, as it is read back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Note {
+    /// The note's id, given by the server.
     pub id: i64,
+    /// Its title.
     pub title: String,
+    /// Its text, where a `#word` tags it.
     pub body: String,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
+/// A note to write: what a note holds, but its id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NewNote {
+    /// Its title.
     pub title: String,
+    /// Its text, where a `#word` tags it.
     pub body: String,
 }
 
-#[derive(Default, Serialize, Deserialize, JsonSchema)]
+/// The most characters a search's `contains` holds.
+pub const CONTAINS_LIMIT: usize = 1000;
+
+/// Which notes a search gives: each key that is given, and not empty, narrows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NoteFilter {
+    /// Notes whose title or text holds this, whatever the case of its ASCII letters: 1000 characters at most.
+    #[schemars(length(max = CONTAINS_LIMIT))]
     pub contains: Option<String>,
+    /// Notes tagged so, by a `#word` of their title or their text: `#milk` or `milk,` is `milk`.
     pub tag: Option<String>,
+    /// The page, of 20 notes in the order they were written, from 1, the first when it is missing.
     pub page: Option<u32>,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+/// A change of a note, as it happens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NoteEvent {
+    /// The note was written again: as it is now.
     Edited(Note),
-    Removed { id: i64 },
+    /// The note was removed: the last event of its stream.
+    Removed {
+        /// The id of the note.
+        id: i64,
+    },
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
+/// A user's name and password, traded for a token.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Login {
+    /// The user's name.
     pub user: String,
+    /// Their password.
     pub password: String,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
+/// Shows the user, never the password.
+impl fmt::Debug for Login {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Login")
+            .field("user", &self.user)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The token a login gives, which the routes of the notes take as a bearer token.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenResponse {
+    /// The token, sent as `Authorization: Bearer <token>`.
     pub access_token: String,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
+/// Shows that there is a token, never the token.
+impl fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenResponse").finish_non_exhaustive()
+    }
+}
+
+/// What the server holds, for its operators.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Stats {
+    /// How many users can sign in.
     pub users: u64,
+    /// How many notes they keep, all users together.
     pub notes: u64,
 }
 
@@ -479,30 +526,50 @@ fn main() {
 use std::time::Duration;
 
 use notes_api::*;
-use quoll::rest::{self, Authenticate, Bearer, Created, Error, Events, Form, Result};
+use quoll::rest::{Authenticate, Bearer, Created, Error, Events, Form, Result};
 use quoll::server;
 
 mod store;
 
-pub use store::{Sessions, Store};
+pub use store::{PAGE_SIZE, SESSION_LIFETIME, Sessions, Store, StoreError};
 
 /// Who a request comes from, once its token is checked. Never sent: the server alone builds it.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
+    /// The user's id, which their notes are kept under.
     pub id: i64,
+    /// Their name.
     pub name: String,
 }
 
 /// An operator, known by its key.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Operator {
+    /// The operator's name.
     pub name: String,
 }
 
-#[derive(Clone)]
+/// The service of every group: the store and the open sessions.
+#[derive(Debug, Clone)]
 pub struct App {
+    /// The users, the operators and their notes.
     pub store: Store,
+    /// The tokens given out, each standing for its user.
     pub sessions: Sessions,
+}
+
+impl App {
+    /// An app with nothing in its store, kept in memory, and no session.
+    ///
+    /// # Panics
+    ///
+    /// When SQLite cannot open a database in memory.
+    pub fn in_memory() -> Self {
+        Self {
+            store: Store::in_memory(),
+            sessions: Sessions::default(),
+        }
+    }
 }
 
 impl AuthServer for App {
@@ -514,13 +581,29 @@ impl AuthServer for App {
             .map_err(Error::internal)?
             .ok_or_else(|| Error::unauthorized("wrong user or password"))?;
 
-        Ok(TokenResponse { access_token: self.sessions.open(user) })
+        Ok(TokenResponse {
+            access_token: self.sessions.open(user),
+        })
     }
 }
 
 impl NotesServer for App {
     async fn search(&self, user: &User, filter: NoteFilter) -> Result<Vec<Note>> {
-        self.store.notes(user.id, &filter).await.map_err(Error::internal)
+        // Refused before the query, so that a pattern past SQLite's limit is the caller's error, not the database's.
+        if filter
+            .contains
+            .as_ref()
+            .is_some_and(|text| text.chars().count() > CONTAINS_LIMIT)
+        {
+            return Err(Error::bad_request(format!(
+                "`contains` holds more than {CONTAINS_LIMIT} characters"
+            )));
+        }
+
+        self.store
+            .notes(user.id, &filter)
+            .await
+            .map_err(Error::internal)
     }
 
     async fn get(&self, user: &User, id: i64) -> Result<Note> {
@@ -532,7 +615,11 @@ impl NotesServer for App {
     }
 
     async fn create(&self, user: &User, note: NewNote) -> Result<Created<Note>> {
-        let note = self.store.add(user.id, note).await.map_err(Error::internal)?;
+        let note = self
+            .store
+            .add(user.id, note)
+            .await
+            .map_err(Error::internal)?;
 
         Ok(Created::at(format!("/api/notes/{}", note.id), note))
     }
@@ -546,11 +633,19 @@ impl NotesServer for App {
     }
 
     async fn remove(&self, user: &User, id: i64) -> Result<()> {
-        self.store.remove(user.id, id).await.map_err(Error::internal)
+        self.store
+            .remove(user.id, id)
+            .await
+            .map_err(Error::internal)
     }
 
     async fn events(&self, user: &User, id: i64) -> Result<Events<NoteEvent>> {
-        let changes = self.store.watch(user.id, id).await.map_err(Error::internal)?;
+        let changes = self
+            .store
+            .watch(user.id, id)
+            .await
+            .map_err(Error::internal)?
+            .ok_or_else(|| Error::not_found("no such note"))?;
 
         Ok(Events::new(changes))
     }
@@ -566,7 +661,9 @@ impl Authenticate<Bearer> for App {
     type Caller = User;
 
     async fn authenticate(&self, token: String) -> Result<User> {
-        self.sessions.user(&token).ok_or_else(|| Error::unauthorized("unknown or expired token"))
+        self.sessions
+            .user(&token)
+            .ok_or_else(|| Error::unauthorized("unknown or expired token"))
     }
 }
 
@@ -574,10 +671,15 @@ impl Authenticate<Key> for App {
     type Caller = Operator;
 
     async fn authenticate(&self, key: String) -> Result<Operator> {
-        self.store.operator(&key).await.map_err(Error::internal)?.ok_or_else(|| Error::unauthorized("unknown key"))
+        self.store
+            .operator(&key)
+            .await
+            .map_err(Error::internal)?
+            .ok_or_else(|| Error::unauthorized("unknown key"))
     }
 }
 
+/// The router of the api, served by `app`.
 pub fn router(app: App) -> axum::Router {
     Api::router(ApiServices {
         auth: app.clone(),
@@ -586,7 +688,8 @@ pub fn router(app: App) -> axum::Router {
     })
 }
 
-/// The server, with its layers in any order: a request gets its id, then its span, then its deadline and its body's limit.
+/// The server, with its layers in any order: a request gets its id, then its span, then its deadline and its body's
+/// limit.
 pub fn server() -> server::Builder {
     server::builder()
         .with(server::request_id())
@@ -609,7 +712,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Until Ctrl-C or SIGTERM, then up to 5 s for the requests it serves.
-    notes_server::server().serve("0.0.0.0:8080", notes_server::router(app)).await?;
+    notes_server::server()
+        .serve("0.0.0.0:8080", notes_server::router(app))
+        .await?;
     Ok(())
 }
 ```
@@ -629,11 +734,22 @@ fn served(app: notes_server::App) -> axum::Router {
 #[tokio::test]
 async fn a_created_note_reads_back() -> anyhow::Result<()> {
     let app = notes_server::App::in_memory();
-    let token = app.sessions.open(User { id: 1, name: "ana".into() });
+    let token = app.sessions.open(User {
+        id: 1,
+        name: "ana".into(),
+    });
     let url = quoll::test::spawn(served(app)).await;
-    let api = client::builder().with(client::bearer(token)).build::<Api>(&url)?;
+    let api = client::builder()
+        .with(client::bearer(token))
+        .build::<Api>(&url)?;
 
-    let created = api.notes().create(NewNote { title: "Milk".into(), body: String::new() }).await?;
+    let created = api
+        .notes()
+        .create(NewNote {
+            title: "Milk".into(),
+            body: String::new(),
+        })
+        .await?;
     let read = api.notes().get(created.id).await?;
 
     assert_eq!(read.title, "Milk");
@@ -656,7 +772,7 @@ async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
 
 ```rust
 use futures::StreamExt;
-use notes_api::{Api, Login, NewNote, NoteFilter, Notes};
+use notes_api::{Api, Auth, Login, NewNote, NoteFilter, Notes};
 use quoll::client;
 use quoll::rest::Form;
 use reqwest::StatusCode;
@@ -664,7 +780,10 @@ use reqwest::StatusCode;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let url = std::env::var("NOTES_URL")?;
-    let login = Login { user: std::env::var("NOTES_USER")?, password: std::env::var("NOTES_PASSWORD")? };
+    let login = Login {
+        user: std::env::var("NOTES_USER")?,
+        password: std::env::var("NOTES_PASSWORD")?,
+    };
     let token = Api::client(&url)?.auth().token(Form(login)).await?;
 
     let api = client::builder()
@@ -674,8 +793,17 @@ async fn main() -> anyhow::Result<()> {
         .with(client::bearer(token.access_token))
         .build::<Api>(&url)?;
 
-    let created = api.notes().create(NewNote { title: "Milk".into(), body: String::new() }).await?;
-    let filter = NoteFilter { contains: Some("milk".into()), ..Default::default() };
+    let created = api
+        .notes()
+        .create(NewNote {
+            title: "Milk".into(),
+            body: String::new(),
+        })
+        .await?;
+    let filter = NoteFilter {
+        contains: Some("milk".into()),
+        ..Default::default()
+    };
 
     for note in api.notes().search(filter).await? {
         println!("{} {}", note.id, note.title);
