@@ -1,8 +1,18 @@
 //! The notes server, served on a free port and called by the contract's client.
 
-use notes_api::{Api, ApiClient, NewNote, Notes};
-use notes_server::{Sessions, User};
-use quoll::{client, rest};
+use futures_util::StreamExt;
+use notes_api::{
+    Admin, Api, ApiClient, Auth, Key, Login, NewNote, Note, NoteEvent, NoteFilter, Notes, Stats,
+};
+use notes_server::{PAGE_SIZE, Sessions, Store, User};
+use quoll::client;
+use quoll::rest::{self, Form};
+use reqwest::StatusCode;
+
+/// The router of `app` with the layers of its server, as `main` serves it.
+fn served(app: notes_server::App) -> axum::Router {
+    notes_server::server().into_router(notes_server::router(app))
+}
 
 #[tokio::test]
 async fn a_created_note_reads_back() -> anyhow::Result<()> {
@@ -40,25 +50,27 @@ async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The router of `app` with the layers of its server, as `main` serves it.
-fn served(app: notes_server::App) -> axum::Router {
-    notes_server::server().into_router(notes_server::router(app))
-}
-
-/// The server, in memory, on a free port: its URL and its sessions, where a test opens the ones it calls with.
+/// The server, in memory, on a free port: its URL, its store and its sessions, where a test adds the users and opens
+/// the sessions it calls with.
 struct Served {
     url: String,
+    store: Store,
     sessions: Sessions,
 }
 
 impl Served {
-    /// Serves an app with no note and no session.
+    /// Serves an app with nothing in its store and no session.
     async fn start() -> Self {
         let app = notes_server::App::in_memory();
+        let store = app.store.clone();
         let sessions = app.sessions.clone();
         let url = quoll::test::spawn(served(app)).await;
 
-        Self { url, sessions }
+        Self {
+            url,
+            store,
+            sessions,
+        }
     }
 
     /// A client signed in as `user`, through a session opened for them.
@@ -71,6 +83,11 @@ impl Served {
         client::builder()
             .with(client::bearer(token))
             .build::<Api>(&self.url)
+    }
+
+    /// A client sending no credential.
+    fn anonymous(&self) -> rest::Result<ApiClient> {
+        Api::client(&self.url)
     }
 }
 
@@ -98,17 +115,32 @@ fn titled(title: &str) -> NewNote {
     }
 }
 
+/// A note with a title and a body.
+fn written(title: &str, body: &str) -> NewNote {
+    NewNote {
+        title: title.into(),
+        body: body.into(),
+    }
+}
+
+/// The login of `user` with `password`, as a form.
+fn login(user: &str, password: &str) -> Form<Login> {
+    Form(Login {
+        user: user.into(),
+        password: password.into(),
+    })
+}
+
+/// The titles of `notes`, in their order.
+fn titles(notes: &[Note]) -> Vec<&str> {
+    notes.iter().map(|note| note.title.as_str()).collect()
+}
+
 #[tokio::test]
 async fn a_created_note_has_its_body_and_a_new_id() -> anyhow::Result<()> {
     let api = Served::start().await.client_as(ana())?;
 
-    let first = api
-        .notes()
-        .create(NewNote {
-            title: "Milk".into(),
-            body: "Two litres".into(),
-        })
-        .await?;
+    let first = api.notes().create(written("Milk", "Two litres")).await?;
     let second = api.notes().create(titled("Bread")).await?;
     let read = api.notes().get(first.id).await?;
 
@@ -121,6 +153,299 @@ async fn a_created_note_has_its_body_and_a_new_id() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn a_login_gives_a_token_for_its_user() -> anyhow::Result<()> {
+    let served = Served::start().await;
+    let user = served.store.add_user("ana", "correct horse").await?;
+
+    let token = served
+        .anonymous()?
+        .auth()
+        .token(login("ana", "correct horse"))
+        .await?;
+    let api = served.client_with(token.access_token.clone())?;
+    let created = api.notes().create(titled("Milk")).await?;
+
+    assert_eq!(
+        served.sessions.user(&token.access_token),
+        Some(user.clone())
+    );
+    assert_eq!(
+        served
+            .store
+            .note(user.id, created.id)
+            .await?
+            .map(|note| note.title),
+        Some("Milk".into())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_wrong_password_and_an_unknown_user_are_refused() -> anyhow::Result<()> {
+    let served = Served::start().await;
+
+    served.store.add_user("ana", "correct horse").await?;
+
+    for (user, password) in [("ana", "wrong"), ("ana", ""), ("bob", "correct horse")] {
+        let error = served
+            .anonymous()?
+            .auth()
+            .token(login(user, password))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED), "{user}");
+        assert_eq!(
+            error.problem().and_then(|problem| problem.detail()),
+            Some("wrong user or password")
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_user_whose_name_is_taken_is_not_added() -> anyhow::Result<()> {
+    let store = Store::in_memory();
+
+    store.add_user("ana", "correct horse").await?;
+
+    assert!(store.add_user("ana", "another").await.is_err());
+    assert!(store.check_password("ana", "another").await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_search_with_no_key_gives_every_note_of_its_user() -> anyhow::Result<()> {
+    let served = Served::start().await;
+    let ana_api = served.client_as(ana())?;
+    let bob_api = served.client_as(bob())?;
+
+    ana_api.notes().create(titled("Milk")).await?;
+    bob_api.notes().create(titled("Beer")).await?;
+    ana_api.notes().create(titled("Bread")).await?;
+
+    let notes = ana_api.notes().search(NoteFilter::default()).await?;
+
+    assert_eq!(titles(&notes), ["Milk", "Bread"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_search_by_contains_reads_the_title_and_the_body() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+
+    api.notes().create(titled("Oat milk")).await?;
+    api.notes()
+        .create(written("Shopping", "MILK and eggs"))
+        .await?;
+    api.notes().create(titled("Bread")).await?;
+    api.notes().create(titled("50% off")).await?;
+    api.notes().create(titled("500 off")).await?;
+
+    let milk = api
+        .notes()
+        .search(NoteFilter {
+            contains: Some("milk".into()),
+            ..Default::default()
+        })
+        .await?;
+    // `%` is the text itself, not a wildcard of `LIKE`.
+    let percent = api
+        .notes()
+        .search(NoteFilter {
+            contains: Some("0%".into()),
+            ..Default::default()
+        })
+        .await?;
+
+    assert_eq!(titles(&milk), ["Oat milk", "Shopping"]);
+    assert_eq!(titles(&percent), ["50% off"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_search_by_tag_reads_the_hash_words() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+
+    api.notes()
+        .create(written("Milk", "#Shopping, #dairy"))
+        .await?;
+    api.notes().create(titled("Bread #shopping")).await?;
+    api.notes()
+        .create(written("Shop", "#shop and #shoppingmall"))
+        .await?;
+
+    let tagged = |tag: &str| NoteFilter {
+        tag: Some(tag.into()),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        titles(&api.notes().search(tagged("shopping")).await?),
+        ["Milk", "Bread #shopping"]
+    );
+    assert_eq!(
+        titles(&api.notes().search(tagged("#DAIRY")).await?),
+        ["Milk"]
+    );
+    assert!(api.notes().search(tagged("sho")).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_search_by_tag_follows_an_update() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+    let note = api.notes().create(written("Milk", "#shopping")).await?;
+
+    api.notes()
+        .update(note.id, written("Milk", "#done"))
+        .await?;
+
+    let shopping = api
+        .notes()
+        .search(NoteFilter {
+            tag: Some("shopping".into()),
+            ..Default::default()
+        })
+        .await?;
+    let done = api
+        .notes()
+        .search(NoteFilter {
+            tag: Some("done".into()),
+            ..Default::default()
+        })
+        .await?;
+
+    assert!(shopping.is_empty());
+    assert_eq!(titles(&done), ["Milk"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_search_gives_a_page_at_a_time() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+
+    for i in 1..=PAGE_SIZE + 1 {
+        api.notes().create(titled(&format!("Note {i}"))).await?;
+    }
+
+    let page = |page: Option<u32>| NoteFilter {
+        page,
+        ..Default::default()
+    };
+    let first = api.notes().search(page(None)).await?;
+
+    assert_eq!(first.len(), 20);
+    assert_eq!(first[0].title, "Note 1");
+    assert_eq!(api.notes().search(page(Some(1))).await?, first);
+    assert_eq!(api.notes().search(page(Some(0))).await?, first);
+    assert_eq!(
+        titles(&api.notes().search(page(Some(2))).await?),
+        ["Note 21"]
+    );
+    assert!(api.notes().search(page(Some(3))).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_search_combines_its_keys() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+
+    api.notes().create(written("Oat milk", "#shopping")).await?;
+    api.notes().create(written("Milk", "#done")).await?;
+    api.notes().create(written("Bread", "#shopping")).await?;
+
+    let notes = api
+        .notes()
+        .search(NoteFilter {
+            contains: Some("milk".into()),
+            tag: Some("shopping".into()),
+            page: Some(1),
+        })
+        .await?;
+
+    assert_eq!(titles(&notes), ["Oat milk"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_updated_note_reads_back_and_tells_its_watchers() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+    let created = api.notes().create(titled("Milk")).await?;
+    // The stream is there once its answer has come: the store watches the note by then.
+    let mut events = api.notes().events(created.id).await?;
+
+    let updated = api
+        .notes()
+        .update(created.id, written("Oat milk", "Two litres"))
+        .await?;
+    let read = api.notes().get(created.id).await?;
+    let event = events.next().await.transpose()?;
+
+    assert_eq!(updated, read);
+    assert_eq!(
+        read,
+        Note {
+            id: created.id,
+            title: "Oat milk".into(),
+            body: "Two litres".into(),
+        }
+    );
+    assert_eq!(event, Some(NoteEvent::Edited(read)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_removed_note_tells_its_watchers_and_ends_their_streams() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+    let created = api.notes().create(titled("Milk")).await?;
+    let mut first = api.notes().events(created.id).await?;
+    let mut second = api.notes().events(created.id).await?;
+
+    api.notes().update(created.id, titled("Oat milk")).await?;
+    api.notes().remove(created.id).await?;
+
+    for events in [&mut first, &mut second] {
+        let Some(Ok(NoteEvent::Edited(edited))) = events.next().await else {
+            panic!("the update is the first event");
+        };
+
+        assert_eq!(edited.title, "Oat milk");
+        assert_eq!(
+            events.next().await.transpose()?,
+            Some(NoteEvent::Removed { id: created.id })
+        );
+        assert!(
+            events.next().await.is_none(),
+            "the stream ends after the removal"
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_events_of_a_missing_note_end_at_once() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+
+    let mut events = api.notes().events(999).await?;
+
+    assert!(events.next().await.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_update_of_a_missing_note_is_not_found() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+
+    let error = api.notes().update(999, titled("Milk")).await.unwrap_err();
+
+    assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_removed_note_is_not_found() -> anyhow::Result<()> {
     let api = Served::start().await.client_as(ana())?;
     let created = api.notes().create(titled("Milk")).await?;
@@ -129,7 +454,7 @@ async fn a_removed_note_is_not_found() -> anyhow::Result<()> {
     let () = api.notes().remove(created.id).await?;
     let error = api.notes().get(created.id).await.unwrap_err();
 
-    assert_eq!(error.status(), Some(reqwest::StatusCode::NOT_FOUND));
+    assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     assert_eq!(
         error.problem().and_then(|problem| problem.detail()),
         Some("no such note")
@@ -148,20 +473,60 @@ async fn a_removal_asked_twice_succeeds_twice() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn a_note_of_another_user_is_not_found_and_not_removed() -> anyhow::Result<()> {
+async fn the_id_of_a_removed_note_is_not_given_again() -> anyhow::Result<()> {
+    let api = Served::start().await.client_as(ana())?;
+    let removed = api.notes().create(titled("Milk")).await?;
+
+    api.notes().remove(removed.id).await?;
+
+    let created = api.notes().create(titled("Bread")).await?;
+
+    assert!(created.id > removed.id);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_note_of_another_user_is_neither_seen_nor_changed() -> anyhow::Result<()> {
     let served = Served::start().await;
     let ana_api = served.client_as(ana())?;
     let bob_api = served.client_as(bob())?;
-    let created = ana_api.notes().create(titled("Milk")).await?;
+    let created = ana_api.notes().create(written("Milk", "#shopping")).await?;
+    let mut ana_events = ana_api.notes().events(created.id).await?;
 
-    let error = bob_api.notes().get(created.id).await.unwrap_err();
+    let read = bob_api.notes().get(created.id).await.unwrap_err();
+    let updated = bob_api
+        .notes()
+        .update(created.id, titled("Beer"))
+        .await
+        .unwrap_err();
+    let mut bob_events = bob_api.notes().events(created.id).await?;
+    let found = bob_api
+        .notes()
+        .search(NoteFilter {
+            tag: Some("shopping".into()),
+            ..Default::default()
+        })
+        .await?;
 
     bob_api.notes().remove(created.id).await?;
 
-    let read = ana_api.notes().get(created.id).await?;
+    assert_eq!(read.status(), Some(StatusCode::NOT_FOUND));
+    assert_eq!(updated.status(), Some(StatusCode::NOT_FOUND));
+    assert!(bob_events.next().await.is_none());
+    assert!(found.is_empty());
+    assert_eq!(ana_api.notes().get(created.id).await?, created);
 
-    assert_eq!(error.status(), Some(reqwest::StatusCode::NOT_FOUND));
-    assert_eq!(read.title, "Milk");
+    // Neither bob's update nor his removal reached ana's watcher: her own update is the first event it reads.
+    ana_api
+        .notes()
+        .update(created.id, titled("Oat milk"))
+        .await?;
+
+    let Some(Ok(NoteEvent::Edited(edited))) = ana_events.next().await else {
+        panic!("ana's update is the first event");
+    };
+
+    assert_eq!(edited.title, "Oat milk");
     Ok(())
 }
 
@@ -173,7 +538,86 @@ async fn an_unknown_token_is_refused() -> anyhow::Result<()> {
 
     let error = api.notes().create(titled("Milk")).await.unwrap_err();
 
-    assert_eq!(error.status(), Some(reqwest::StatusCode::UNAUTHORIZED));
+    assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_operator_reads_the_stats_with_their_key() -> anyhow::Result<()> {
+    let served = Served::start().await;
+    let ana = served.store.add_user("ana", "correct horse").await?;
+    let bob = served.store.add_user("bob", "battery staple").await?;
+    let key = served.store.add_operator("ops").await?;
+
+    served
+        .client_as(ana)?
+        .notes()
+        .create(titled("Milk"))
+        .await?;
+    served
+        .client_as(bob.clone())?
+        .notes()
+        .create(titled("Beer"))
+        .await?;
+    served
+        .client_as(bob)?
+        .notes()
+        .create(titled("Bread"))
+        .await?;
+
+    let operator = client::builder()
+        .with(client::key::<Key>(key))
+        .build::<Api>(&served.url)?;
+    let stats = operator.admin().stats().await?;
+
+    assert_eq!(stats, Stats { users: 2, notes: 3 });
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_stats_are_refused_without_an_operators_key() -> anyhow::Result<()> {
+    let served = Served::start().await;
+    let key = served.store.add_operator("ops").await?;
+    let wrong_key = client::builder()
+        .with(client::key::<Key>(format!("{key}0")))
+        .build::<Api>(&served.url)?;
+    // A user's token is no operator's key: the client does not even send it to a route of `Key`.
+    let user = served.client_as(ana())?;
+
+    for api in [served.anonymous()?, wrong_key, user] {
+        let error = api.admin().stats().await.unwrap_err();
+
+        assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_store_on_a_file_keeps_its_users_and_notes() -> anyhow::Result<()> {
+    // One file per run of the tests, which no other test opens.
+    let path = std::env::temp_dir().join(format!("notes-{}.db", std::process::id()));
+    let written = async {
+        let store = Store::open(&path).await?;
+        let user = store.add_user("ana", "correct horse").await?;
+        let note = store.add(user.id, titled("Milk")).await?;
+
+        drop(store);
+
+        let store = Store::open(&path).await?;
+        let signed_in = store.check_password("ana", "correct horse").await?;
+        let read = store.note(user.id, note.id).await?;
+
+        anyhow::Ok((user, signed_in, note, read))
+    }
+    .await;
+
+    std::fs::remove_file(&path)?;
+
+    let (user, signed_in, note, read) = written?;
+
+    assert_eq!(signed_in, Some(user));
+    assert_eq!(read, Some(note));
     Ok(())
 }
 
@@ -211,7 +655,7 @@ async fn an_answer_carries_the_request_id_its_caller_gave() -> anyhow::Result<()
         .send()
         .await?;
 
-    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(response.headers()["x-request-id"], "call-1");
     Ok(())
 }
