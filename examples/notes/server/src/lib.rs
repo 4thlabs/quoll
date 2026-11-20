@@ -1,7 +1,9 @@
 //! The server of the notes example: the contract's routes served from memory, each user's notes behind their token.
 
+use std::time::Duration;
+
 use notes_api::*;
-use quoll::rest::{Authenticate, Bearer, Created, Error, Result};
+use quoll::rest::{self, Authenticate, Bearer, Created, Error, Result};
 
 mod store;
 
@@ -72,7 +74,12 @@ impl Authenticate<Bearer> for App {
     }
 }
 
-/// The router of the api, served by `app`.
+/// The router of the api, served by `app`, with the usual layers.
 pub fn router(app: App) -> axum::Router {
+    // The last layer added runs first: a request gets its id, then its span, then its deadline and its body's limit.
     Api::router(ApiServices { notes: app })
+        .layer(rest::server::body_limit(1 << 20))
+        .layer(rest::server::timeout(Duration::from_secs(10)))
+        .layer(rest::server::trace())
+        .layer(rest::server::request_id())
 }

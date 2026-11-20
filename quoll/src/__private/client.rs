@@ -2,7 +2,6 @@
 //! reqwest-middleware with its [`Route`] in its extensions, and its answer read as the route's result, whole or as a
 //! stream, or as an error.
 
-use std::any::TypeId;
 use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
@@ -26,7 +25,7 @@ mod stream;
 mod text;
 
 pub use crate::__private::content_type::{EVENT_STREAM, JSON, TEXT};
-pub use http::{HeaderName, Method};
+pub use http::HeaderName;
 
 /// Any content type, which a route returning `Bytes` asks for.
 pub const ANY: &str = "*/*";
@@ -54,28 +53,6 @@ const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
 /// and a success's on a route with no result, read so that the connection serves again. Past it, the client reads no
 /// further.
 const BODY_LIMIT: usize = 64 * 1024;
-
-/// The route a request calls, which the macro writes as a `static` per route. `streams` says that its result is a
-/// stream, `Events` or `JsonLines`, whose body lasts as long as the server sends it.
-pub const fn route(
-    operation_id: &'static str,
-    group: &'static str,
-    method: Method,
-    path: &'static str,
-    schemes: &'static [&'static str],
-    scheme_types: &'static [TypeId],
-    streams: bool,
-) -> Route {
-    Route {
-        operation_id,
-        group,
-        method,
-        path,
-        schemes,
-        scheme_types,
-        streams,
-    }
-}
 
 /// The origin of the api a request of a contract calls, which the client puts in its extensions beside its [`Route`]:
 /// the middleware that send a credential send it to that origin only, and so not on a redirect to another.
@@ -696,6 +673,8 @@ fn read_problem(body: &[u8]) -> Option<Problem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::__private::route;
+    use http::Method;
 
     static ROUTE: Route = route(
         "notes_get",

@@ -77,6 +77,8 @@ pub(crate) mod error;
 pub mod openapi;
 mod problem;
 mod route;
+#[cfg(feature = "server")]
+pub mod server;
 pub(crate) mod stream;
 #[cfg(feature = "server")]
 pub mod test;
