@@ -9,7 +9,7 @@
 //! - `tests/compile_fail_client/`, built with the feature `client`: what only the client's checks, a fake of the wrong
 //!   signature, a result that is not `Deserialize`, `build` or `key` on the wrong type.
 //! - `tests/compile_fail_neither/`, built with neither feature: what each side would repeat a message of its own for.
-//!   A type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events` or `JsonLines` that is not
+//!   A type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines` or `ByteStream` that is not
 //!   quoll's; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to
 //!   the document of a contract that has none; and the mistakes of a group of another block: a group listed and not in
 //!   scope, or not a group, a group or a scheme less visible than what names it, and a scheme twice in an alternative.

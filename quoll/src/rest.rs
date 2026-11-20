@@ -31,10 +31,12 @@
 //! A route streams its result with [`Events`], server-sent events, or [`JsonLines`], one JSON value per line, both
 //! answered 200: the server sends the values of a stream as they come, and the client reads them as a stream of
 //! `Result<T>`. It asks for their content type with `Accept`, and an answer of another one is an error with no status.
+//! A [`ByteStream`] streams bytes of its content type, as they come, which the client reads as a stream of
+//! `Result<Vec<u8>>`, of any content type, as it reads [`Bytes`].
 //!
-//! The contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events` and `JsonLines` as it names any type,
-//! so that the module that writes it imports them: `use quoll::rest::{self, Created, Form};`. A type of another crate
-//! with one of these names does not compile there.
+//! The contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines` and `ByteStream` as it
+//! names any type, so that the module that writes it imports them: `use quoll::rest::{self, Created, Form};`. A type
+//! of another crate with one of these names does not compile there.
 //!
 //! A group or a route that takes a credential says so with `#[auth(Bearer)]`, and a route of such a group that takes
 //! none with `#[auth(none)]`: the service implements [`Authenticate`], whose caller each handler receives, and the
@@ -91,4 +93,4 @@ pub use error::{Error, Result};
 pub use problem::Problem;
 pub use quoll_macros::{api, group};
 pub use route::Route;
-pub use stream::{Events, JsonLines};
+pub use stream::{ByteStream, Events, JsonLines};

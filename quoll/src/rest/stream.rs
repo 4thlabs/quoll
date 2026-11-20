@@ -1,8 +1,10 @@
-//! The results a route streams, a value at a time: server-sent events and JSON Lines.
+//! The results a route streams, a value at a time: server-sent events and JSON Lines, and bytes as they come.
 //!
-//! Each is one type on both sides, thin over the same [`Items`]. The server builds it from a stream of values, which it
-//! sends as they come; the client gets the same type, a stream of `Result<T>`, which reads them as they arrive.
+//! Each is one type on both sides, thin over the same [`Items`]. The server builds it from a stream of values, or of
+//! chunks of bytes, which it sends as they come; the client gets the same type, a stream of `Result<T>`, which reads
+//! them as they arrive.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -11,6 +13,7 @@ use futures_core::Stream;
 use pin_project_lite::pin_project;
 use sync_wrapper::SyncWrapper;
 
+use crate::__private::content_type::{self, OCTET_STREAM};
 use crate::rest::Result;
 
 /// The items of a stream result, as a handler gave them or as a client reads them: one box, polled through `&mut`
@@ -250,6 +253,140 @@ impl<T> fmt::Debug for JsonLines<T> {
     }
 }
 
+/// Bytes sent as they come, of one content type: what a route returns to stream what is not JSON, as the output of a
+/// process as it runs, a live feed, or a file too large to be held whole.
+///
+/// The server builds it from a stream of chunks, [`ByteStream::new`], or of results, [`ByteStream::try_new`], of
+/// `application/octet-stream` unless [`ByteStream::with_content_type`] says another. The client gets the same type: a
+/// [`Stream`] of `Result<Vec<u8>>`, the chunks of the body as they arrive, and the [content type](Self::content_type)
+/// of the answer.
+///
+/// ```
+/// use futures_util::{StreamExt, stream};
+/// use quoll::rest::ByteStream;
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> quoll::rest::Result<()> {
+/// let chunks = vec![b"hello ".to_vec(), b"world\n".to_vec()];
+/// let mut output = ByteStream::new(stream::iter(chunks)).with_content_type("text/plain; charset=utf-8");
+///
+/// assert_eq!(output.content_type(), "text/plain; charset=utf-8");
+///
+/// while let Some(chunk) = output.next().await {
+///     print!("{}", String::from_utf8_lossy(&chunk?));
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The server answers 200 with its content type, `X-Content-Type-Options: nosniff` as for [`Bytes`](crate::rest::Bytes),
+/// `Cache-Control: no-cache` and `X-Accel-Buffering: no`, so that neither a browser, a cache nor a proxy such as nginx
+/// reads it otherwise or holds it back. It sends each chunk as it comes, as it is. It asks the stream for a chunk only
+/// once the connection has taken the last one: a client that reads slowly slows it down, and one that goes away drops
+/// it, with the connection.
+///
+/// The client asks for any content type, `Accept: */*`, and reads an answer of any, as it reads [`Bytes`](crate::rest::Bytes):
+/// its content type, or `application/octet-stream` when it has none, or one that is not a media type. Each chunk is
+/// one the connection gave, of whatever size, never empty: what the bytes mean, their lines or their frames, is the
+/// caller's to read. A body that cannot be read is an error with no status, and the stream ends after it.
+///
+/// Dropping the stream closes its connection. The client does not call the route again when the stream ends.
+pub struct ByteStream {
+    pub(crate) chunks: Items<Vec<u8>>,
+    pub(crate) content_type: Cow<'static, str>,
+}
+
+impl ByteStream {
+    /// Bytes sending `chunks`, each as it comes, until the stream ends: `application/octet-stream`, bytes of no known
+    /// type.
+    pub fn new<S>(chunks: S) -> Self
+    where
+        S: Stream<Item = Vec<u8>> + Send + 'static,
+    {
+        Self {
+            chunks: Items::values(chunks),
+            content_type: Cow::Borrowed(OCTET_STREAM),
+        }
+    }
+
+    /// Bytes sending the chunks of `results`, until the stream ends or gives an error: `application/octet-stream`.
+    ///
+    /// The status of the answer is sent by then, and bytes have no way to say an error: the server logs it and cuts the
+    /// answer short, so that the client reads an error, never an end it would take for the last chunk. The chunks sent
+    /// just before the error may not reach the client, and when none has, the call itself is the error.
+    ///
+    /// ```
+    /// use futures_util::stream;
+    /// use quoll::rest::{ByteStream, Error};
+    ///
+    /// let output = ByteStream::try_new(stream::iter([Ok(b"a".to_vec()), Err(Error::internal("the process died"))]));
+    /// # let _ = output;
+    /// ```
+    pub fn try_new<S>(results: S) -> Self
+    where
+        S: Stream<Item = Result<Vec<u8>>> + Send + 'static,
+    {
+        Self {
+            chunks: Items::new(results),
+            content_type: Cow::Borrowed(OCTET_STREAM),
+        }
+    }
+
+    /// The same chunks, of `content_type`, a media type as `Content-Type` writes it: `text/plain; charset=utf-8`, or
+    /// `application/vnd.docker.multiplexed-stream`.
+    ///
+    /// It is checked when it is sent: a server answers a content type that is not a media type with a 500, logged, before
+    /// it sends any chunk. As for [`Bytes`](crate::rest::Bytes), a server never answers a content type a client gave as
+    /// it is: a browser runs `text/html` on the API's own site.
+    #[must_use]
+    pub fn with_content_type(self, content_type: impl Into<String>) -> Self {
+        Self {
+            chunks: self.chunks,
+            content_type: Cow::Owned(content_type.into()),
+        }
+    }
+
+    /// What the bytes are, as `Content-Type` writes it, as it was given or received: `application/octet-stream` when
+    /// nothing said it.
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    /// Whether the bytes are of `media_type`, a type and a subtype, whatever the case and the parameters of their
+    /// content type.
+    ///
+    /// ```
+    /// use futures_util::stream;
+    /// use quoll::rest::ByteStream;
+    ///
+    /// let logs = ByteStream::new(stream::empty()).with_content_type("Application/Vnd.Docker.Raw-Stream");
+    ///
+    /// assert!(logs.has_type("application/vnd.docker.raw-stream"));
+    /// assert!(!logs.has_type("application/vnd.docker.multiplexed-stream"));
+    /// ```
+    pub fn has_type(&self, media_type: &str) -> bool {
+        content_type::essence(&self.content_type).eq_ignore_ascii_case(media_type.trim())
+    }
+}
+
+/// Each chunk of the body, or the error of the body.
+impl Stream for ByteStream {
+    type Item = Result<Vec<u8>>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Vec<u8>>>> {
+        Pin::new(&mut self.chunks).poll_next(cx)
+    }
+}
+
+/// Shows the content type: the chunks are known only as they are read.
+impl fmt::Debug for ByteStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ByteStream")
+            .field("content_type", &self.content_type)
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -274,5 +411,6 @@ mod tests {
         is_send_and_sync(&Events::new(NotSync(Cell::new(1))));
         is_send_and_sync(&JsonLines::new(NotSync(Cell::new(1))));
         is_send_and_sync(&Events::<u8>::try_new(futures_util::stream::empty()));
+        is_send_and_sync(&ByteStream::new(futures_util::stream::empty()));
     }
 }

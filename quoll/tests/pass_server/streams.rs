@@ -1,5 +1,5 @@
 use futures_util::stream;
-use quoll::rest::{self, Error, Events, JsonLines, Result};
+use quoll::rest::{self, ByteStream, Error, Events, JsonLines, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,7 @@ rest::api! {
     pub group Feeds {
         GET "/events" => events() -> Events<Change>;
         GET "/export?limit={limit}" => export(limit: Option<i64>) -> JsonLines<Change>;
+        GET "/logs" => logs() -> ByteStream;
     }
 }
 
@@ -30,6 +31,12 @@ impl FeedsServer for App {
         let changes = (1..=limit).map(|id| Ok(Change { id }));
 
         Ok(JsonLines::try_new(stream::iter(changes)))
+    }
+
+    async fn logs(&self) -> Result<ByteStream> {
+        let chunks = [Ok(b"a line\n".to_vec()), Err(Error::internal("the process died"))];
+
+        Ok(ByteStream::try_new(stream::iter(chunks)).with_content_type("text/plain"))
     }
 }
 

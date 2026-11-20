@@ -5,7 +5,9 @@ use std::sync::LazyLock;
 
 use http::request::Parts;
 use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{self, Accepted, Bytes, Created, Events, Form, JsonLines, Result, Scheme, Text};
+use quoll::rest::{
+    self, Accepted, ByteStream, Bytes, Created, Events, Form, JsonLines, Result, Scheme, Text,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -191,6 +193,7 @@ rest::api! {
         GET  "/files/{name}" => download(name: String) -> Bytes;
         POST "/notes/text"   => text(body: Text) -> Problem;
         GET  "/lines"        => lines() -> JsonLines<String>;
+        GET  "/output"       => output() -> ByteStream;
         HEAD "/files/{name}" => exists(name: String);
         PUT  "/shelves"      => shelve(shelf: Shelf) -> Shelf;
         /**
@@ -462,6 +465,19 @@ fn a_stream_carries_the_schema_of_its_items_in_x_item() {
         json!({ "application/jsonl": { "schema": { "type": "string" }, "x-item": { "type": "string" } } })
     );
     assert!(DOCUMENT["components"]["schemas"]["Change"]["oneOf"].is_array());
+}
+
+#[test]
+fn a_byte_stream_is_bytes_of_any_type_said_to_stream() {
+    let output = &operation("/api/output", "get")["responses"]["200"];
+
+    assert_eq!(output["content"], json!({ "*/*": {} }));
+    assert!(
+        output["description"]
+            .as_str()
+            .unwrap()
+            .contains("sent as they come")
+    );
 }
 
 #[test]

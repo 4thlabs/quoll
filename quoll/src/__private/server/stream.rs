@@ -1,4 +1,5 @@
-//! The answers of a route that streams its result: server-sent events and JSON Lines, each value sent as it comes.
+//! The answers of a route that streams its result: server-sent events and JSON Lines, each value sent as it comes, and
+//! bytes, each chunk sent as it comes.
 
 use std::error::Error as StdError;
 use std::time::Duration;
@@ -12,8 +13,8 @@ use http::{HeaderName, HeaderValue, header};
 use serde::Serialize;
 
 use super::problem_json;
-use crate::__private::content_type::JSON_LINES;
-use crate::__private::known::{IsEvents, IsJsonLines, Items, Streamed};
+use crate::__private::content_type::{JSON_LINES, media_type_value};
+use crate::__private::known::{IsByteStream, IsEvents, IsJsonLines, Items, Streamed};
 use crate::rest::{Error, Events, JsonLines, Result};
 
 /// How long an event stream goes with nothing sent before it sends a comment, so that a proxy that closes a
@@ -57,8 +58,8 @@ impl<T: Serialize + 'static> Written for JsonLines<T> {
 ///
 /// The handler's error.
 pub fn events<E: IsEvents + Written>(result: Result<E>) -> Result<Response> {
-    let write = |value: &E::Item| {
-        let json = E::to_json(value).map_err(Error::internal)?;
+    let write = |value: E::Item| {
+        let json = E::to_json(&value).map_err(Error::internal)?;
 
         // Compact JSON holds no line break, so the data of the event is one line.
         Ok(Event::default().data(json))
@@ -89,8 +90,8 @@ pub fn events<E: IsEvents + Written>(result: Result<E>) -> Result<Response> {
 ///
 /// The handler's error.
 pub fn json_lines<L: IsJsonLines + Written>(result: Result<L>) -> Result<Response> {
-    let write = |value: &L::Item| {
-        let mut line = L::to_json(value).map_err(Error::internal)?;
+    let write = |value: L::Item| {
+        let mut line = L::to_json(&value).map_err(Error::internal)?;
 
         line.push('\n');
         Ok(line)
@@ -107,6 +108,41 @@ pub fn json_lines<L: IsJsonLines + Written>(result: Result<L>) -> Result<Respons
 
     Ok(unbuffered(
         (headers, Body::from_stream(lines)).into_response(),
+    ))
+}
+
+/// A 200 with the chunks of the handler's stream, each sent as it comes, of their content type, with
+/// `X-Content-Type-Options: nosniff` as a `Bytes` has it, `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
+///
+/// A chunk that fails once the 200 is sent is logged, and cuts the answer short, as JSON Lines are: the client reads
+/// an error rather than an end.
+///
+/// # Errors
+///
+/// The handler's error, or a 500 when the content type is not a media type.
+pub fn byte_stream<B: IsByteStream>(result: Result<B>) -> Result<Response> {
+    let (chunks, content_type) = result?.into_parts();
+    let content_type = media_type_value(content_type).map_err(|content_type| {
+        Error::internal(format!(
+            "the content type of a `ByteStream`, {content_type:?}, is not a media type"
+        ))
+    })?;
+    let chunks = sent(chunks, Ok, |error| {
+        logged(&error, "cut short");
+
+        Failed::Cut(error)
+    });
+    let headers = [
+        (header::CONTENT_TYPE, content_type),
+        (
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ),
+        (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
+    ];
+
+    Ok(unbuffered(
+        (headers, Body::from_stream(chunks)).into_response(),
     ))
 }
 
@@ -142,13 +178,13 @@ fn sent<T, W, F, E>(
 where
     T: 'static,
     W: Send + 'static,
-    F: Fn(&T) -> Result<W> + Send + 'static,
+    F: Fn(T) -> Result<W> + Send + 'static,
     E: Fn(Error) -> Failed<W> + Send + 'static,
 {
     stream::unfold(Some((items, write, failed)), |state| async move {
         let (mut items, write, failed) = state?;
         let written = match items.next().await? {
-            Ok(value) => write(&value),
+            Ok(value) => write(value),
             Err(error) => Err(error),
         };
 

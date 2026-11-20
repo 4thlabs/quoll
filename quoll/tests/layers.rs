@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
-use quoll::rest::{self, Authenticate, Bytes, Events, Form, JsonLines, Result, Text};
+use quoll::rest::{self, Authenticate, ByteStream, Bytes, Events, Form, JsonLines, Result, Text};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use schemars::JsonSchema;
@@ -44,6 +44,8 @@ rest::api! {
         GET  "/held/lines"  => held_lines() -> JsonLines<Note>;
         GET  "/late/events" => late_events() -> Events<Note>;
         GET  "/late/lines"  => late_lines() -> JsonLines<Note>;
+        GET  "/held/bytes"  => held_bytes() -> ByteStream;
+        GET  "/late/bytes"  => late_bytes() -> ByteStream;
         POST "/json"        => json(note: Note);
         POST "/form"        => form(note: Form<Note>);
         POST "/text"        => text(text: Text);
@@ -95,6 +97,11 @@ fn late() -> impl futures_util::Stream<Item = Note> + Send + 'static {
     }))
 }
 
+/// A chunk of text for `note`, longer than the 32 bytes under which nothing is compressed.
+fn text_of(note: Note) -> Vec<u8> {
+    format!("{note:?}\n").repeat(4).into_bytes()
+}
+
 impl LayersServer for App {
     async fn get(&self, id: i64) -> Result<Note> {
         Ok(note(id))
@@ -141,6 +148,14 @@ impl LayersServer for App {
 
     async fn late_lines(&self) -> Result<JsonLines<Note>> {
         Ok(JsonLines::new(late()))
+    }
+
+    async fn held_bytes(&self) -> Result<ByteStream> {
+        Ok(ByteStream::new(self.held().map(text_of)).with_content_type("text/plain"))
+    }
+
+    async fn late_bytes(&self) -> Result<ByteStream> {
+        Ok(ByteStream::new(late().map(text_of)))
     }
 
     async fn json(&self, _note: Note) -> Result<()> {
@@ -511,8 +526,17 @@ async fn a_stream_outlives_the_deadline() -> Result<()> {
         .collect()
         .await;
 
+    let bytes: Vec<u8> = api
+        .layers()
+        .late_bytes()
+        .await?
+        .map(|chunk| chunk.expect("a chunk"))
+        .concat()
+        .await;
+
     assert_eq!(events, [note(1), note(2)]);
     assert_eq!(lines, [note(1), note(2)]);
+    assert_eq!(bytes, [text_of(note(1)), text_of(note(2))].concat());
     Ok(())
 }
 
@@ -837,7 +861,7 @@ async fn a_stream_is_not_compressed_and_its_first_value_comes_at_once() -> Resul
     // Read raw from a service of its own, whose held streams no test releases.
     let (url, _) = serve(router(&App::default()).layer(quoll::server::compression())).await;
 
-    for path in ["/api/held/events", "/api/held/lines"] {
+    for path in ["/api/held/events", "/api/held/lines", "/api/held/bytes"] {
         let response = raw_client()
             .get(format!("{url}{path}"))
             .header("accept-encoding", "gzip, br, zstd")
@@ -870,5 +894,14 @@ async fn a_stream_is_not_compressed_and_its_first_value_comes_at_once() -> Resul
     assert_eq!(first.expect("a line")?, note(1));
     app.release.notify_one();
     assert_eq!(lines.next().await.expect("a line")?, note(2));
+
+    let mut bytes = api.layers().held_bytes().await?;
+    let first = tokio::time::timeout(guard, bytes.next())
+        .await
+        .expect("the first chunk comes");
+
+    assert_eq!(first.expect("a chunk")?, text_of(note(1)));
+    app.release.notify_one();
+    assert_eq!(bytes.next().await.expect("a chunk")?, text_of(note(2)));
     Ok(())
 }

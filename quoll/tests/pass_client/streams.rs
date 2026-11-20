@@ -1,5 +1,5 @@
 use futures_util::{StreamExt, stream};
-use quoll::rest::{self, Events, JsonLines, Result};
+use quoll::rest::{self, ByteStream, Events, JsonLines, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,7 @@ rest::api! {
     pub group Feeds {
         GET "/events" => events() -> Events<Change>;
         GET "/export" => export() -> JsonLines<Change>;
+        GET "/logs"   => logs() -> ByteStream;
     }
 }
 
@@ -31,6 +32,13 @@ async fn watch(feeds: &impl Feeds) -> Result<()> {
         println!("{:?}", line?);
     }
 
+    let mut logs = feeds.logs().await?;
+
+    println!("{}", logs.content_type());
+    while let Some(chunk) = logs.next().await {
+        println!("{}", String::from_utf8_lossy(&chunk?));
+    }
+
     Ok(())
 }
 
@@ -44,6 +52,10 @@ impl Feeds for Fake {
 
     async fn export(&self) -> Result<JsonLines<Change>> {
         Ok(JsonLines::new(stream::empty()))
+    }
+
+    async fn logs(&self) -> Result<ByteStream> {
+        Ok(ByteStream::new(stream::iter([b"a line\n".to_vec()])).with_content_type("text/plain"))
     }
 }
 

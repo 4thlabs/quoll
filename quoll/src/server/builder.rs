@@ -127,7 +127,7 @@ impl Builder {
     }
 
     /// Waits up to `grace`, once the server is told to stop, for the requests it serves to end, 5 s unless it is set:
-    /// a stream of `Events` or `JsonLines` may never end.
+    /// a stream of `Events`, `JsonLines` or `ByteStream` may never end.
     pub fn grace(mut self, grace: Duration) -> Self {
         self.grace = grace;
         self
