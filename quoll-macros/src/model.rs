@@ -929,12 +929,23 @@ impl Api {
         let mut groups: Vec<&Ident> = vec![&self.name];
         let mut fields: Vec<(String, &Ident)> = Vec::new();
 
-        // The groups of the list live in other modules, beside items of their own: their names meet the api's only in
-        // its fields, and in the names of its other groups.
+        let mut names = Names::new(self);
+
+        // A group of the list lives in its own module, beside items of its own: its name meets the api's in its fields
+        // and in the names of its other groups, and, for a group named alone, whose items are in the api's module, in
+        // the names of the items the api writes there too.
         for path in &self.listed {
             let name = Self::listed_name(path);
+            let alone = path.get_ident().is_some();
 
-            if let Some(first) = groups[1..].iter().find(|first| same_name(first, name)) {
+            if alone && same_name(&self.name, name) {
+                errors.push(Error::new(
+                    name.span(),
+                    format!(
+                        "the group `{name}` is the name of the api, and both become types: each one has its own name"
+                    ),
+                ));
+            } else if let Some(first) = groups[1..].iter().find(|first| same_name(first, name)) {
                 errors.push(Error::new(
                     name.span(),
                     format!(
@@ -952,12 +963,14 @@ impl Api {
                 if let Err(error) = check_field(&group, &fields) {
                     errors.push(error);
                 }
+                if alone && let Err(error) = names.add_group(&group) {
+                    errors.push(error);
+                }
             }
             groups.push(name);
             fields.push((snake_case(name), name));
         }
         let mut seen: Vec<Seen> = Vec::new();
-        let mut names = Names::new(self);
         let mut ids: Vec<(String, &Ident, &Ident)> = Vec::new();
 
         for scheme in &self.schemes {
@@ -1127,14 +1140,6 @@ impl Names {
 
         Ok(())
     }
-}
-
-/// A path as the contract writes it: `notes::Notes`.
-pub(crate) fn shown_path(path: &syn::Path) -> String {
-    quote::quote!(#path)
-        .to_string()
-        .replace(" :: ", "::")
-        .replace(":: ", "::")
 }
 
 /// How far a visibility reaches: private, a module's, the crate's, everyone's. `pub(super)` and `pub(in path)` are

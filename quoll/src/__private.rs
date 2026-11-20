@@ -26,28 +26,6 @@ pub mod server;
 #[cfg(feature = "client")]
 pub mod client;
 
-/// A route, as the unit tests of each side build one.
-#[cfg(all(test, any(feature = "server", feature = "client")))]
-pub(crate) const fn route(
-    operation_id: &'static str,
-    group: &'static str,
-    method: http::Method,
-    path: &'static str,
-    schemes: &'static [&'static str],
-    scheme_types: &'static [std::any::TypeId],
-    streams: bool,
-) -> crate::rest::Route {
-    crate::rest::Route {
-        operation_id,
-        group,
-        method,
-        path,
-        schemes,
-        scheme_types,
-        streams,
-    }
-}
-
 /// Writes out its input: `quoll` has the feature `server`.
 #[cfg(feature = "server")]
 #[doc(hidden)]

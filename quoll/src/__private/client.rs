@@ -689,19 +689,18 @@ fn read_problem(body: &[u8]) -> Option<Problem> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::__private::route;
     use http::Method;
     use reqwest::ResponseBuilderExt;
 
-    static ROUTE: Route = route(
-        "notes_get",
-        "Notes",
-        Method::GET,
-        "/api/notes/{id}",
-        &[],
-        &[],
-        false,
-    );
+    static ROUTE: Route = Route {
+        operation_id: "notes_get",
+        group: "Notes",
+        method: Method::GET,
+        path: "/api/notes/{id}",
+        schemes: &[],
+        scheme_types: &[],
+        streams: false,
+    };
 
     fn client(url: &str) -> Result<Client> {
         Client::new(url)

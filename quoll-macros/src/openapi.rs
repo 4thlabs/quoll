@@ -9,9 +9,7 @@ use syn::spanned::Spanned;
 use syn::{LitStr, Type, ext::IdentExt};
 
 use crate::descriptor::{Cx, below_prefix, descriptor_name};
-use crate::model::{
-    Api, DeclaredKind, Group, Param, ParamKind, Route, SchemeKind, is_vec, option_inner,
-};
+use crate::model::{Api, Group, Param, ParamKind, Route, SchemeKind, is_vec, option_inner};
 use crate::scheme::scheme_type;
 
 /// The document of a group, on its descriptor, unless it has none.
@@ -47,9 +45,8 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
     let checks = name_checks(api, &listed);
     let declared = api.schemes.iter().map(|scheme| {
         let name = &scheme.name;
-        let checks_origin = matches!(scheme.kind, DeclaredKind::Cookie(_));
 
-        scheme_ref(&quote! { #name }, checks_origin, name.span())
+        scheme_ref(&quote! { #name }, name.span())
     });
     let groups = api.refs().into_iter().map(|group| {
         let descriptor = group.descriptor();
@@ -78,6 +75,11 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
             /// The OpenAPI 3.1 document of the contract: its paths, parameters, bodies and results, the schemas of
             /// its types, its security schemes and the problem of its errors. Its title and its version are the
             /// contract crate's, as Cargo gives them; built otherwise, the api's name and `0.0.0`.
+            ///
+            /// # Panics
+            ///
+            /// When two schemes of different types have one `NAME`, which names a scheme in the document: the
+            /// macro refuses them within one block, and finds the schemes of the groups of other blocks only here.
             #vis fn openapi() -> ::quoll::rest::openapi::Document {
                 #checks
                 static API: ::quoll::__private::openapi::Api = ::quoll::__private::openapi::Api {
@@ -102,15 +104,21 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
     }
 }
 
-/// A scheme of type `ty`, as the document refers to it.
-fn scheme_ref(ty: &TokenStream, checks_origin: bool, span: Span) -> TokenStream {
+/// A scheme of type `ty`, as the document refers to it, which says itself whether it checks the origin of a request:
+/// a declared cookie scheme, through `quoll::__private::group::Probe`.
+fn scheme_ref(ty: &TokenStream, span: Span) -> TokenStream {
     quote_spanned! {span=>
-        ::quoll::__private::openapi::SchemeRef {
-            name: <#ty as ::quoll::rest::Scheme>::NAME,
-            openapi: <#ty as ::quoll::rest::Scheme>::openapi,
-            checks_origin: #checks_origin,
-            type_id: ::core::any::TypeId::of::<#ty>,
-            type_name: ::core::any::type_name::<#ty>,
+        {
+            #[allow(unused_imports)]
+            use ::quoll::__private::group::Unknown as _;
+
+            ::quoll::__private::openapi::SchemeRef {
+                name: <#ty as ::quoll::rest::Scheme>::NAME,
+                openapi: <#ty as ::quoll::rest::Scheme>::openapi,
+                checks_origin: <::quoll::__private::group::Probe<#ty>>::CHECKS_ORIGIN,
+                type_id: ::core::any::TypeId::of::<#ty>,
+                type_name: ::core::any::type_name::<#ty>,
+            }
         }
     }
 }
@@ -293,7 +301,7 @@ fn route_description(group: &Group, route: &Route) -> TokenStream {
             let schemes = auth
                 .schemes
                 .iter()
-                .map(|scheme| scheme_ref(&scheme_type(scheme), false, scheme.span()));
+                .map(|scheme| scheme_ref(&scheme_type(scheme), scheme.span()));
 
             quote! {
                 ::core::option::Option::Some(::quoll::__private::openapi::Auth {
@@ -485,7 +493,7 @@ mod tests {
 
     #[test]
     fn only_a_declared_cookie_scheme_checks_the_origin() {
-        let tokens = expansion(quote! {
+        let tokens = whole(quote! {
             pub api Api = "/api";
 
             pub scheme Session = cookie "session";
@@ -497,21 +505,29 @@ mod tests {
             }
         });
 
+        // The scheme says it, by its type: the declared cookie alone.
         assert_eq!(
-            tokens.matches("checks_origin : true").count(),
+            tokens.matches("const CHECKS_ORIGIN : bool = true").count(),
             1,
             "{tokens}"
         );
-        // The declared schemes alone: a route's scheme is found among them by its name.
         assert_eq!(
-            tokens.matches("checks_origin : false").count(),
+            tokens.matches("const CHECKS_ORIGIN : bool = false").count(),
             1,
             "{tokens}"
         );
         assert!(
-            tokens.find("checks_origin : true") < tokens.find("TypeId :: of :: < Key >"),
+            tokens.find("const CHECKS_ORIGIN : bool = true")
+                < tokens.find("impl :: quoll :: __private :: auth :: Declared for Key"),
             "the first is the cookie's: {tokens}"
         );
+        for scheme in ["Session", "Key", "crate :: Crumb"] {
+            let probe = format!(
+                "checks_origin : < :: quoll :: __private :: group :: Probe < {scheme} >> :: CHECKS_ORIGIN"
+            );
+
+            assert!(tokens.contains(&probe), "{probe} in {tokens}");
+        }
     }
 
     #[test]

@@ -3,10 +3,11 @@
 //! and the checks an api makes, at compile time too, of the routes of a group it lists, which the macro does not see.
 
 use std::any::TypeId;
+use std::marker::PhantomData;
 
 use http::Method;
 
-use crate::__private::auth::Place;
+use crate::__private::auth::{Declared, Place};
 use crate::rest::Route;
 
 /// A group, as the descriptor `rest::group!` writes for it describes it: the type `__QuollGroupNotes` of the group
@@ -14,7 +15,7 @@ use crate::rest::Route;
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a group of a contract",
     label = "not a group",
-    note = "an api lists the groups that `rest::group!` writes, by their path: `pub api Api = \"/api\" {{ notes::Notes }};`"
+    note = "an api lists the groups that `rest::group!` writes, by their path, `pub api Api = \"/api\" {{ notes::Notes }};`, or by their name alone where a glob import, `use notes::*;`, brings the items of the group"
 )]
 pub trait Group: 'static {
     /// What the group is.
@@ -53,9 +54,48 @@ pub struct RouteInfo {
     pub schemes: &'static [&'static str],
     /// The types of the same schemes.
     pub scheme_types: &'static [TypeId],
+    /// What each of the same schemes says of itself to the api's checks.
+    pub scheme_infos: &'static [SchemeInfo],
     /// Whether its result is a stream.
     pub streams: bool,
 }
+
+/// A scheme a route takes, as its type says: where its credential travels, when the macro knows it, and, for a scheme
+/// a contract declares, how far its visibility reaches.
+#[derive(Debug, Clone, Copy)]
+pub struct SchemeInfo {
+    /// Where its credential travels: the crate's `Bearer` and `Basic`, and the declared schemes.
+    pub reads: Option<Reads>,
+    /// How far a declared scheme's visibility reaches.
+    pub reach: Option<u8>,
+}
+
+/// What a scheme says of itself at compile time, by its type: a declared scheme, which implements
+/// [`Declared`], through the inherent constants of `Probe<S>`; any other through those of [`Unknown`], which the
+/// generated code imports beside it.
+#[derive(Debug)]
+pub struct Probe<S: ?Sized>(PhantomData<S>);
+
+impl<S: Declared> Probe<S> {
+    /// Where its credential travels.
+    pub const READS: Option<Reads> = Some(Reads::of(S::PLACE));
+    /// How far its visibility reaches.
+    pub const REACH: Option<u8> = Some(S::REACH);
+    /// Whether it refuses a request from another origin that changes things.
+    pub const CHECKS_ORIGIN: bool = S::CHECKS_ORIGIN;
+}
+
+/// What a scheme that the contract does not declare says of itself: nothing.
+pub trait Unknown {
+    /// Where its credential travels: unknown.
+    const READS: Option<Reads> = None;
+    /// How far its visibility reaches: not checked.
+    const REACH: Option<u8> = None;
+    /// Whether it refuses a request from another origin: not by quoll.
+    const CHECKS_ORIGIN: bool = false;
+}
+
+impl<S: ?Sized> Unknown for Probe<S> {}
 
 /// A method of a route, which can be copied at compile time, unlike `http::Method`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,6 +273,9 @@ macro_rules! __table {
 
 pub use crate::__table as table;
 
+/// Checks, at compile time, that `G` is a group: the descriptor of a group an api lists.
+pub const fn is_group<G: Group>() {}
+
 /// The api that lists groups, as its checks see it.
 #[derive(Debug)]
 pub struct ApiInfo {
@@ -244,19 +287,6 @@ pub struct ApiInfo {
     pub reach: u8,
     /// Its visibility as the contract writes it, `pub`.
     pub vis: &'static str,
-    /// The schemes it declares.
-    pub schemes: &'static [DeclaredInfo],
-}
-
-/// A scheme an api declares.
-#[derive(Debug)]
-pub struct DeclaredInfo {
-    /// Its name, `Key`, which is its `NAME`.
-    pub name: &'static str,
-    /// Where its credential travels.
-    pub place: Place,
-    /// How far its visibility reaches.
-    pub reach: u8,
 }
 
 /// Checks, at compile time, a group an api lists against the api and the groups before it: the message of the first
@@ -287,7 +317,7 @@ pub const fn check(api: &ApiInfo, earlier: &[&GroupInfo], group: &GroupInfo) -> 
     while i < group.routes.len() {
         let route = &group.routes[i];
 
-        if let Some(error) = check_schemes(api, group, route) {
+        if let Some(error) = check_schemes(group, route) {
             return Some(error);
         }
 
@@ -383,10 +413,9 @@ const fn check_pair(
     None
 }
 
-/// Where a scheme's credential travels, for the schemes the api knows by their name: the crate's and its declared
-/// ones.
-#[derive(Clone, Copy)]
-enum Reads {
+/// Where a scheme's credential travels, for the schemes the macro knows: the crate's and the declared ones.
+#[derive(Debug, Clone, Copy)]
+pub enum Reads {
     /// `Authorization`, with the scheme of its value.
     Authorization(&'static str),
     /// A header, lowercase.
@@ -398,6 +427,16 @@ enum Reads {
 }
 
 impl Reads {
+    /// Where the credential of a declared scheme travels.
+    const fn of(place: Place) -> Self {
+        match place {
+            Place::Header(header) => Self::Header(header),
+            Place::Cookie(cookie) => Self::Cookie(cookie),
+            Place::Query(key) => Self::Query(key),
+            Place::Bearer => Self::Authorization("Bearer"),
+        }
+    }
+
     /// Whether two schemes reading these places read one credential.
     const fn same(self, other: Self) -> bool {
         match (self, other) {
@@ -423,48 +462,17 @@ impl Reads {
     }
 }
 
-/// The declared scheme of the api named `name`, with where its credential travels, or the crate's `Bearer` or `Basic`.
-const fn reads(api: &ApiInfo, name: &str) -> Option<(Option<&'static DeclaredInfo>, Reads)> {
+/// Checks the schemes of a route of `group` the macro of the group did not know, by what their types say: a declared
+/// one as visible as the group, each reading another place than the other schemes of the route and than its
+/// arguments.
+const fn check_schemes(group: &GroupInfo, route: &RouteInfo) -> Option<Message> {
     let mut i = 0;
-    while i < api.schemes.len() {
-        let scheme = &api.schemes[i];
-
-        if same(scheme.name, name) {
-            let place = match scheme.place {
-                Place::Header(header) => Reads::Header(header),
-                Place::Cookie(cookie) => Reads::Cookie(cookie),
-                Place::Query(key) => Reads::Query(key),
-                Place::Bearer => Reads::Authorization("Bearer"),
-            };
-
-            return Some((Some(scheme), place));
-        }
-        i += 1;
-    }
-
-    if same(name, "Bearer") {
-        return Some((None, Reads::Authorization("Bearer")));
-    }
-    if same(name, "Basic") {
-        return Some((None, Reads::Authorization("Basic")));
-    }
-
-    None
-}
-
-/// Checks the schemes of a route of `group` that the api declares, which the group's macro did not know: as visible
-/// as the group, reading another place than the other schemes of the route and than its arguments.
-const fn check_schemes(api: &ApiInfo, group: &GroupInfo, route: &RouteInfo) -> Option<Message> {
-    let mut i = 0;
-    while i < route.schemes.len() {
+    while i < route.scheme_infos.len() {
         let name = route.schemes[i];
-        let Some((declared, place)) = reads(api, name) else {
-            i += 1;
-            continue;
-        };
+        let info = route.scheme_infos[i];
 
-        if let Some(declared) = declared
-            && declared.reach < group.reach
+        if let Some(reach) = info.reach
+            && reach < group.reach
         {
             return Some(
                 Message::new()
@@ -480,9 +488,14 @@ const fn check_schemes(api: &ApiInfo, group: &GroupInfo, route: &RouteInfo) -> O
             );
         }
 
+        let Some(place) = info.reads else {
+            i += 1;
+            continue;
+        };
+
         let mut j = 0;
         while j < i {
-            if let Some((_, first)) = reads(api, route.schemes[j])
+            if let Some(first) = route.scheme_infos[j].reads
                 && first.same(place)
             {
                 let message = Message::new()
@@ -731,6 +744,7 @@ mod tests {
             query: &[],
             schemes: &[],
             scheme_types: &[],
+            scheme_infos: &[],
             streams: false,
         },
         RouteInfo {
@@ -742,6 +756,10 @@ mod tests {
             query: &[],
             schemes: &["Bearer"],
             scheme_types: &[],
+            scheme_infos: &[SchemeInfo {
+                reads: Some(Reads::Authorization("Bearer")),
+                reach: None,
+            }],
             streams: true,
         },
     ];
