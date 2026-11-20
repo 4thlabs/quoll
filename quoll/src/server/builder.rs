@@ -62,8 +62,9 @@ pub fn builder() -> Builder {
     Builder::default()
 }
 
-/// Serves a router, as `Api::router` gives it, with tower layers around it, the layers of quoll put in the order they
-/// work in, and stops when it is told to.
+/// Serves a router with tower layers around it, until it is told to stop.
+///
+/// The router is the one `Api::router` gives, and the layers of quoll are put in the order they work in.
 ///
 /// The layers run in the order they are given, the first seeing the request first and the answer last, which is the
 /// reverse of the order of `Router::layer`, except the layers of quoll, which take their places among themselves in
@@ -118,6 +119,33 @@ impl Builder {
 
     /// Stops the server when `signal` ends, in the place of Ctrl-C and `SIGTERM`: a test's channel, or
     /// `std::future::pending()` for a server that is never stopped.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use quoll::server;
+    /// use tokio::sync::oneshot;
+    ///
+    /// # fn api_router() -> axum::Router { axum::Router::new() }
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> std::io::Result<()> {
+    /// let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    /// let (stop, stopped) = oneshot::channel::<()>();
+    ///
+    /// let served = tokio::spawn(
+    ///     server::builder()
+    ///         .shutdown(async move {
+    ///             let _ = stopped.await;
+    ///         })
+    ///         .grace(Duration::from_secs(1))
+    ///         .serve_on(listener, api_router()),
+    /// );
+    ///
+    /// stop.send(()).unwrap();
+    /// served.await.unwrap()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn shutdown<F>(mut self, signal: F) -> Self
     where
         F: Future<Output = ()> + Send + 'static,

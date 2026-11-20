@@ -21,10 +21,12 @@ const SHORTEST: Duration = Duration::from_millis(100);
 /// The bound of the wait before an attempt, once it has doubled enough.
 const LONGEST: Duration = Duration::from_secs(10);
 
-/// Tries a call again, up to `times` more, after a failure that may pass: no response, the connection refused, reset
-/// or cut, a deadline of [`timeout`](super::timeout) passed before the answer began, or an answer 502, 503 or 504. The
-/// wait before each attempt is drawn at random between 50 ms and a bound that doubles after each, from 100 ms to 10 s
-/// at most, so that clients do not all come back at once.
+/// Tries a call again, up to `times` more, after a failure that may pass.
+///
+/// A failure that may pass is no response, the connection refused, reset or cut, a deadline of
+/// [`timeout`](super::timeout) passed before the answer began, or an answer 502, 503 or 504. The wait before each
+/// attempt is drawn at random between 50 ms and a bound that doubles after each, from 100 ms to 10 s at most, so that
+/// clients do not all come back at once.
 ///
 /// It tries again the methods that may be sent twice with the effect of once, `GET`, `HEAD`, `PUT` and `DELETE`, and
 /// sends any other once: a `POST` may have been done before its connection was cut. A request whose body cannot be

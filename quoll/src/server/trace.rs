@@ -39,10 +39,12 @@ pub(crate) fn record_request_id(extensions: &Extensions, id: &RequestId) {
     }
 }
 
-/// A tracing span per request, on tower-http's `Trace`: `request`, at the level `INFO`, with the request's `method`,
-/// its `path` without the query, which may hold a credential, the `operation` of its route, `notes_get`, and its
-/// `request_id` when [`request_id`] gives it one. What a handler logs, and what the crate logs of an error, an item of a
-/// stream that fails included, is logged in it.
+/// A tracing span per request, and a line per answer.
+///
+/// It is built on tower-http's `Trace`. The span is `request`, at the level `INFO`, with the request's `method`, its
+/// `path` without the query, which may hold a credential, the `operation` of its route, `notes_get`, and its
+/// `request_id` when [`request_id`] gives it one. What a handler logs, and what the crate logs of an error, an item of a stream that
+/// fails included, is logged in it.
 ///
 /// Each answer is logged once, `answered` with its `status` and its `latency`: at `INFO`, and at `ERROR` for a 5xx
 /// the crate has not logged already. An `Error::internal`, an error of another API, a [`timeout`] are logged by the

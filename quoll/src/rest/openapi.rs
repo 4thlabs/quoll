@@ -1,6 +1,6 @@
 //! The OpenAPI 3.1 document of a contract, which `Api::openapi()` returns, and the security schemes it describes.
 //!
-//! The document holds the api's paths, under its prefix, with their parameters, bodies and results; the schemas of
+//! The [`Document`] holds the api's paths, under its prefix, with their parameters, bodies and results; the schemas of
 //! the contract's types, from schemars; the security schemes and each route's requirements; and the RFC 9457 problem
 //! that errors answer. Each type a contract names implements `schemars::JsonSchema`, whatever the features of
 //! `quoll`: a type that does not fails to compile on the contract.
@@ -24,14 +24,15 @@
 //!   `null`. The key of a query scheme is the credential, which the security describes, never a parameter.
 //! - **Bodies**: JSON, a form, `text/plain`, or `application/octet-stream` for `Bytes`, which accept any media type but
 //!   the three a browser sends to another site without asking.
-//! - **Results**: 200, 201 with an optional `Location`, 202 or 204; `Bytes` as `*/*`. A stream result,
-//!   `text/event-stream` or `application/jsonl`, carries the schema of its items in the extension `x-item`.
+//! - **Results**: 200, 201 with an optional `Location`, 202 or 204; `Bytes` as `*/*`, and `ByteStream` too, whose
+//!   description says it streams. An `Events` or a `JsonLines` result, `text/event-stream` or `application/jsonl`,
+//!   carries the schema of its items in the extension `x-item`.
 //! - **Errors**: each route lists the statuses quoll answers itself, 400 when it reads an argument, 401 when it takes a
 //!   credential, 403 when it needs scopes or takes a cookie scheme the contract declares, which refuses another
 //!   origin, on a method that changes things, 415 when it reads a body, and `default` for any other, each an
 //!   `application/problem+json` problem.
 //! - **Security**: each scheme under `components/securitySchemes`, by its [`NAME`](crate::rest::Scheme::NAME), as its
-//!   [`openapi`](crate::rest::Scheme::openapi) describes it. A route takes any of its schemes, each with its scopes,
+//!   [`openapi`](crate::rest::Scheme::openapi) describes it, with a [`SecurityScheme`]. A route takes any of its schemes, each with its scopes,
 //!   and an empty requirement when its credential is optional.
 //! - **`info`**: the title and the version of the contract's crate, unless [`Document::with_title`] and
 //!   [`Document::with_version`] say others; for a crate built without Cargo, which gives neither, the api's name and
@@ -40,8 +41,9 @@
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serde_json::Value;
 
-/// The OpenAPI 3.1 document of a contract, from `Api::openapi()`, which a binary of the contract's crate prints for
-/// the generators of TypeScript:
+/// The OpenAPI 3.1 document of a contract, from `Api::openapi()`.
+///
+/// A binary of the contract's crate prints it for the generators of TypeScript:
 ///
 /// ```
 /// use quoll::rest;
@@ -89,6 +91,24 @@ impl Document {
     }
 
     /// The document with `version` as its `info.version`, which is the version of the contract's crate otherwise.
+    ///
+    /// ```
+    /// use quoll::rest;
+    ///
+    /// rest::api! {
+    ///     pub api Api = "/api";
+    ///
+    ///     pub group Health {
+    ///         GET "/health" => check() -> String;
+    ///     }
+    /// }
+    ///
+    /// let document = Api::openapi().with_title("Notes").with_version("2.1.0");
+    /// let json: serde_json::Value = serde_json::from_str(&document.to_json()).unwrap();
+    ///
+    /// assert_eq!(json["info"]["title"], "Notes");
+    /// assert_eq!(json["info"]["version"], "2.1.0");
+    /// ```
     #[must_use]
     pub fn with_version(self, version: impl Into<String>) -> Self {
         self.with_info("version", version.into())

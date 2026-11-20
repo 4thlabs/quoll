@@ -4,9 +4,11 @@
 use axum::Router;
 use tokio::net::TcpListener;
 
-/// Serves `router` on a free port of 127.0.0.1, and gives its base URL, `http://127.0.0.1:<port>`, with no final
-/// slash: what `Api::client` and `client::Builder::build` take. A router with the layers of a `server::Builder` is the
-/// one its `into_router` gives.
+/// Serves `router` on a free port of 127.0.0.1, and gives its base URL.
+///
+/// The URL is `http://127.0.0.1:<port>`, with no final slash: what `Api::client` and `client::builder()`'s
+/// `build::<Api>` take. A router with the layers of a [`server::Builder`](crate::server::Builder) is the one its
+/// [`into_router`](crate::server::Builder::into_router) gives.
 ///
 /// The server runs on a task of the tokio runtime it is called from, and lives as long as that runtime: to the end of
 /// the test, as `#[tokio::test]` gives each test a runtime of its own, which stops the server when the test returns.

@@ -16,10 +16,11 @@ use super::{Helper, Rank};
 use crate::__private::client::redacted;
 use crate::rest::Route;
 
-/// Opens a tracing span around each call, `HTTP request`, with the fields of OpenTelemetry's conventions, as
-/// reqwest-tracing writes them: `otel.name` is the operation id, `notes_get`, which an OpenTelemetry layer names the
-/// span by, and `operation_id` and `group` say it too. A request that did not come from the client of a contract is
-/// named by its method.
+/// Opens a tracing span around each call, named by its operation.
+///
+/// The span is `HTTP request`, with the fields of OpenTelemetry's conventions, as reqwest-tracing writes them:
+/// `otel.name` is the operation id, `notes_get`, which an OpenTelemetry layer names the span by, and `operation_id` and
+/// `group` say it too. A request that did not come from the client of a contract is named by its method.
 ///
 /// The span records the status of the answer, or the error of a call that got none. It holds no URL with its query,
 /// which may hold a credential: the error's message, which reqwest writes with the URL, shows its origin and its path

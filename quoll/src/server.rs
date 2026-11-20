@@ -1,8 +1,20 @@
-//! The server a contract becomes: a [`Builder`] that serves the router `Api::router` gives, until it is told to stop,
-//! and the usual tower layers, each answering RFC 9457 problems as handlers do, where tower-http's answer plain text.
+//! The server of a contract: [`builder()`], which serves the router `Api::router` gives until it is told to stop,
+//! and the usual tower layers.
 //!
-//! The builder puts the layers of quoll in the order they work in, whatever the order they are given in, and any other
-//! tower layer where it is given, the first given the outermost:
+//! | Layer             | What it does                                                                             |
+//! | ----------------- | ---------------------------------------------------------------------------------------- |
+//! | [`request_id()`]  | keeps the caller's `X-Request-Id` or makes one, which a handler reads with [`RequestId`] |
+//! | [`trace()`]       | a tracing span per request, and a line per answer                                        |
+//! | [`cors()`]        | CORS for the pages of the origins it is given                                            |
+//! | [`compression()`] | answers compressed as the caller accepts, streams aside                                  |
+//! | [`timeout()`]     | a deadline on each route, answered 503                                                   |
+//! | [`body_limit()`]  | the largest body a route reads, answered 413 past it                                     |
+//!
+//! Each answers an RFC 9457 problem, as handlers do, where tower-http's answer plain text. Each returns a type of
+//! [`layer`], which an application does not name. Any other tower layer applies as is.
+//!
+//! The [`Builder`] puts the layers of quoll in the order they work in, whatever the order they are given in, and any
+//! other tower layer where it is given, the first given the outermost:
 //!
 //! ```no_run
 //! use std::time::Duration;
@@ -26,20 +38,18 @@
 //! and every answer, a 503 of the deadline or a 413 of the limit too, is traced and carries the id.
 //!
 //! Each helper gives a layer for `Router::layer` too, which runs the last layer added first: there, the layers are
-//! added from the innermost to the outermost, `body_limit`, `timeout`, `trace`, then `request_id`. In another order
-//! each layer still does its work, but:
+//! added from the innermost to the outermost, `body_limit`, `timeout`, `compression`, `cors`, `trace`, then
+//! `request_id`. In another order each layer still does its work, but:
 //!
 //! - with `trace` outside `request_id`, the span gets the id from `request_id` when it runs, and nothing is lost;
 //! - an answer a layer outside `request_id` makes, a 503 of `timeout` or a 413 of `body_limit`, carries no id;
 //! - with `timeout` outside `trace`, a request past its deadline has its span dropped with the route's future: its
 //!   503 is not traced, and the line `timeout` logs has none of the span's fields;
 //! - an early 413 of `body_limit` outside `trace` is not traced;
-//! - an answer a layer inside `cors` makes carries no header of CORS, and a page of another origin cannot read it.
+//! - an answer a layer outside `cors` makes carries no header of CORS, and a page of another origin cannot read it.
 //!
-//! The router puts the [`Route`](crate::rest::Route) a request called in the extensions of its answer, where a layer
-//! of the application's reads it, to count the answers of each operation. An answer no route made carries none: axum's
-//! 404 and 405, and the answers of the layers, a 503 of `timeout` and an early 413 of `body_limit`, which come before
-//! the route or instead of it. Any other tower layer applies as is.
+//! The answer of each route carries its [`Route`](crate::rest::Route), which a layer of the application's reads, to
+//! count the answers of each operation.
 
 pub(crate) mod body_limit;
 mod builder;

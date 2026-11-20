@@ -12,19 +12,20 @@ use reqwest_middleware::{Middleware, Next};
 use super::request::HeadDeadline;
 use super::{Failure, Rank, helper};
 
-/// Follows up to `hops` redirects of each call, each hop sent through the middleware added after it, on a reqwest
-/// client that follows none, `redirect(Policy::none())`: reqwest's own policy follows them below every middleware,
-/// with the headers of the first request, which `key` and `on_request` may have added. A [`Builder`](super::Builder)
-/// given `redirects` builds its reqwest client so, and adds `redirects(10)` itself when it is given a credential and no
-/// `redirects`.
+/// Follows up to `hops` redirects of each call, each hop sent through the middleware added after it.
 ///
-/// It comes before every middleware that adds a credential, where a `Builder` puts it, so that they run on each hop
-/// and send nothing to another origin: [`bearer`](super::bearer), [`bearer_from`](super::bearer_from),
-/// [`basic`](super::basic), [`key`](super::key) and [`on_request`](super::on_request) act on the api's own origin
-/// only. A hop is a copy of the
-/// request `redirects` got, with what the middleware before it added: to another origin, it leaves out the headers
-/// that carry a credential, `Authorization`, `Cookie` and `Proxy-Authorization`, and every header marked sensitive,
-/// but keeps any other, so that a header of a credential added before it is to be marked sensitive.
+/// It works on a reqwest client that follows none, `redirect(Policy::none())`: reqwest's own policy follows them below
+/// every middleware, with the headers of the first request, which `key` and `on_request` may have added. A
+/// [`Builder`](super::Builder) given `redirects` builds its reqwest client so, and adds `redirects(10)` itself when it
+/// is given a credential and no `redirects`.
+///
+/// It comes before every middleware that adds a credential, where a `Builder` puts it, so that they run on each hop and
+/// send nothing to another origin: [`bearer`](super::bearer), [`bearer_from`](super::bearer_from),
+/// [`basic`](super::basic), [`key`](super::key) and [`on_request`](super::on_request) act on the api's own origin only.
+/// A hop is a copy of the request `redirects` got, with what the middleware before it added: to another origin, it
+/// leaves out the headers that carry a credential, `Authorization`, `Cookie` and `Proxy-Authorization`, and every
+/// header marked sensitive, but keeps any other, so that a header of a credential added before it is to be marked
+/// sensitive.
 ///
 /// - 301, 302 and 303 are followed with a `GET`, a `HEAD` staying one, and without the body, as browsers do;
 /// - 307 and 308 with the method and the body, when the body can be sent twice, which a route's always can; else the

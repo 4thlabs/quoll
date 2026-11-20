@@ -18,8 +18,10 @@ use crate::rest::Route;
 /// The header of [`request_id`].
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
-/// Calls `change` on each request of a contract to its api's own origin, with its [`Route`], before it leaves: what an
-/// interceptor does elsewhere, as a header computed from the request.
+/// Calls `change` on each request of a contract to its api's own origin, before it leaves.
+///
+/// It is given the request and its [`Route`]: what an interceptor does elsewhere, as a header computed from the
+/// request.
 ///
 /// A request with no `Route`, one that did not come from the client of a contract, and a hop of
 /// [`redirects`](super::redirects) to another origin, go as they are: what `change` adds may be a credential, as the
@@ -96,8 +98,7 @@ pub fn user_agent(name: impl Into<String>) -> impl Middleware {
 ///
 /// The middleware after it see the request with its id: before [`retry`](super::retry), where a
 /// [`Builder`](super::Builder) puts it, it gives every attempt of a call the same id, and after it, each attempt its
-/// own. A route that sends an `X-Request-Id` of its own
-/// keeps it.
+/// own. A route that sends an `X-Request-Id` of its own keeps it.
 ///
 /// ```no_run
 /// # use quoll::{client, rest};
@@ -121,19 +122,20 @@ pub fn request_id() -> impl Middleware {
     })
 }
 
-/// Gives each attempt of a call, and each hop of its redirects, a deadline of `duration`, from when it is sent to the
-/// end of its answer's body, as reqwest's own `timeout` does, whatever the place of `timeout` among the middleware:
-/// it is a field of the request, which [`retry`](super::retry) and [`redirects`](super::redirects) copy. An attempt
-/// that misses it fails with an error with no status.
+/// Gives each attempt of a call, and each hop of its redirects, a deadline of `duration`.
+///
+/// The deadline runs from when the attempt is sent to the end of its answer's body, as reqwest's own `timeout` does,
+/// whatever the place of `timeout` among the middleware: it is a field of the request, which [`retry`](super::retry)
+/// and [`redirects`](super::redirects) copy. An attempt that misses it fails with an error with no status.
 ///
 /// `retry` tries again an attempt whose answer has not begun by then, but not one whose body is too slow: the body is
 /// read once the middleware have returned the answer, past what they see.
 ///
-/// A route whose result is a stream, `Events`, `JsonLines` or `ByteStream`, has a deadline for the head of its answer alone, its
-/// status and headers: its body lasts as long as the server sends it, which a deadline would cut. That deadline
-/// bounds the middleware after `timeout`, each attempt when it comes after `retry`, and starts again on each hop of
-/// `redirects`; it is an error with no status that `retry` tries again. A request that did not come from the client
-/// of a contract has a deadline, its body included.
+/// A route whose result is a stream, `Events`, `JsonLines` or `ByteStream`, has a deadline for the head of its answer
+/// alone, its status and headers: its body lasts as long as the server sends it, which a deadline would cut. That
+/// deadline bounds the middleware after `timeout`, each attempt when it comes after `retry`, and starts again on each
+/// hop of `redirects`; it is an error with no status that `retry` tries again. A request that did not come from the
+/// client of a contract has a deadline, its body included.
 ///
 /// ```no_run
 /// # use std::time::Duration;

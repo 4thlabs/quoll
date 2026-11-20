@@ -47,7 +47,9 @@ pub fn builder() -> Builder {
 }
 
 /// Builds the client of a contract, or a `ClientWithMiddleware`, from middleware and the settings of reqwest's
-/// client: what `reqwest_middleware::ClientBuilder` does, with the helpers of quoll put in the order they work in.
+/// client.
+///
+/// It does what `reqwest_middleware::ClientBuilder` does, with the helpers of quoll put in the order they work in.
 ///
 /// The middleware run in the order they are given, the first seeing the request first and the answer last, except
 /// the helpers of quoll, which take their places among themselves in this order, whatever the order they are given

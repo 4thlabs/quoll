@@ -14,12 +14,13 @@ use super::layer::ResponseFuture;
 use crate::__private::server::Logged;
 use crate::rest::Error;
 
-/// A deadline on each request: a route that has not answered within `duration` answers 503, with a problem whose
-/// detail says the deadline, and the crate logs it once, at `ERROR`.
+/// A deadline on each request: a route that has not answered within `duration` answers 503.
 ///
-/// It bounds the route's future, which reads the body, calls the handler and ends with the head of its answer, and
-/// not the answer's body: an `Events`, a `JsonLines` or a `ByteStream`, whose handler returns as soon as it has the
-/// stream, goes on past it. The handler's future is dropped at the deadline, so that its work stops at its next `.await`.
+/// The detail of its problem says the deadline, and the crate logs it once, at `ERROR`.
+///
+/// It bounds the route's future, which reads the body, calls the handler and ends with the head of its answer, and not
+/// the answer's body: an `Events`, a `JsonLines` or a `ByteStream`, whose handler returns as soon as it has the stream,
+/// goes on past it. The handler's future is dropped at the deadline, so that its work stops at its next `.await`.
 ///
 /// ```
 /// use std::time::Duration;

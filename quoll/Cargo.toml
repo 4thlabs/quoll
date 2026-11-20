@@ -8,6 +8,11 @@ repository.workspace = true
 # The official schema of OpenAPI 3.1, under the Apache License 2.0, which only the tests read.
 exclude = ["tests/openapi/"]
 
+# The docs of both sides, each item marked with the feature it needs.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 # Each side of a contract compiles only with its feature, so that a command line
 # never links axum, nor a server reqwest.
