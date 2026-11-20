@@ -18,6 +18,9 @@ Quoll is a Rust library, edition 2024, built with the latest stable Rust. The ru
 ## Crates and modules
 
 - One subject per module, in `name.rs`, with its submodules in `name/`. There is no `mod.rs`.
+- `lib.rs` holds the crate's docs, its modules and what it re-exports; the code lives in the modules. A proc-macro
+  crate keeps its `#[proc_macro]` entry points there too, as Rust requires. `main.rs` holds `main`, which calls the
+  rest.
 - What users name is re-exported where they look for it: `quoll::rest::Error`, not `quoll::rest::error::Error`.
   Everything else is `pub(crate)` or private.
 - Features are additive and off by default: `server` adds axum, `client` adds reqwest. Code behind a feature carries
