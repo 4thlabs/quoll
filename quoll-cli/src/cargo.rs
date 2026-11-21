@@ -2,6 +2,7 @@
 
 use std::env;
 use std::ffi::OsString;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -25,7 +26,6 @@ pub(crate) struct Workspace {
 #[derive(Debug, Deserialize)]
 pub(crate) struct Package {
     pub(crate) name: String,
-    pub(crate) id: String,
     manifest_path: PathBuf,
     targets: Vec<Target>,
     #[serde(default)]
@@ -74,6 +74,11 @@ impl Package {
             (Some(binary), None) => Some(binary),
             _ => None,
         }
+    }
+
+    /// Whether the package's manifest is `manifest`.
+    pub(crate) fn has_manifest(&self, manifest: &Path) -> bool {
+        self.manifest_path == manifest
     }
 
     /// The directory of the package, where its `Cargo.toml` is.
@@ -129,6 +134,47 @@ impl Workspace {
             packages: metadata.packages,
             config,
         })
+    }
+
+    /// The path dependencies of the package whose directory is `dir`, outside the workspace, read through `cargo
+    /// metadata` on its own manifest: those of a package of the workspace are in its metadata already.
+    pub(crate) fn path_dependencies_of(dir: &Path) -> Result<Vec<PathBuf>> {
+        let manifest = dir.join("Cargo.toml");
+        let output = cargo()
+            .args([
+                "metadata",
+                "--format-version",
+                "1",
+                "--no-deps",
+                "--manifest-path",
+            ])
+            .arg(&manifest)
+            .stderr(Stdio::null())
+            .output()
+            .context("cannot run `cargo metadata`")?;
+
+        if !output.status.success() {
+            bail!(
+                "`cargo metadata` failed on {}, {}",
+                manifest.display(),
+                output.status
+            );
+        }
+
+        let metadata: Metadata = serde_json::from_slice(&output.stdout)
+            .context("cannot read the output of `cargo metadata`")?;
+        let canonical = fs::canonicalize(&manifest).unwrap_or(manifest);
+        let package = metadata
+            .packages
+            .iter()
+            .find(|package| {
+                fs::canonicalize(&package.manifest_path).is_ok_and(|path| path == canonical)
+            })
+            .with_context(|| {
+                format!("`cargo metadata` does not describe {}", canonical.display())
+            })?;
+
+        Ok(package.path_dependencies().map(Path::to_path_buf).collect())
     }
 
     /// The package of the workspace named `name`, which the config has checked is there.
@@ -198,13 +244,17 @@ pub(crate) enum Message {
     Artifact(Artifact),
     /// A message of the compiler: an error, a warning.
     Diagnostic(CompilerMessage),
+    /// A build script run, with the directories of the native libraries it links.
+    BuildScript(BuildScript),
     /// Any other message.
     Other,
 }
 
+/// A package is told by its manifest, not by its id, which holds its version: a version changed while `cargo quoll
+/// dev` runs is the same package.
 #[derive(Debug, Deserialize)]
 pub(crate) struct Artifact {
-    package_id: String,
+    manifest_path: PathBuf,
     target: Target,
     pub(crate) executable: Option<PathBuf>,
 }
@@ -212,7 +262,7 @@ pub(crate) struct Artifact {
 impl Artifact {
     /// Whether the artifact is the binary `bin` of `package`.
     pub(crate) fn is_binary(&self, package: &Package, bin: &str) -> bool {
-        self.package_id == package.id
+        self.manifest_path == package.manifest_path
             && self.target.name == bin
             && self.target.kind.iter().any(|kind| kind == "bin")
     }
@@ -220,9 +270,16 @@ impl Artifact {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CompilerMessage {
-    pub(crate) package_id: String,
+    pub(crate) manifest_path: PathBuf,
     pub(crate) target: CompilerTarget,
     pub(crate) message: Diagnostic,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct BuildScript {
+    /// The directories of the native libraries, each written `kind=path` or `path`.
+    #[serde(default)]
+    pub(crate) linked_paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -281,6 +338,9 @@ impl Message {
             "compiler-message" => Ok(Self::Diagnostic(
                 serde_json::from_slice(line).with_context(read)?,
             )),
+            "build-script-executed" => Ok(Self::BuildScript(
+                serde_json::from_slice(line).with_context(read)?,
+            )),
             _ => Ok(Self::Other),
         }
     }
@@ -327,7 +387,9 @@ mod tests {
     fn artifact(name: &str, kind: &str, executable: Option<&str>) -> String {
         json!({
             "reason": "compiler-artifact",
-            "package_id": "path+file:///notes/api#notes-api@0.1.0",
+            // The package's version changed since `cargo metadata` read it: it is still its binary.
+            "package_id": "path+file:///notes/api#notes-api@0.2.0",
+            "manifest_path": "/notes/api/Cargo.toml",
             "target": { "name": name, "kind": [kind] },
             "executable": executable,
         })
@@ -337,7 +399,8 @@ mod tests {
     #[test]
     fn the_executable_of_the_binary_is_found() {
         let messages = [
-            json!({ "reason": "build-script-executed", "package_id": "serde" }).to_string(),
+            json!({ "reason": "build-script-executed", "package_id": "serde", "linked_paths": [] })
+                .to_string(),
             artifact("notes_api", "lib", None),
             artifact("openapi", "bin", Some("/target/debug/openapi")),
             json!({ "reason": "build-finished", "success": true }).to_string(),

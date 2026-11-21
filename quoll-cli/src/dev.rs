@@ -7,7 +7,7 @@ mod process;
 mod server;
 mod watch;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::{Future, poll_fn};
 use std::io;
 use std::path::Path;
@@ -31,7 +31,7 @@ use crate::documents;
 /// Runs the dev loop until it is asked to stop, then stops every child. `json` prints its events on stdout.
 pub(crate) fn run(workspace: &Workspace, json: bool) -> Result<()> {
     let reporter = Reporter::new(json);
-    let graph = Graph::new(workspace);
+    let graph = Graph::new(workspace, &reporter);
     let config = &workspace.config;
     let roots: Vec<_> = config
         .apis
@@ -151,7 +151,7 @@ impl<'a> Dev<'a> {
                         bail!("the watcher of the workspace stopped");
                     };
 
-                    let mut changed = BTreeSet::new();
+                    let mut changed = BTreeMap::new();
 
                     self.take(watched, &mut changed);
 
@@ -164,11 +164,14 @@ impl<'a> Dev<'a> {
                         continue;
                     }
 
-                    let names: Vec<_> = changed.iter().map(|&package| self.graph.name(package)).collect();
+                    let names: Vec<_> = changed
+                        .iter()
+                        .map(|(&package, path)| format!("{} ({path})", self.graph.name(package)))
+                        .collect();
 
                     self.reporter.status("Changed", names.join(", "));
 
-                    let changed = Changed::Packages(changed);
+                    let changed = Changed::Packages(changed.into_keys().collect());
 
                     tokio::select! {
                         () = self.round(&changed) => {}
@@ -179,9 +182,13 @@ impl<'a> Dev<'a> {
         }
     }
 
-    fn take(&self, watched: Watched, changed: &mut BTreeSet<usize>) {
+    fn take(&self, watched: Watched, changed: &mut BTreeMap<usize, String>) {
         match watched {
-            Watched::Changed(packages) => changed.extend(packages),
+            Watched::Changed(packages) => {
+                for (package, path) in packages {
+                    changed.entry(package).or_insert(path);
+                }
+            }
             Watched::Error(error) => self
                 .reporter
                 .error(None, &anyhow!("the watcher of the workspace: {error}")),

@@ -233,12 +233,12 @@ impl<'a> Server<'a> {
 
         let built = build::build(workspace, package, &self.config.bin, reporter).await;
         let identity = match built {
-            Ok(Built { executable }) => Identity::of(&executable)
+            Ok(built) => Identity::of(&built.executable)
                 .await
-                .map(|identity| (executable, identity)),
+                .map(|identity| (built, identity)),
             Err(error) => Err(error),
         };
-        let (executable, identity) = match identity {
+        let (built, identity) = match identity {
             Ok(found) => found,
             Err(error) => return self.failed(reporter, &error, None),
         };
@@ -257,13 +257,14 @@ impl<'a> Server<'a> {
             return;
         }
 
-        let copy = match copies.copy(&executable).await {
+        let copy = match copies.copy(&built.executable).await {
             Ok(copy) => copy,
             Err(error) => return self.failed(reporter, &error, None),
         };
 
         self.stop(reporter).await;
-        self.start(workspace, reporter, copy, identity).await;
+        self.start(workspace, reporter, copy, &built, identity)
+            .await;
     }
 
     /// Stops the server that runs, when one does.
@@ -306,6 +307,7 @@ impl<'a> Server<'a> {
         workspace: &Workspace,
         reporter: &Reporter,
         copy: PathBuf,
+        built: &Built,
         identity: Identity,
     ) {
         let dir = copy
@@ -333,6 +335,29 @@ impl<'a> Server<'a> {
         let mut command = process::Command::new(&copy);
 
         command.current_dir(&workspace.root);
+
+        // The copy is out of the target directory: its dynamic libraries are found where `cargo run` would find
+        // them.
+        let inherited = std::env::var_os(build::LIBRARY_PATH);
+        let paths = built
+            .library_paths
+            .iter()
+            .cloned()
+            .chain(inherited.iter().flat_map(std::env::split_paths));
+
+        match std::env::join_paths(paths) {
+            Ok(joined) => {
+                command.env(build::LIBRARY_PATH, joined);
+            }
+            Err(error) => reporter.status(
+                "Warning",
+                format!(
+                    "cannot set {} for {}: {error}",
+                    build::LIBRARY_PATH,
+                    self.config.package
+                ),
+            ),
+        }
 
         let spawned = reporter
             .child_stdout()

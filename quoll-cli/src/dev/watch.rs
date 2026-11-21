@@ -2,7 +2,7 @@
 //! dependencies they have outside the workspace, and the workspace's `Cargo.toml` and `Cargo.lock`. One rule says
 //! what a change counts as.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -38,10 +38,10 @@ pub(crate) struct Graph {
     external: Vec<(PathBuf, usize)>,
 }
 
-/// What the watcher sends: the packages whose files changed, or its error.
+/// What the watcher sends: the packages whose files changed, each with the first path that changed it, or its error.
 #[derive(Debug)]
 pub(crate) enum Watched {
-    Changed(BTreeSet<usize>),
+    Changed(BTreeMap<usize, String>),
     Error(String),
 }
 
@@ -51,8 +51,9 @@ pub(crate) struct Watcher {
 }
 
 impl Graph {
-    /// Reads the packages of `workspace`, their directories made canonical, which reads the file system.
-    pub(crate) fn new(workspace: &Workspace) -> Self {
+    /// Reads the packages of `workspace`, their directories made canonical, and the path dependencies outside it,
+    /// through `cargo metadata`: it is called before the runtime starts.
+    pub(crate) fn new(workspace: &Workspace, reporter: &Reporter) -> Self {
         let names = workspace
             .packages
             .iter()
@@ -64,7 +65,7 @@ impl Graph {
             .map(|package| canonical(package.dir()))
             .collect();
         let mut dependencies = Vec::new();
-        let mut external = Vec::new();
+        let mut next = Vec::new();
 
         for (index, package) in workspace.packages.iter().enumerate() {
             let mut members = Vec::new();
@@ -74,11 +75,40 @@ impl Graph {
 
                 match dirs.iter().position(|dir| *dir == path) {
                     Some(member) => members.push(member),
-                    None => external.push((path, index)),
+                    None => next.push((path, index)),
                 }
             }
 
             dependencies.push(members);
+        }
+
+        // The path dependencies of those outside the workspace, which count as the package of the workspace built
+        // with them.
+        let mut external = Vec::new();
+
+        while let Some((dir, dependent)) = next.pop() {
+            if external.contains(&(dir.clone(), dependent)) {
+                continue;
+            }
+
+            match Workspace::path_dependencies_of(&dir) {
+                Ok(paths) => next.extend(
+                    paths
+                        .iter()
+                        .map(|path| canonical(path))
+                        .filter(|path| !dirs.contains(path))
+                        .map(|path| (path, dependent)),
+                ),
+                Err(error) => reporter.status(
+                    "Warning",
+                    format!(
+                        "cannot read the path dependencies of {}: {error:#}",
+                        dir.display()
+                    ),
+                ),
+            }
+
+            external.push((dir, dependent));
         }
 
         Self {
@@ -145,6 +175,8 @@ struct Rule {
     outputs: Vec<PathBuf>,
     /// The workspace's `Cargo.toml` and `Cargo.lock`, canonical, whose change counts for every package.
     manifests: Vec<PathBuf>,
+    /// The workspace's root, canonical, from which the paths of the changes are shown.
+    root: PathBuf,
 }
 
 impl Rule {
@@ -201,6 +233,12 @@ impl Rule {
     fn counts(&self, path: &Path, relative: &Path) -> bool {
         let first = relative.components().next();
 
+        // The directory of a package itself changes as an entry is made or removed in it, which its own watch sees:
+        // on Windows, the watch of the workspace's root sees it too.
+        if first.is_none() {
+            return false;
+        }
+
         if first.is_some_and(|first| first.as_os_str() == "target")
             || relative.components().any(hidden_or_modules)
         {
@@ -210,13 +248,18 @@ impl Rule {
         !path.starts_with(&self.target) && !self.outputs.iter().any(|output| output == path)
     }
 
-    /// The packages `events` change: every watched one when the watcher missed some, and asks for a rescan.
-    fn changed(&self, events: &[DebouncedEvent]) -> BTreeSet<usize> {
-        let mut changed = BTreeSet::new();
+    /// The packages `events` change, each with the first path that changed it: every watched one when the watcher
+    /// missed some, and asks for a rescan.
+    fn changed(&self, events: &[DebouncedEvent]) -> BTreeMap<usize, String> {
+        let mut changed = BTreeMap::new();
 
         for event in events {
             if event.need_rescan() {
-                return self.watched.clone();
+                return self
+                    .watched
+                    .iter()
+                    .map(|&package| (package, "a rescan of the watcher".to_owned()))
+                    .collect();
             }
 
             if !changes(&event.kind) {
@@ -224,7 +267,15 @@ impl Rule {
             }
 
             for path in &event.paths {
-                changed.extend(self.packages(&canonical(path)));
+                let path = canonical(path);
+
+                for package in self.packages(&path) {
+                    changed.entry(package).or_insert_with(|| {
+                        let shown = path.strip_prefix(&self.root).unwrap_or(&path);
+
+                        shown.display().to_string()
+                    });
+                }
             }
         }
 
@@ -314,6 +365,7 @@ pub(crate) fn start(
             .map(|api| canonical(&workspace.root.join(&api.output)))
             .collect(),
         manifests: vec![root.join("Cargo.toml"), root.join("Cargo.lock")],
+        root: root.clone(),
         graph,
     };
     let dirs = rule.dirs(&root);
@@ -432,6 +484,7 @@ mod tests {
                 PathBuf::from("/ws/Cargo.toml"),
                 PathBuf::from("/ws/Cargo.lock"),
             ],
+            root: PathBuf::from("/ws"),
         }
     }
 
@@ -517,6 +570,11 @@ mod tests {
         assert_eq!(package("/ws/target/debug/server"), None);
         assert_eq!(package("/ws/tools/src/main.rs"), None, "not watched");
         assert_eq!(package("/elsewhere/main.rs"), None);
+        assert_eq!(
+            package("/ws/server"),
+            None,
+            "the directory of a package itself"
+        );
     }
 
     #[test]
@@ -600,10 +658,15 @@ mod tests {
             notify::Event::new(EventKind::Access(AccessKind::Open(AccessMode::Read)))
                 .add_path(PathBuf::from("/ws/api/src/lib.rs")),
         );
-        assert_eq!(rule.changed(std::slice::from_ref(&read)), BTreeSet::new());
+        assert_eq!(rule.changed(std::slice::from_ref(&read)), BTreeMap::new());
 
         let rescan = event(notify::Event::new(EventKind::Other).set_flag(Flag::Rescan));
-        assert_eq!(rule.changed(&[read, rescan]), rule.watched);
+        assert_eq!(
+            rule.changed(&[read, rescan])
+                .into_keys()
+                .collect::<BTreeSet<_>>(),
+            rule.watched
+        );
     }
 
     #[test]

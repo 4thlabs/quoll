@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::Path;
 use std::process::{Child, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
@@ -269,6 +270,18 @@ impl Dev {
 
 impl Drop for Dev {
     fn drop(&mut self) {
+        // A test that fails shows what `cargo quoll dev` said, the changes it saw among it.
+        if thread::panicking() {
+            while let Ok(line) = self.lines.try_recv() {
+                if let Line::Stderr(line) = line {
+                    self.log.push_str(&line);
+                    self.log.push('\n');
+                }
+            }
+
+            eprintln!("the stderr of cargo quoll dev:\n{}", self.log);
+        }
+
         if self.closed {
             return;
         }
@@ -578,15 +591,7 @@ fn a_server_built_by_another_cargo_is_restarted() {
 
     // The edit, then a build before the one of `cargo quoll dev`, which waits for its lock and finds it fresh.
     fs::write(&server, with_version(&source, "server 2")).expect("the server is written");
-    let status =
-        std::process::Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-            .args(["build", "--quiet", "--package", "server"])
-            .current_dir(fixture.path(""))
-            .env_remove("CARGO_TARGET_DIR")
-            .env_remove("CARGO_BUILD_TARGET_DIR")
-            .status()
-            .expect("cargo runs");
-    assert!(status.success(), "the server builds");
+    build_server(&fixture);
     dev.ready();
 
     assert_eq!(dev.get(), format!("server 2 {DOCUMENT}"));
@@ -704,31 +709,50 @@ fn a_change_of_the_cargo_lock_makes_everything_again() {
     assert!(document < building, "{events:?}");
 }
 
-#[test]
-fn a_path_dependency_outside_the_workspace_is_watched() {
-    let fixture = Fixture::new("");
-    let shared = tempfile::tempdir().expect("a temporary directory");
-
-    fs::create_dir(shared.path().join("src")).expect("the directory is made");
+/// Writes the crate `name` in `dir`, outside the workspace, with `manifest` after its `[package]` and `lib` for its
+/// `lib.rs`.
+fn write_crate(dir: &Path, name: &str, manifest: &str, lib: &str) {
+    fs::create_dir_all(dir.join("src")).expect("the directory is made");
     fs::write(
-        shared.path().join("Cargo.toml"),
-        "[package]\nname = \"shared\"\nedition = \"2024\"\npublish = false\n",
+        dir.join("Cargo.toml"),
+        format!("[package]\nname = \"{name}\"\nedition = \"2024\"\npublish = false\n{manifest}"),
     )
     .expect("the manifest is written");
     fs::write(
-        shared.path().join("src/lib.rs"),
-        "//! Shared.\n\n/// Its name.\npub const NAME: &str = \"shared 1\";\n",
+        dir.join("src/lib.rs"),
+        format!("//! A crate of the tests.\n\n{lib}"),
     )
     .expect("the crate is written");
+}
 
+/// A path, as a manifest writes it.
+fn toml_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// Builds the server of the fixture, as another cargo than the one of `cargo quoll dev`.
+fn build_server(fixture: &Fixture) {
+    let status =
+        std::process::Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+            .args(["build", "--quiet", "--package", "server"])
+            .current_dir(fixture.path(""))
+            .env_remove("CARGO_TARGET_DIR")
+            .env_remove("CARGO_BUILD_TARGET_DIR")
+            .status()
+            .expect("cargo runs");
+
+    assert!(status.success(), "the server builds");
+}
+
+/// Makes the server depend on the crate `shared` in `dir`, and answer with `shared`, its `expression`, too.
+fn depend_on_shared(fixture: &Fixture, dir: &Path, expression: &str) {
     let manifest = fixture.path("server/Cargo.toml");
-    let path = shared.path().to_string_lossy().replace('\\', "/");
     let server = fixture.path("server/src/main.rs");
 
     fs::write(
         &manifest,
         fs::read_to_string(&manifest).expect("the manifest is read")
-            + &format!("shared = {{ path = \"{path}\" }}\n"),
+            + &format!("shared = {{ path = \"{}\" }}\n", toml_path(dir)),
     )
     .expect("the manifest is written");
     fs::write(
@@ -737,24 +761,124 @@ fn a_path_dependency_outside_the_workspace_is_watched() {
             .expect("the server is read")
             .replace(
                 "format!(\"{VERSION} {}\", contract::DOCUMENT)",
-                "format!(\"{VERSION} {} {}\", contract::DOCUMENT, shared::NAME)",
+                &format!("format!(\"{{VERSION}} {{}} {{}}\", contract::DOCUMENT, {expression})"),
             ),
     )
     .expect("the server is written");
 
+    // The `Cargo.lock` gets the new dependency now: written by the first build of `cargo quoll dev`, it would start
+    // a round of its own.
+    build_server(fixture);
+}
+
+/// The crates `shared`, which the server depends on, and `models`, which `shared` depends on, both outside the
+/// workspace, in `outside`.
+fn write_shared_and_models(fixture: &Fixture, outside: &Path) {
+    let models = outside.join("models");
+
+    write_crate(
+        &models,
+        "models",
+        "",
+        "/// Its name.\npub const NAME: &str = \"models 1\";\n",
+    );
+    write_crate(
+        &outside.join("shared"),
+        "shared",
+        &format!(
+            "\n[dependencies]\nmodels = {{ path = \"{}\" }}\n",
+            toml_path(&models)
+        ),
+        "/// The name of its models.\npub const NAME: &str = models::NAME;\n",
+    );
+    depend_on_shared(fixture, &outside.join("shared"), "shared::NAME");
+}
+
+#[test]
+fn a_path_dependency_outside_the_workspace_is_watched() {
+    let fixture = Fixture::new("");
+    let outside = tempfile::tempdir().expect("a temporary directory");
+
+    write_shared_and_models(&fixture, outside.path());
     let mut dev = Dev::start(&fixture);
 
     dev.ready();
-    assert_eq!(dev.get(), format!("server 1 {DOCUMENT} shared 1"));
+    assert_eq!(dev.get(), format!("server 1 {DOCUMENT} models 1"));
 
-    fs::write(
-        shared.path().join("src/lib.rs"),
-        "//! Shared.\n\n/// Its name.\npub const NAME: &str = \"shared 2\";\n",
-    )
-    .expect("the crate is written");
+    write_crate(
+        &outside.path().join("shared"),
+        "shared",
+        "",
+        "/// Its own name.\npub const NAME: &str = \"shared 2\";\n",
+    );
     dev.ready();
 
     assert_eq!(dev.get(), format!("server 1 {DOCUMENT} shared 2"));
+}
+
+#[test]
+fn the_path_dependencies_of_one_outside_the_workspace_are_watched() {
+    let fixture = Fixture::new("");
+    let outside = tempfile::tempdir().expect("a temporary directory");
+
+    write_shared_and_models(&fixture, outside.path());
+    let mut dev = Dev::start(&fixture);
+
+    dev.ready();
+
+    write_crate(
+        &outside.path().join("models"),
+        "models",
+        "",
+        "/// Its name.\npub const NAME: &str = \"models 2\";\n",
+    );
+    dev.ready();
+
+    assert_eq!(dev.get(), format!("server 1 {DOCUMENT} models 2"));
+}
+
+#[test]
+fn a_server_whose_version_changed_is_built_and_restarted() {
+    let fixture = Fixture::new("");
+    let mut dev = Dev::start(&fixture);
+    let manifest = fixture.path("server/Cargo.toml");
+    let server = fixture.path("server/src/main.rs");
+    let source = fs::read_to_string(&server).expect("the server is read");
+
+    dev.ready();
+
+    // Cargo's id of the package holds its version, which `cargo metadata` read at the start.
+    fs::write(
+        &manifest,
+        fs::read_to_string(&manifest)
+            .expect("the manifest is read")
+            .replace("publish = false", "publish = false\nversion = \"0.2.0\""),
+    )
+    .expect("the manifest is written");
+    fs::write(&server, with_version(&source, "server 2")).expect("the server is written");
+    dev.ready();
+
+    assert_eq!(dev.get(), format!("server 2 {DOCUMENT}"));
+}
+
+#[test]
+fn a_server_linked_to_a_dylib_runs_from_its_copy() {
+    let fixture = Fixture::new("");
+    let outside = tempfile::tempdir().expect("a temporary directory");
+    let shared = outside.path().join("shared");
+
+    write_crate(
+        &shared,
+        "shared",
+        "\n[lib]\ncrate-type = [\"dylib\"]\n",
+        "/// Its name, from the dynamic library.\n#[inline(never)]\npub fn name() -> String {\n    \"dylib\".to_owned()\n}\n",
+    );
+    depend_on_shared(&fixture, &shared, "shared::name()");
+
+    let mut dev = Dev::start(&fixture);
+
+    dev.ready();
+    assert_eq!(dev.get(), format!("server 1 {DOCUMENT} dylib"));
 }
 
 #[test]
