@@ -51,7 +51,6 @@ cargo quoll dev                                                    # the notes s
 
 ## Layout
 
-
 - `quoll/`: the crate users depend on. Its features `server` (axum) and `client` (reqwest) are each off by default.
 - `quoll-macros/`: the proc macro behind `quoll::rest::api!`, re-exported by `quoll`, which users never name.
 - `quoll-cli/`: the binary `cargo-quoll`, `cargo quoll gen`, `build` and `dev`, configured in a workspace's
