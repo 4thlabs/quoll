@@ -10,16 +10,17 @@
   <p>
     <img src="https://img.shields.io/badge/Rust-2024-B7410E?logo=rust&logoColor=white" alt="Rust 2024" />
     <img src="https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.1" />
-    <img src="https://img.shields.io/badge/status-design-lightgrey" alt="Status: design" />
+    <img src="https://img.shields.io/badge/status-from%20git-orange" alt="Status: from git" />
     <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" /></a>
   </p>
 
   <p>
+    <a href="docs/guides/getting-started.md"><strong>Getting started</strong></a> ·
     <a href="docs/README.md"><strong>The guides</strong></a> ·
     <a href="docs/guides/typescript.md">TypeScript</a> ·
-    <a href="docs/spec.md"><strong>The spec</strong></a> ·
-    <a href="docs/spec.md#a-complete-example">A complete example</a> ·
-    <a href="docs/spec.md#later">Later</a>
+    <a href="examples/notes">The notes example</a> ·
+    <a href="docs/spec.md">The spec</a> ·
+    <a href="https://github.com/4thlabs/quoll/milestone/5">Later</a>
   </p>
 </div>
 
@@ -212,26 +213,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## What the contract gives
 
-| From the contract | What it is                                                                                      |
-| ----------------- | ----------------------------------------------------------------------------------------------- |
-| `NotesServer`     | The trait the server implements: a method per route, the caller as a typed argument             |
-| `Api::router`     | An `axum::Router`, which `server::builder()` serves with request id, trace, CORS...             |
-| `Notes`           | The trait the client implements, and test fakes too                                             |
-| `ApiClient`       | The client that `client::builder().build::<Api>(url)` gives, with tokens, retries, redirects... |
-| `Api::openapi`    | The OpenAPI 3.1 document, with the schemas of the types and the `///` comments                  |
+| From the contract | What it is                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `NotesServer`     | The trait the server implements: a method per route, the caller as a typed argument  |
+| `Api::router`     | An `axum::Router` of the services in `ApiServices`, which `server::builder()` serves |
+| `Notes`           | The trait the client implements, and a test's fake too                               |
+| `ApiClient`       | The client that `client::builder().build::<Api>(url)` gives, with its middleware     |
+| `Api::openapi`    | The OpenAPI 3.1 document, with the schemas of the types and the `///` comments       |
 
-No Rust is generated on disk: the macro expands at compile time, and `cargo expand` shows what it writes.
+No Rust is generated on disk: the macro expands at compile time, and `cargo expand` shows what it writes. `cargo
+quoll gen` writes the document, and runs the generator that turns it into TypeScript:
+[the TypeScript guide](docs/guides/typescript.md) says how.
+
+## Examples
+
+Each example is a workspace of its own, as an application's is, built and tested from its directory.
+
+[`examples/notes`](examples/notes) is the spec's [complete example](docs/spec.md#a-complete-example): a contract,
+its server, a command line, and a web page on the hooks orval writes. `cargo quoll dev` runs the server, orval and
+Vite, on `http://localhost:5173`:
+
+```bash
+cargo install --git https://github.com/4thlabs/quoll quoll-cli
+cd examples/notes
+npm ci --prefix web
+cargo quoll dev
+```
+
+[`examples/docker`](examples/docker) is a client alone, of the Docker Engine API, and a command line on it:
+
+```bash
+cd examples/docker
+cargo run -p docker-cli -- ps -a
+```
 
 ## Status
 
-The contract is specified in [`docs/spec.md`](docs/spec.md), validated, and the crate implements it: its server, its
-client and its OpenAPI document. It is used from git until it is published.
+quoll is used from git: it has no version yet, and the first release is
+[#21](https://github.com/4thlabs/quoll/issues/21). What [the spec](docs/spec.md) describes works, but its
+[Later](docs/spec.md#later): the contract, the server and the client, the OpenAPI document, `cargo quoll gen`,
+`build` and `dev`, and the notes page. What comes next is in the milestone
+[Later](https://github.com/4thlabs/quoll/milestone/5).
 
 The guides are in [`docs/`](docs/README.md), and the API documentation is the crate's own, from `cargo doc -p quoll
---all-features --open`. Two examples are each a workspace of its own, as an application's is, built and tested from
-its directory, `cd examples/notes && cargo test`: [`examples/notes`](examples/notes), the spec's complete example,
-with its web page, which `cargo quoll dev` runs there, and [`examples/docker`](examples/docker), a client alone of the
-Docker Engine API.
+--all-features --open`.
 
 ## License
 
