@@ -62,6 +62,8 @@ fn main() {
 }
 ```
 
+In the notes example's directory, `examples/notes`:
+
 ```bash
 cargo run -p notes-api --bin openapi > openapi.json
 ```
@@ -87,7 +89,9 @@ which runs the server and the page's dev server side by side.
   problem.
 - **Security**: each scheme under `components/securitySchemes`, by its name, and each route's requirement, with its
   scopes, and `{}` when its credential is optional.
-- **Schemas**: under `components/schemas`, from schemars.
+- **Schemas**: under `components/schemas`, from schemars. A `$ref` beside other keywords, as schemars writes a
+  variant of a tagged enum that holds a struct, is an `allOf` of the reference and of those keywords, which the
+  generators that read a `$ref` alone keep.
 
 The doc of `quoll::rest::openapi` says each of them in full.
 

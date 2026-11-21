@@ -267,22 +267,20 @@ async fn main() -> std::io::Result<()> {
 ## Shutdown
 
 A server serves until Ctrl-C, or `SIGTERM` on Unix, which `docker stop` and Kubernetes send. Told to stop, it accepts
-no more connections, and returns once the requests it serves have ended.
+no more connections, and waits for the requests it serves to end: 5 s, or what `.grace(duration)` says, or until a
+second Ctrl-C or `SIGTERM`. Then it logs at `WARN` that connections were left open, and returns `Ok`: they end with
+the runtime, as `main` returns.
 
-The `Events` streams in flight end at once, after the event each is sending, so that the client, and a proxy between,
-reads a clean end, as when the handler's stream ends. They end with nothing more: a stop is no failure, and sends no
-`event: problem`, so that such an end cannot be told from a finite stream that completes, an open question,
-[#70](https://github.com/4thlabs/quoll/issues/70). An `EventSource` connects again after it, and goes on only when it
-is answered with a 200: a proxy that answers a 5xx while the server restarts closes it for good. A router served by
-`axum::serve` itself, or `quoll::test::spawn`, leaves them to run.
+The streams in flight:
 
-It waits 5 s for the other requests, or what `.grace(duration)` says, or until a second Ctrl-C or `SIGTERM`. Then it
-logs at `WARN` that connections were left open, and returns `Ok`. They end with the runtime, as `main` returns.
+- An `Events` stream ends at once, after the event it is sending, with no `event: problem`: its client, and a proxy
+  between, reads a clean end, as when the handler's stream ends. An `EventSource` connects again after it, as
+  [the TypeScript guide](typescript.md#events-with-a-cookie) says.
+- A `JsonLines` or a `ByteStream` is not ended: it runs on until the grace has passed, and is then cut, which its
+  client reads as an error.
 
-A `JsonLines` or a `ByteStream` in flight is one of those requests: it is not ended, as a clean end would make a finite
-one, an export or a file, cut by the stop look complete. It runs on until the grace has passed, and is cut with its
-connection as the runtime ends, which its client reads as an error. What it should say of a stop is an open question,
-[#70](https://github.com/4thlabs/quoll/issues/70).
+What a stream should say of a stop is an open question, [#70](https://github.com/4thlabs/quoll/issues/70). A router
+served by `axum::serve` itself, or by `quoll::test::spawn`, leaves its streams to run until their connection closes.
 
 `.shutdown(signal)` stops it when a future ends, in the place of the signals: a channel of a test, or
 `std::future::pending()` for a server that is never told to stop.

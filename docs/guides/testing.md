@@ -243,6 +243,8 @@ fn the_document_is_the_snapshot() {
 }
 ```
 
+In the notes example's directory, `examples/notes`, the snapshot of its contract is written again with:
+
 ```bash
 SNAPSHOT=overwrite cargo test -p notes-api --test openapi
 ```

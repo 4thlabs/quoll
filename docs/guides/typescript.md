@@ -7,10 +7,9 @@ generator: the commands it runs are the project's, named in the workspace's `Car
 conventions.
 
 The TypeScript and TOML blocks of this guide are excerpts of [the notes example](../../examples/notes), under the
-name of their file. A test of its page, `web/src/guide/excerpts.test.ts`, fails when one is no longer in its file,
-and the page's build type-checks the TypeScript. The code that the page does not use, `EventSource` and the reading of
-`JsonLines` and `ByteStream`, is in its `web/src/guide/`. The Next.js recipe and the second generator's config are
-of another app, and were checked by hand, with Next.js 16 and openapi-typescript 7.
+name of their file; the code that the page does not use, `EventSource` and the reading of `JsonLines` and
+`ByteStream`, is in its `web/src/guide/`. The blocks of Next.js and of a second generator are of another app, checked
+with Next.js 16 and openapi-typescript 7.
 
 ## The chain
 
@@ -411,8 +410,8 @@ url instead, `getNotesEventsUrl(id)`, which orval writes beside it.
 
 OpenAPI 3.1 cannot type the items of a stream: the document names them in the extension `x-item` of the answer's
 media type, a `$ref` to the item's schema. The schema is under `components/schemas`, which orval writes as a type like
-any other, and the page names it. A tagged enum's variant that holds a struct is an `allOf` of that struct and of its
-tag, so that its type keeps the tag:
+any other, and the page names it. A tagged enum's variant that holds a struct is an
+[`allOf`](openapi.md#what-it-holds) of that struct and of its tag, so that its type keeps the tag:
 
 ```rust
 use quoll::rest::{self, Events};
@@ -724,9 +723,8 @@ export async function readChunks(response: Response, onChunk: (chunk: Uint8Array
 | the server is told to stop         | a clean end, after the event it is sending       | a cut once the server's grace has passed      |
 | the page stops reading             | `close()`, or the fetch's `AbortController`      | the fetch's `AbortController`                 |
 
-A clean end is no failure: the page may follow the stream again, and reads again what changed meanwhile. What a
-`JsonLines` or a `ByteStream` should say when the server stops is not settled yet
-([#70](https://github.com/4thlabs/quoll/issues/70)).
+A clean end is no failure: the page may follow the stream again, and reads again what changed meanwhile.
+[Shutdown](server.md#shutdown) says what a server told to stop does with each stream.
 
 In `cargo quoll dev`, a server that restarts is sent `SIGTERM` on Linux and macOS, and ends its `Events` cleanly,
 which Vite's proxy passes on. A stream the server cuts rather than ends is not: Vite's proxy keeps the page's side
