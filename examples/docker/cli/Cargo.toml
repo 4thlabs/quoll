@@ -10,7 +10,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 docker-api = { path = "../api", features = ["client"] }
 futures = "0.3"
-quoll = { path = "../../../quoll" }
+quoll.workspace = true
 reqwest = { version = "0.13", default-features = false }
 serde_json = "1"
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread"] }
@@ -20,5 +20,5 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["io-util", "net", "process", "time"] }
 
-[lints.rust]
-unsafe_code = "forbid"
+[lints]
+workspace = true

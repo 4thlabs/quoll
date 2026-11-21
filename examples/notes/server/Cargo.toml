@@ -12,7 +12,7 @@ axum = { version = "0.8", default-features = false }
 futures-util = { version = "0.3", default-features = false }
 getrandom = "0.3"
 notes-api = { path = "../api", features = ["server"] }
-quoll = { path = "../../../quoll" }
+quoll.workspace = true
 sha2 = "0.11"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 tracing-subscriber = "0.3"
@@ -21,5 +21,5 @@ tracing-subscriber = "0.3"
 notes-api = { path = "../api", features = ["client"] }
 reqwest = { version = "0.13", default-features = false }
 
-[lints.rust]
-unsafe_code = "forbid"
+[lints]
+workspace = true

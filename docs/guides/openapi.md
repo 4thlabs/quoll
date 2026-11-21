@@ -77,7 +77,7 @@ it, such as orval. It is installed from git until it is published:
 cargo install --git https://github.com/4thlabs/quoll quoll-cli
 ```
 
-Its config is in the workspace's `Cargo.toml`, with paths from the workspace's root:
+Its config is in the workspace's `Cargo.toml`, with paths from the workspace's root, where `cargo quoll` runs:
 
 ```toml
 [[workspace.metadata.quoll.api]]
@@ -175,12 +175,13 @@ The [dev loop of the spec](../spec.md#the-dev-loop) lists every event and its fi
   `response.body.getReader()`, in a few lines that split the events.
 
 ```bash
-npm ci --prefix examples/notes/web
+cd examples/notes
+npm ci --prefix web
 cargo quoll dev
 ```
 
-At the root of the repository, it runs the notes server, orval and Vite, on `http://localhost:5173`. The server
-prints the demo's password when it starts.
+In the notes example, a workspace of its own, it runs the notes server, orval and Vite, on `http://localhost:5173`.
+The server prints the demo's password when it starts.
 
 ## What it holds
 

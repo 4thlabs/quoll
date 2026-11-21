@@ -21,6 +21,8 @@ with its new date.
 
 ## Build and test
 
+At the root, the library's workspace:
+
 ```bash
 cargo build --workspace
 cargo test --workspace --all-features
@@ -29,12 +31,19 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps --all-features                     # the docs, with their links checked
 cargo expand -p <crate> --test <test>                              # what the macro writes (cargo install cargo-expand)
 TRYBUILD=overwrite cargo test -p quoll --test compile_fail         # to accept a new or changed error message
-SNAPSHOT=overwrite cargo test -p notes-api --test openapi          # to accept a changed OpenAPI document of the example
 cargo test -p quoll-guides                                         # the Rust blocks of the guides and the README
 cargo install --path quoll-cli                                     # `cargo quoll`
-npm ci --prefix examples/notes/web                                 # the notes page's dependencies, on Node 22
+```
+
+Each example is a workspace of its own, with its `Cargo.lock`, built and tested from its directory, `examples/notes`
+or `examples/docker`, the same `cargo fmt`, `clippy`, `test` and `doc` as at the root, without `--all-features`. In
+`examples/notes`:
+
+```bash
+SNAPSHOT=overwrite cargo test -p notes-api --test openapi          # to accept a changed OpenAPI document of the example
+npm ci --prefix web                                                # the page's dependencies, on Node 22
 cargo quoll build                                                  # the notes document, orval, then the page's build
-npm test --prefix examples/notes/web                               # the page's tests, once orval has written its hooks
+npm test --prefix web                                              # the page's tests, once orval has written its hooks
 cargo quoll dev                                                    # the notes server, orval and Vite, until Ctrl-C
 ```
 
@@ -44,19 +53,23 @@ Planned, from the spec:
 
 - `quoll/`: the crate users depend on. Its features `server` (axum) and `client` (reqwest) are each off by default.
 - `quoll-macros/`: the proc macro behind `quoll::rest::api!`, re-exported by `quoll`, which users never name.
-- `quoll-cli/`: the binary `cargo-quoll`, `cargo quoll gen`, `build` and `dev`, configured in the workspace's
-  `[workspace.metadata.quoll]`. It does not depend on `quoll`: it runs the contract's binary. Its tests run it on a
-  small workspace under `tests/fixture/`, copied for each test, whose server and `web.dev` listen on ports.
-- `examples/notes/`: the spec's complete example, split into the contract, its server, its command line and its page.
-  The Rust crates are built and tested with the workspace. `web/` is the page, Vite, React and the TanStack Query
-  hooks orval writes from `openapi.json`, which `cargo quoll gen` writes there, both gitignored; its npm dependencies
-  are pinned, with their `package-lock.json`, on Node 22. `cargo quoll dev` at the root runs the server, orval and
+- `quoll-cli/`: the binary `cargo-quoll`, `cargo quoll gen`, `build` and `dev`, configured in a workspace's
+  `[workspace.metadata.quoll]`, as the notes example's is. It does not depend on `quoll`: it runs the contract's
+  binary. Its tests run it on a small workspace under `tests/fixture/`, copied for each test, whose server and
+  `web.dev` listen on ports.
+- `examples/`: each example a workspace of its own, as an application's is, which depends on `quoll` by path, has its
+  own lints and its own `Cargo.lock`, and is left out of the root's, `exclude`d.
+- `examples/notes/`: the spec's complete example, split into the contract, its server, its command line and its page,
+  with the config of `cargo quoll` in its `Cargo.toml`. `web/` is the page, Vite, React and the TanStack Query hooks
+  orval writes from `openapi.json`, which `cargo quoll gen` writes there, both gitignored; its npm dependencies are
+  pinned, with their `package-lock.json`, on Node 22. `cargo quoll dev` in `examples/notes` runs the server, orval and
   Vite; `npm test` in `web/` runs its vitest tests, once `cargo quoll gen` has written the TypeScript.
-- `examples/docker/`: a contract of the Docker Engine API, which it only calls, and a command line on it, built and
-  tested with the workspace; its test against a real daemon is skipped where none answers, but in CI.
+- `examples/docker/`: a contract of the Docker Engine API, which it only calls, and a command line on it; its test
+  against a real daemon is skipped where none answers, but in CI.
 - `docs/`: `spec.md`, the coding rules, and the user guides, indexed by `docs/README.md`. `docs/guides/` is the crate
   `quoll-guides` too, whose doctests compile and run the Rust blocks of each guide and of the README: a block that
   needs a network is `rust,no_run`, one of tests `rust,test_harness`, one that shows a mistake `rust,compile_fail`.
+  Its dev-dependency on `notes-api` is a path into the notes example's workspace, which cargo builds from the root.
   A guide says how to use quoll and links to the rustdoc for each item's detail; the why stays in the spec.
 
 What the macro generates is never written to disk: `cargo expand` shows it. The TypeScript that orval writes is
@@ -70,16 +83,16 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
 - CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`: `cargo fmt --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` and
   `cargo doc --workspace --no-deps`, the last three once per feature combination of `quoll`: none, `server`, `client`
-  and both. Those leave the examples and the guides out, `--exclude 'notes-*' --exclude 'docker-*' --exclude
-  quoll-guides`: their crates turn `quoll`'s features on, and cargo would unify them into the whole build, so a local
-  `cargo test --workspace` builds `quoll` with both. The examples and the guides have their own run of the three,
-  `--package 'notes-*' --package 'docker-*' --package quoll-guides`, whose tests
-  set `DOCKER_CLI_TEST_DAEMON=required`, so that the Docker example's test fails when the runner's daemon does not
-  answer. `quoll-cli`, which does not depend on `quoll`, is left out of the four as well, and has a run of its own,
-  `--package quoll-cli`, and its clippy and tests run on macOS and Windows too, in the job `cli`, where `cargo quoll
-  dev` stops its children in other ways. The job `web` builds `cargo-quoll` and runs `cargo quoll build` at the root,
-  which writes the notes document, runs orval and bundles the page, then the page's `npm test`: a change of the
-  contract that breaks the page breaks the pull request. The document itself is checked by the snapshot test of the
+  and both. Those leave the guides out, `--exclude quoll-guides`: they turn `quoll`'s features on, and cargo would
+  unify them into the whole build, so a local `cargo test --workspace` builds `quoll` with both. The guides have their
+  own run of the three, `--package quoll-guides`, and so has `quoll-cli`, `--package quoll-cli`, which does not depend
+  on `quoll`; its clippy and tests run on macOS and Windows too, in the job `cli`, where `cargo quoll dev` stops its
+  children in other ways. The job `examples` runs the four in each example's directory, with the features its crates
+  choose and `--locked`, so that its committed `Cargo.lock` is the one it builds with; the Docker example's tests set
+  `DOCKER_CLI_TEST_DAEMON=required`, so that its test fails when the runner's daemon does not answer. The job `web`
+  builds `cargo-quoll` at the root and runs `cargo quoll build` in `examples/notes`, which writes the notes document,
+  runs orval and bundles the page, then the page's `npm test`: a change of the contract that breaks the page breaks
+  the pull request. The document itself is checked by the snapshot test of the
   notes contract, `notes-api`'s `tests/openapi.rs`. Warnings are errors, in rustc and in rustdoc.
 - The `ci` job gathers all of them and is the one check `main` requires: a new job goes in its `needs`. The branch must
   be up to date with `main`, and every review thread resolved, before the merge.
