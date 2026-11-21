@@ -940,9 +940,14 @@ export default defineConfig({
       // The server's `url` in the workspace's Cargo.toml, `[[workspace.metadata.quoll.server]]`: the two change together.
       "/api": {
         target: "http://127.0.0.1:8080",
-        // A stream the server drops, as it stops, ends for the page too: Vite's proxy would keep it open.
+        // Vite's proxy holds the head of a stream until its first event, and keeps the stream open once the server
+        // drops it, as it stops: the page would see it neither start nor end.
         configure: (proxy) => {
           proxy.on("proxyRes", (upstream, _request, response) => {
+            if (upstream.headers["content-type"]?.startsWith("text/event-stream")) {
+              queueMicrotask(() => response.flushHeaders()); // once the proxy has written the head
+            }
+
             upstream.on("close", () => {
               if (!upstream.complete) {
                 response.destroy();
@@ -978,7 +983,7 @@ export default defineConfig({
 });
 ```
 
-The page takes a bearer token, which `EventSource` cannot send: `apiEvents` reads the events with `fetch`, and splits them itself, as quoll's server writes them, each line ending in `\n`. Every event that has data is an item, whatever its name, an event with no data and a comment are skipped, and an `event: problem` ends the stream with an error; `onEnd` hears of an end the page did not ask for, a failure or a clean end. An error the server answers is an `ApiError`, whose message is the problem's detail, which the page shows; a refused token signs the page out.
+The page takes a bearer token, which `EventSource` cannot send: `apiEvents` reads the events with `fetch`, and splits them itself, as quoll's server writes them, each line ending in `\n`. Every event that has data is an item, whatever its name, an event with no data and a comment are skipped, and an `event: problem` ends the stream with an error; `onOpen` hears of its opening, after which the page reads the note again, and `onEnd` of an end the page did not ask for, a failure or a clean end. An error the server answers is an `ApiError`, whose message is the problem's detail, which the page shows; a refusal of the token the page holds signs it out.
 
 `web/src/api/fetch.ts`
 
@@ -995,16 +1000,19 @@ export function signOut() {
   token = undefined;
 }
 
-// An error the server answered, its message the problem's detail: what the page shows.
+// An error the server answered, its message the problem's detail: what the page shows. `expired` when the server
+// refused the token that the page still holds: it expired, or the server that gave it restarted.
 export class ApiError extends Error {
   readonly status: number;
   readonly problem: Problem | undefined;
+  readonly expired: boolean;
 
-  constructor(status: number, problem?: Problem) {
+  constructor(status: number, problem?: Problem, expired = false) {
     super(problem?.detail ?? problem?.title ?? `the server answered ${status}`);
     this.name = "ApiError";
     this.status = status;
     this.problem = problem;
+    this.expired = expired;
   }
 }
 
@@ -1021,43 +1029,56 @@ function authorization(init?: HeadersInit): Headers {
   return headers;
 }
 
-// The token was refused: it expired, or the server that gave it restarted.
-export function isUnauthorized(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 401;
+export function isExpired(error: unknown): boolean {
+  return error instanceof ApiError && error.expired;
+}
+
+// The error of a request sent with the token `sent`. A refusal of a token signed out since, answered late, is no news
+// of the session the page holds now.
+async function apiError(response: Response, sent: string | undefined): Promise<ApiError> {
+  const expired = response.status === 401 && sent !== undefined && sent === token;
+
+  return new ApiError(response.status, await problemOf(response), expired);
 }
 
 // A proxy that cannot reach the server answers with no problem, and a body may be cut: the status alone is the error.
-async function apiError(response: Response): Promise<ApiError> {
-  const isProblem = response.headers.get("Content-Type")?.startsWith("application/problem+json");
-
-  if (!isProblem) {
-    return new ApiError(response.status);
+async function problemOf(response: Response): Promise<Problem | undefined> {
+  if (!response.headers.get("Content-Type")?.startsWith("application/problem+json")) {
+    return undefined;
   }
 
   try {
-    return new ApiError(response.status, await response.json());
+    return await response.json();
   } catch {
-    return new ApiError(response.status);
+    return undefined;
   }
 }
 
 export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
+  const sent = token;
   const response = await fetch(url, { ...init, headers: authorization(init.headers) });
 
   if (!response.ok) {
-    throw await apiError(response);
+    throw await apiError(response, sent);
   }
 
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
-// Reads a stream of server-sent events, calling `onItem` with each one's data parsed, until the function it returns
-// is called. `onEnd` hears of an end it did not ask for: with the error of a failure, before the stream or within it,
-// or with nothing when the server ended the stream.
+export type EventHandlers<T> = {
+  // Each event's data, parsed.
+  onItem: (item: T) => void;
+  // The stream is open: what changed before it is not in it.
+  onOpen?: () => void;
+  // An end that was not asked for: the error of a failure, before the stream or within it, or nothing when the
+  // server ended the stream.
+  onEnd?: (error?: unknown) => void;
+};
+
+// Reads a stream of server-sent events until the function it returns is called.
 export function apiEvents<T>(
   url: string,
-  onItem: (item: T) => void,
-  onEnd: (error?: unknown) => void = logFailure,
+  { onItem, onOpen = () => {}, onEnd = logFailure }: EventHandlers<T>,
 ): () => void {
   const controller = new AbortController();
 
@@ -1067,7 +1088,7 @@ export function apiEvents<T>(
     }
   }
 
-  readEvents(url, onItem, controller.signal).then(() => ended(), ended);
+  readEvents(url, onItem, onOpen, controller.signal).then(() => ended(), ended);
 
   return () => controller.abort();
 }
@@ -1078,12 +1099,15 @@ function logFailure(error?: unknown) {
   }
 }
 
-async function readEvents<T>(url: string, onItem: (item: T) => void, signal: AbortSignal) {
+async function readEvents<T>(url: string, onItem: (item: T) => void, onOpen: () => void, signal: AbortSignal) {
+  const sent = token;
   const response = await fetch(url, { headers: authorization(), signal });
 
   if (!response.ok) {
-    throw await apiError(response);
+    throw await apiError(response, sent);
   }
+
+  onOpen();
 
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
@@ -1145,7 +1169,7 @@ function parseEvent(block: string): { event?: string; data?: string } {
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useEffectEvent, useState } from "react";
 
-import { apiEvents, isUnauthorized } from "../api/fetch";
+import { apiEvents, isExpired } from "../api/fetch";
 import {
   getNotesEventsUrl,
   getNotesGetQueryKey,
@@ -1163,22 +1187,31 @@ import { NoteEditor } from "./NoteEditor";
 type Props = {
   id: number;
   onClosed: () => void;
-  onUnauthorized: () => void;
+  onExpired: () => void;
 };
 
-export function NoteView({ id, onClosed, onUnauthorized }: Props) {
+export function NoteView({ id, onClosed, onExpired }: Props) {
   const queryClient = useQueryClient();
-  const { data: note, error, refetch } = useNotesGet(id);
-  const update = useNotesUpdate();
-  const remove = useNotesRemove();
-  const [editing, setEditing] = useState(false);
-  // Whether the note's events still arrive; following them again starts a new stream.
-  const [live, setLive] = useState(true);
-  const [follows, setFollows] = useState(0);
 
   function listChanged() {
     queryClient.invalidateQueries({ queryKey: getNotesSearchQueryKey() });
   }
+
+  const { data: note, error, refetch } = useNotesGet(id);
+  // The cache follows a change here, as `mutate`'s own callbacks do not once the view is gone.
+  const update = useNotesUpdate({
+    mutation: {
+      onSuccess: (saved) => {
+        queryClient.setQueryData(getNotesGetQueryKey(id), saved);
+        listChanged();
+      },
+    },
+  });
+  const remove = useNotesRemove({ mutation: { onSuccess: listChanged } });
+  const [editing, setEditing] = useState(false);
+  // Whether the note's events still arrive; following them again starts a new stream.
+  const [live, setLive] = useState(true);
+  const [follows, setFollows] = useState(0);
 
   // Another tab or the command line changed the note: read it again, or close it once it is removed.
   const changed = useEffectEvent((event: NoteEvent) => {
@@ -1191,16 +1224,21 @@ export function NoteView({ id, onClosed, onUnauthorized }: Props) {
     }
   });
 
+  // A change made before the stream opened is not in it: the note is read again once it is open.
+  const opened = useEffectEvent(() => refetch());
+
   // The stream ended before the note was removed: the server stopped, or the network failed.
   const ended = useEffectEvent((error?: unknown) => {
-    if (isUnauthorized(error)) {
-      onUnauthorized();
+    if (isExpired(error)) {
+      onExpired();
     } else {
       setLive(false);
     }
   });
 
-  useEffect(() => apiEvents<NoteEvent>(getNotesEventsUrl(id), changed, ended), [id, follows]);
+  useEffect(() => {
+    return apiEvents<NoteEvent>(getNotesEventsUrl(id), { onItem: changed, onOpen: opened, onEnd: ended });
+  }, [id, follows]);
 
   if (!note) {
     return error ? <ErrorMessage error={error} /> : <p>Loading</p>;
@@ -1209,32 +1247,14 @@ export function NoteView({ id, onClosed, onUnauthorized }: Props) {
   function follow() {
     setLive(true);
     setFollows(follows + 1);
-    refetch();
   }
 
   function save(changes: NewNote) {
-    update.mutate(
-      { id, data: changes },
-      {
-        onSuccess: (saved) => {
-          queryClient.setQueryData(getNotesGetQueryKey(id), saved);
-          listChanged();
-          setEditing(false);
-        },
-      },
-    );
+    update.mutate({ id, data: changes }, { onSuccess: () => setEditing(false) });
   }
 
   function removeNote() {
-    remove.mutate(
-      { id },
-      {
-        onSuccess: () => {
-          listChanged();
-          onClosed();
-        },
-      },
-    );
+    remove.mutate({ id }, { onSuccess: onClosed });
   }
 
   return (

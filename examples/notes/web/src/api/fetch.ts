@@ -10,16 +10,19 @@ export function signOut() {
   token = undefined;
 }
 
-// An error the server answered, its message the problem's detail: what the page shows.
+// An error the server answered, its message the problem's detail: what the page shows. `expired` when the server
+// refused the token that the page still holds: it expired, or the server that gave it restarted.
 export class ApiError extends Error {
   readonly status: number;
   readonly problem: Problem | undefined;
+  readonly expired: boolean;
 
-  constructor(status: number, problem?: Problem) {
+  constructor(status: number, problem?: Problem, expired = false) {
     super(problem?.detail ?? problem?.title ?? `the server answered ${status}`);
     this.name = "ApiError";
     this.status = status;
     this.problem = problem;
+    this.expired = expired;
   }
 }
 
@@ -36,43 +39,56 @@ function authorization(init?: HeadersInit): Headers {
   return headers;
 }
 
-// The token was refused: it expired, or the server that gave it restarted.
-export function isUnauthorized(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 401;
+export function isExpired(error: unknown): boolean {
+  return error instanceof ApiError && error.expired;
+}
+
+// The error of a request sent with the token `sent`. A refusal of a token signed out since, answered late, is no news
+// of the session the page holds now.
+async function apiError(response: Response, sent: string | undefined): Promise<ApiError> {
+  const expired = response.status === 401 && sent !== undefined && sent === token;
+
+  return new ApiError(response.status, await problemOf(response), expired);
 }
 
 // A proxy that cannot reach the server answers with no problem, and a body may be cut: the status alone is the error.
-async function apiError(response: Response): Promise<ApiError> {
-  const isProblem = response.headers.get("Content-Type")?.startsWith("application/problem+json");
-
-  if (!isProblem) {
-    return new ApiError(response.status);
+async function problemOf(response: Response): Promise<Problem | undefined> {
+  if (!response.headers.get("Content-Type")?.startsWith("application/problem+json")) {
+    return undefined;
   }
 
   try {
-    return new ApiError(response.status, await response.json());
+    return await response.json();
   } catch {
-    return new ApiError(response.status);
+    return undefined;
   }
 }
 
 export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
+  const sent = token;
   const response = await fetch(url, { ...init, headers: authorization(init.headers) });
 
   if (!response.ok) {
-    throw await apiError(response);
+    throw await apiError(response, sent);
   }
 
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
-// Reads a stream of server-sent events, calling `onItem` with each one's data parsed, until the function it returns
-// is called. `onEnd` hears of an end it did not ask for: with the error of a failure, before the stream or within it,
-// or with nothing when the server ended the stream.
+export type EventHandlers<T> = {
+  // Each event's data, parsed.
+  onItem: (item: T) => void;
+  // The stream is open: what changed before it is not in it.
+  onOpen?: () => void;
+  // An end that was not asked for: the error of a failure, before the stream or within it, or nothing when the
+  // server ended the stream.
+  onEnd?: (error?: unknown) => void;
+};
+
+// Reads a stream of server-sent events until the function it returns is called.
 export function apiEvents<T>(
   url: string,
-  onItem: (item: T) => void,
-  onEnd: (error?: unknown) => void = logFailure,
+  { onItem, onOpen = () => {}, onEnd = logFailure }: EventHandlers<T>,
 ): () => void {
   const controller = new AbortController();
 
@@ -82,7 +98,7 @@ export function apiEvents<T>(
     }
   }
 
-  readEvents(url, onItem, controller.signal).then(() => ended(), ended);
+  readEvents(url, onItem, onOpen, controller.signal).then(() => ended(), ended);
 
   return () => controller.abort();
 }
@@ -93,12 +109,15 @@ function logFailure(error?: unknown) {
   }
 }
 
-async function readEvents<T>(url: string, onItem: (item: T) => void, signal: AbortSignal) {
+async function readEvents<T>(url: string, onItem: (item: T) => void, onOpen: () => void, signal: AbortSignal) {
+  const sent = token;
   const response = await fetch(url, { headers: authorization(), signal });
 
   if (!response.ok) {
-    throw await apiError(response);
+    throw await apiError(response, sent);
   }
+
+  onOpen();
 
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";

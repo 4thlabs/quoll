@@ -30,7 +30,7 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       {session === "signed-in" ? (
-        <NotesPage onSignOut={() => setSession("signed-out")} onUnauthorized={() => setSession(expire)} />
+        <NotesPage onSignOut={() => setSession("signed-out")} onExpired={() => setSession(expire)} />
       ) : (
         <SignIn expired={session === "expired"} onSignedIn={() => setSession("signed-in")} />
       )}
@@ -43,10 +43,10 @@ type Selection = { id: number } | "new" | undefined;
 
 type NotesPageProps = {
   onSignOut: () => void;
-  onUnauthorized: () => void;
+  onExpired: () => void;
 };
 
-function NotesPage({ onSignOut, onUnauthorized }: NotesPageProps) {
+function NotesPage({ onSignOut, onExpired }: NotesPageProps) {
   const [selection, setSelection] = useState<Selection>();
 
   function closeNote() {
@@ -67,7 +67,7 @@ function NotesPage({ onSignOut, onUnauthorized }: NotesPageProps) {
       <main>
         {selection === "new" && <NewNote onCreated={(note) => setSelection({ id: note.id })} onCancel={closeNote} />}
         {typeof selection === "object" && (
-          <NoteView key={selection.id} id={selection.id} onClosed={closeNote} onUnauthorized={onUnauthorized} />
+          <NoteView key={selection.id} id={selection.id} onClosed={closeNote} onExpired={onExpired} />
         )}
       </main>
     </div>

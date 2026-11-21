@@ -12,18 +12,13 @@ type Props = {
 
 export function NewNote({ onCreated, onCancel }: Props) {
   const queryClient = useQueryClient();
-  const create = useNotesCreate();
+  // The list follows a new note even when the form is gone before the answer, which `mutate`'s callbacks miss.
+  const create = useNotesCreate({
+    mutation: { onSuccess: () => queryClient.invalidateQueries({ queryKey: getNotesSearchQueryKey() }) },
+  });
 
   function save(note: Draft) {
-    create.mutate(
-      { data: note },
-      {
-        onSuccess: (created) => {
-          queryClient.invalidateQueries({ queryKey: getNotesSearchQueryKey() });
-          onCreated(created);
-        },
-      },
-    );
+    create.mutate({ data: note }, { onSuccess: onCreated });
   }
 
   return <NoteEditor note={EMPTY} saving={create.isPending} error={create.error} onSave={save} onCancel={onCancel} />;

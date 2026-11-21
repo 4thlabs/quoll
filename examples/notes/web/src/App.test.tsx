@@ -15,14 +15,19 @@ class FakeServer {
   refuseEvents = false;
   private token = "t1";
   private streams: ReadableStreamDefaultController<Uint8Array>[] = [];
-  private paused?: Promise<void>;
+  private paused?: { requests: (request: string) => boolean; until: Promise<void> };
 
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const { pathname, searchParams } = new URL(url, "http://localhost");
     const method = init?.method ?? "GET";
 
-    this.requests.push(`${method} ${pathname}`);
-    await this.paused;
+    const request = `${method} ${pathname}`;
+
+    this.requests.push(request);
+
+    if (this.paused?.requests(request)) {
+      await this.paused.until;
+    }
 
     if (method === "POST" && pathname === "/api/token") {
       const login = new URLSearchParams(init?.body as URLSearchParams);
@@ -34,6 +39,14 @@ class FakeServer {
 
     if (new Headers(init?.headers).get("Authorization") !== `Bearer ${this.token}`) {
       return problem(401, "unknown or expired token");
+    }
+
+    if (method === "POST" && pathname === "/api/notes") {
+      const note = { id: Math.max(0, ...this.notes.map((note) => note.id)) + 1, ...JSON.parse(init?.body as string) };
+
+      this.notes.push(note);
+
+      return Response.json(note, { status: 201 });
     }
 
     if (method === "GET" && pathname === "/api/notes") {
@@ -98,11 +111,11 @@ class FakeServer {
     this.streams = [];
   }
 
-  // Every request waits until the function returned is called.
-  pause(): () => void {
+  // The requests chosen, all of them by default, wait until the function returned is called.
+  pause(requests: (request: string) => boolean = () => true): () => void {
     let resume = () => {};
 
-    this.paused = new Promise((resolve) => (resume = resolve));
+    this.paused = { requests, until: new Promise((resolve) => (resume = resolve)) };
 
     return () => {
       this.paused = undefined;
@@ -190,6 +203,35 @@ it("edits a note, then closes it once another tab removes it", async () => {
 
   await vi.waitFor(() => expect(screen.getByRole("main").children).toHaveLength(0));
   await vi.waitFor(() => expect(noteList().queryByRole("button", { name: "Milk" })).toBeNull());
+});
+
+it("lists a note created after its form was left", async () => {
+  const user = await signInWith("right");
+
+  await user.click(await screen.findByRole("button", { name: "New note" }));
+  await user.type(screen.getByLabelText("Title"), "Eggs");
+
+  const resume = server.pause((request) => request === "POST /api/notes");
+
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  resume();
+
+  expect(await noteList().findByRole("button", { name: "Eggs" })).toBeDefined();
+});
+
+it("shows a change made between the note's read and the opening of its events", async () => {
+  const user = await signInWith("right");
+  const resume = server.pause((request) => request === "GET /api/notes/1/events");
+
+  await user.click(await screen.findByRole("button", { name: "Milk" }));
+  expect(await screen.findByText("Two bottles")).toBeDefined();
+
+  // No one watches the note yet: its event is lost.
+  server.change({ id: 1, title: "Milk", body: "Three bottles" });
+  resume();
+
+  expect(await screen.findByText("Three bottles")).toBeDefined();
 });
 
 it("shows a missing note's error at once, asking once", async () => {
