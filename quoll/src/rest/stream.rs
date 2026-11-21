@@ -97,7 +97,10 @@ impl<S: Stream> Stream for Oks<S> {
 ///
 /// A server of `server::builder()` that is told to stop ends the events after the one it is sending, with nothing more,
 /// as when the stream ends: a stop is no failure, and sends no `event: problem`. The client, and any proxy between,
-/// reads a clean end, which `EventSource` follows by connecting again.
+/// reads a clean end. `EventSource` follows it by connecting again, which brings the stream back only when that
+/// request is answered with a 200: a proxy that answers a 5xx while the server restarts closes it for good. An end at
+/// a stop cannot be told from a finite stream that completes, a feed of progress: a mark of it is an open question,
+/// [#70](https://github.com/4thlabs/quoll/issues/70).
 ///
 /// When an item fails once the 200 is sent, the server logs it and ends the stream with a last event, named
 /// `problem`, whose `data` is the RFC 9457 problem the error would have answered: every value before it is sent.

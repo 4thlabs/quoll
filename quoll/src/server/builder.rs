@@ -321,7 +321,9 @@ where
     // The receiver lives in the server's future, which has not returned: the send cannot fail.
     let _ = stop.send(());
 
-    // Whether any stream is in flight or not.
+    // `send_replace` rather than `send`, which fails and sets nothing when no receiver is left, as in the test of `run`
+    // below: the value holds whatever the receivers, and an `Events` answered from now on, by a clone of the router's
+    // receiver, reads it at once.
     stopping.send_replace(true);
 
     let deadline = pin!(tokio::time::sleep(grace));

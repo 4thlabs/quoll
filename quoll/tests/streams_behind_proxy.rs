@@ -1,21 +1,21 @@
 //! The streams of a server, `Events`, `JsonLines` and `ByteStream`, when `server::builder()`'s server is told to stop:
 //! server-sent events seen to open before their first event, through a proxy that holds the head of an answer until
-//! its first bytes, as Vite's does, then ended cleanly at the stop, long before the grace; a `JsonLines` and a
-//! `ByteStream` left to run until the grace has passed, then cut.
+//! its first bytes, as Vite's does, then ended cleanly at the stop, long before the grace, and an empty 200 when their
+//! handler returns after it; a `JsonLines` and a `ByteStream` left to run until the grace has passed, then cut.
 
 #![cfg(all(feature = "server", feature = "client"))]
 
 use std::io;
 use std::net::SocketAddr;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{StreamExt, stream};
 use quoll::rest::{self, ByteStream, Events, JsonLines, Result};
 use quoll::server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::support::log::Log;
 
@@ -31,6 +31,7 @@ rest::api! {
         GET "/silent" => silent() -> Events<u32>;
         GET "/lines"  => lines() -> JsonLines<u32>;
         GET "/bytes"  => bytes() -> ByteStream;
+        GET "/late"   => late() -> Events<u32>;
     }
 }
 
@@ -41,11 +42,39 @@ const BOUND: Duration = Duration::from_secs(10);
 const HOUR: Duration = Duration::from_secs(3600);
 
 /// The grace of a server that cuts its `JsonLines` and `ByteStream`: long enough for its `Events` to end well before,
-/// short enough for a test to wait it out.
-const GRACE: Duration = Duration::from_secs(2);
+/// even on a loaded runner, short enough for a test to wait it out.
+const GRACE: Duration = Duration::from_secs(5);
 
-/// The service: each stream sends one value, or none for `silent`, then never ends.
-struct App;
+/// The service: each stream sends one value, or none for `silent`, then never ends. `late` tells `entered` it has
+/// begun, then waits for `release` to hold `true` before it answers.
+struct App {
+    entered: mpsc::UnboundedSender<()>,
+    release: watch::Receiver<bool>,
+}
+
+/// The other ends of an [`App`]'s `late`: what hears it has begun, and what lets it answer.
+struct Late {
+    entered: mpsc::UnboundedReceiver<()>,
+    release: watch::Sender<bool>,
+}
+
+/// A service, and the ends of its `late`.
+fn app() -> (App, Late) {
+    let (entered, entered_rx) = mpsc::unbounded_channel();
+    let (release, release_rx) = watch::channel(false);
+    let app = App {
+        entered,
+        release: release_rx,
+    };
+
+    (
+        app,
+        Late {
+            entered: entered_rx,
+            release,
+        },
+    )
+}
 
 /// `first`, then a stream that never ends.
 fn held<T: Send + 'static>(
@@ -70,6 +99,16 @@ impl FeedsServer for App {
     async fn bytes(&self) -> Result<ByteStream> {
         Ok(ByteStream::new(held(Some(b"chunk\n".to_vec()))))
     }
+
+    async fn late(&self) -> Result<Events<u32>> {
+        let mut release = self.release.clone();
+
+        // The test waits for these: it holds their receivers until it has heard them.
+        let _ = self.entered.send(());
+        let _ = release.wait_for(|released| *released).await;
+
+        Ok(Events::new(held(Some(1))))
+    }
 }
 
 /// A listener on a free port of 127.0.0.1, and its address.
@@ -84,9 +123,11 @@ async fn bound() -> (TcpListener, SocketAddr) {
     (listener, address)
 }
 
-/// The api served by `server::builder()` with a grace of an hour, on a task: its address, the sender that stops it,
+/// `app` served by `server::builder()` with a grace of an hour, on a task: its address, the sender that stops it,
 /// and the task, which ends with what `serve_on` returned.
-async fn served() -> (
+async fn served(
+    app: App,
+) -> (
     SocketAddr,
     oneshot::Sender<()>,
     tokio::task::JoinHandle<io::Result<()>>,
@@ -96,7 +137,7 @@ async fn served() -> (
     let builder = server::builder().grace(HOUR).shutdown(async move {
         let _ = stopped.await;
     });
-    let router = Api::router(ApiServices { feeds: App });
+    let router = Api::router(ApiServices { feeds: app });
 
     (
         address,
@@ -149,7 +190,7 @@ fn served_on_a_thread(grace: Duration) -> (SocketAddr, oneshot::Sender<()>, Retu
             });
 
             builder
-                .serve_on(listener, Api::router(ApiServices { feeds: App }))
+                .serve_on(listener, Api::router(ApiServices { feeds: app().0 }))
                 .await
         });
 
@@ -213,7 +254,7 @@ async fn forwarded(client: TcpStream, upstream: SocketAddr) -> io::Result<()> {
 #[tokio::test]
 async fn events_are_seen_to_open_and_end_through_a_proxy_that_holds_the_head() -> Result<()> {
     let (log, _capture) = support::log::capture(false);
-    let (address, stop, serving) = served().await;
+    let (address, stop, serving) = served(app().0).await;
     let api = Api::client(&holding_proxy(address).await)?;
 
     // No event ever comes: the call returns once the head is through, which the opening comment lets out.
@@ -233,9 +274,58 @@ async fn events_are_seen_to_open_and_end_through_a_proxy_that_holds_the_head() -
 }
 
 #[tokio::test]
+async fn events_whose_handler_returns_after_the_stop_are_a_200_with_an_empty_body() -> Result<()> {
+    let (log, _capture) = support::log::capture(false);
+    let (app, mut late) = app();
+    let (address, stop, serving) = served(app).await;
+    let url = format!("http://{address}");
+    let api = Api::client(&url)?;
+    let mut silent = api.feeds().silent().await?;
+    let raw = tokio::spawn(reqwest::get(format!("{url}/api/late")));
+    let called = tokio::spawn({
+        let api = api.clone();
+
+        async move { api.feeds().late().await }
+    });
+
+    // Both handlers are running when the stop comes.
+    for _ in 0..2 {
+        late.entered.recv().await.expect("the handler begins");
+    }
+
+    stop.send(()).expect("the server waits for its signal");
+
+    // The silent stream ends once the server has taken the stop in: the handlers answer after it.
+    assert!(silent.next().await.is_none());
+    late.release.send_replace(true);
+
+    let answer = raw
+        .await
+        .expect("the request's task does not panic")
+        .expect("the server answers");
+
+    assert_eq!(answer.status(), reqwest::StatusCode::OK);
+    let body = tokio::time::timeout(BOUND, answer.text())
+        .await
+        .expect("the body ends at once")
+        .expect("the body reads");
+
+    assert_eq!(body, "");
+
+    let mut events = called.await.expect("the call's task does not panic")?;
+    let end = tokio::time::timeout(BOUND, events.next())
+        .await
+        .expect("the events end at once");
+
+    assert!(end.is_none(), "a clean end, not {end:?}");
+    returned(serving, &log).await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn at_the_stop_events_end_cleanly_while_lines_and_bytes_are_cut_once_the_grace_has_passed()
 -> Result<()> {
-    let (address, stop, mut done) = served_on_a_thread(GRACE);
+    let (address, stop, done) = served_on_a_thread(GRACE);
     let api = Api::client(&format!("http://{address}"))?;
     let mut events = api.feeds().events().await?;
     let mut lines = api.feeds().lines().await?;
@@ -246,18 +336,19 @@ async fn at_the_stop_events_end_cleanly_while_lines_and_bytes_are_cut_once_the_g
     assert_eq!(lines.next().await.transpose()?, Some(1));
     assert_eq!(bytes.next().await.transpose()?, Some(b"chunk\n".to_vec()));
 
+    let stopped = Instant::now();
+
     stop.send(()).expect("the server waits for its signal");
 
     let end = tokio::time::timeout(BOUND, events.next())
         .await
         .expect("the events end when the server stops");
+    let ended = stopped.elapsed();
 
     assert!(end.is_none(), "the events end cleanly, not {end:?}");
-
-    // The lines and the bytes still hold the server, which waits for them until its grace has passed.
     assert!(
-        matches!(done.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
-        "the server still waits for the lines and the bytes"
+        ended < GRACE,
+        "the events end before the grace, not after {ended:?}"
     );
 
     let (line, chunk) = tokio::time::timeout(
@@ -266,6 +357,7 @@ async fn at_the_stop_events_end_cleanly_while_lines_and_bytes_are_cut_once_the_g
     )
     .await
     .expect("the lines and the bytes are cut once the grace has passed");
+    let cut = stopped.elapsed();
 
     assert!(
         matches!(line, Some(Err(_))),
@@ -274,6 +366,10 @@ async fn at_the_stop_events_end_cleanly_while_lines_and_bytes_are_cut_once_the_g
     assert!(
         matches!(chunk, Some(Err(_))),
         "the bytes are cut, not {chunk:?}"
+    );
+    assert!(
+        cut >= GRACE,
+        "the lines and the bytes run until the grace, not {cut:?}"
     );
 
     let (served, log) = done.await.expect("the server's thread does not panic");

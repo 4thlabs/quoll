@@ -271,7 +271,10 @@ no more connections, and returns once the requests it serves have ended.
 
 The `Events` streams in flight end at once, after the event each is sending, so that the client, and a proxy between,
 reads a clean end, as when the handler's stream ends. They end with nothing more: a stop is no failure, and sends no
-`event: problem`. A router served by `axum::serve` itself, or `quoll::test::spawn`, leaves them to run.
+`event: problem`, so that such an end cannot be told from a finite stream that completes, an open question,
+[#70](https://github.com/4thlabs/quoll/issues/70). An `EventSource` connects again after it, and goes on only when it
+is answered with a 200: a proxy that answers a 5xx while the server restarts closes it for good. A router served by
+`axum::serve` itself, or `quoll::test::spawn`, leaves them to run.
 
 It waits 5 s for the other requests, or what `.grace(duration)` says, or until a second Ctrl-C or `SIGTERM`. Then it
 logs at `WARN` that connections were left open, and returns `Ok`. They end with the runtime, as `main` returns.
