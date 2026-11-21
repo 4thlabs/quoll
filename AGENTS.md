@@ -39,9 +39,10 @@ Planned, from the spec:
 
 - `quoll/`: the crate users depend on. Its features `server` (axum) and `client` (reqwest) are each off by default.
 - `quoll-macros/`: the proc macro behind `quoll::rest::api!`, re-exported by `quoll`, which users never name.
-- `quoll-cli/`: the binary `cargo-quoll`, `cargo quoll gen` and `build`, configured in the workspace's
+- `quoll-cli/`: the binary `cargo-quoll`, `cargo quoll gen`, `build` and `dev`, configured in the workspace's
   `[workspace.metadata.quoll]`. It does not depend on `quoll`: it runs the contract's binary. Its tests run it on a
-  small workspace under `tests/fixture/`, copied for each test, and on the notes example.
+  small workspace under `tests/fixture/`, copied for each test, whose server and `web.dev` listen on ports, and on the
+  notes example.
 - `examples/notes/`: the spec's complete example, split into the contract, its server, its command line and its page.
   It is built and tested with the workspace.
 - `examples/docker/`: a contract of the Docker Engine API, which it only calls, and a command line on it, built and
@@ -68,7 +69,8 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
   `--package 'notes-*' --package 'docker-*' --package quoll-guides`, whose tests
   set `DOCKER_CLI_TEST_DAEMON=required`, so that the Docker example's test fails when the runner's daemon does not
   answer. `quoll-cli`, which does not depend on `quoll`, is left out of the four as well, and has a run of its own,
-  `--package quoll-cli`. Warnings are errors, in rustc and in rustdoc.
+  `--package quoll-cli`, and its clippy and tests run on macOS and Windows too, in the job `cli`, where `cargo quoll
+  dev` stops its children in other ways. Warnings are errors, in rustc and in rustdoc.
 - The `ci` job gathers all of them and is the one check `main` requires: a new job goes in its `needs`. The branch must
   be up to date with `main`, and every review thread resolved, before the merge.
 - A pull request is merged with a rebase, and its branch deleted. Closing its issue is done in its description with

@@ -95,10 +95,28 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc ${{ matrix.packages }} --no-deps --features "${{ matrix.features }}"
 
+  # quoll-cli on macOS and Windows, where `cargo quoll dev` stops its children in other ways than on Linux: its lints,
+  # which see the code of each OS, and its tests, which run a real server and stop it.
+  cli:
+    name: cli (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --package quoll-cli --all-targets -- -D warnings
+      - run: cargo test --package quoll-cli
+
   # The one check branch protection requires: it fails when any job above failed or was skipped.
   ci:
     if: always()
-    needs: [fmt, clippy, test, doc]
+    needs: [fmt, clippy, test, doc, cli]
     runs-on: ubuntu-latest
     steps:
       - run: |

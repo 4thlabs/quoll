@@ -109,6 +109,47 @@ A command is a list of words, run with no shell: its program is found on the `PA
 `npm.cmd` on Windows. Each fails with the output of the cargo build or of the command that failed, and a config that
 cannot be read names the key at fault, `workspace.metadata.quoll.api[0].output: missing`.
 
+## `cargo quoll dev`
+
+`cargo quoll dev` runs `gen`, starts the servers and the web side's dev server, then makes again what a change of a
+file touches, until Ctrl-C. Its servers and its `web.dev` are named in the config too:
+
+```toml
+[[workspace.metadata.quoll.server]]
+package = "notes-server"
+url = "http://127.0.0.1:8080"
+
+[workspace.metadata.quoll.web]
+dir = "web"
+dev = ["npm", "run", "dev"]
+build = ["npm", "run", "build"]
+```
+
+- A server runs the binary `cargo run` would run: its package's only binary, or its `default-run`. It is ready when
+  its `url` accepts a connection.
+- A change to a contract, or to a crate it is built with, writes its document when its content changed, runs its
+  `after` commands then, and restarts the servers built with it. A document that did not change is left as it is, so
+  that the bundler reloads nothing.
+- A change to a server restarts that server alone. The one that runs stops only once the new one has compiled: a
+  server that does not compile prints cargo's errors, and the last one that compiled keeps answering.
+- `web.dev` starts once every server is ready, in `web.dir`, and runs until the end: the bundler watches its own
+  files, the TypeScript that `after` writes among them.
+- Ctrl-C, or `SIGTERM`, stops `web.dev`, then the servers, each with what it started, on Linux, macOS and Windows.
+
+The target directory, `web.dir`, the documents and hidden files are not watched. `cargo quoll dev --json` prints one
+JSON line per event on stdout, for a tool that reads them, and its output for a person on stderr:
+
+```text
+{"event":"document","package":"notes-api","path":"web/openapi.json","changed":true}
+{"event":"server","state":"building","package":"notes-server","url":"http://127.0.0.1:8080"}
+{"event":"error","source":"cargo","package":"notes-server","message":"mismatched types","file":"server/src/main.rs","line":12,"column":5}
+{"event":"server","state":"failed","package":"notes-server","url":"http://127.0.0.1:8080"}
+{"event":"server","state":"ready","package":"notes-server","url":"http://127.0.0.1:8080"}
+{"event":"web","state":"started"}
+```
+
+The [dev loop of the spec](../spec.md#the-dev-loop) lists every event and its fields.
+
 ## What it holds
 
 - **Paths**: each route under the api's prefix, its operation named `group_function`, `notes_get`, and tagged with

@@ -1,9 +1,10 @@
-//! `cargo quoll`: writes the OpenAPI documents of a workspace's contracts, runs the commands that follow them, and
-//! builds its web side, as the workspace's `[workspace.metadata.quoll]` says.
+//! `cargo quoll`: writes the OpenAPI documents of a workspace's contracts, runs the commands that follow them, builds
+//! its web side, and runs its dev loop, as the workspace's `[workspace.metadata.quoll]` says.
 
 mod cargo;
 mod commands;
 mod config;
+mod dev;
 mod documents;
 
 use std::process::ExitCode;
@@ -20,8 +21,8 @@ enum Cli {
     Quoll(Quoll),
 }
 
-/// Writes the OpenAPI documents of the workspace's contracts, runs the commands that follow them, and builds its web
-/// side, as `[workspace.metadata.quoll]` says in the workspace's Cargo.toml.
+/// Writes the OpenAPI documents of the workspace's contracts, runs the commands that follow them, builds its web side,
+/// and runs its dev loop, as `[workspace.metadata.quoll]` says in the workspace's Cargo.toml.
 #[derive(Args)]
 #[command(version)]
 struct Quoll {
@@ -39,6 +40,13 @@ enum Command {
     },
     /// Runs `gen`, then `web.build`.
     Build,
+    /// Runs `gen`, starts the servers, then `web.dev`, and makes again the documents and the servers a change touches,
+    /// until Ctrl-C.
+    Dev {
+        /// Prints one JSON line per event on stdout, the output for a person going to stderr.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -60,6 +68,7 @@ fn run(command: Command) -> Result<()> {
         Command::Gen { check: false } => documents::generate(&workspace),
         Command::Gen { check: true } => documents::check(&workspace),
         Command::Build => build(&workspace),
+        Command::Dev { json } => dev::run(&workspace, json),
     }
 }
 

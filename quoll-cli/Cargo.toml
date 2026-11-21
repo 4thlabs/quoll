@@ -1,6 +1,6 @@
 [package]
 name = "quoll-cli"
-description = "cargo quoll: the OpenAPI documents of a workspace's contracts, the commands that follow them, and its web build"
+description = "cargo quoll: the OpenAPI documents of a workspace's contracts, the commands that follow them, its web build, and its dev loop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,6 +14,17 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+# The watcher of `cargo quoll dev`, its events gathered over a short time: an editor's save is one change.
+notify-debouncer-full = "0.7"
+# The children of `cargo quoll dev` in a process group on Unix and a job object on Windows, so that stopping one stops
+# what it started.
+process-wrap = { version = "10", default-features = false, features = [
+    "tokio1",
+    "process-group",
+    "job-object",
+    "kill-on-drop",
+    "creation-flags",
+] }
 serde = { version = "1", features = ["derive"] }
 # The output of `cargo metadata` and of `cargo build --message-format=json`.
 serde_json = "1"
@@ -21,6 +32,16 @@ serde_json = "1"
 serde_path_to_error = "0.1"
 # A command's program found on the PATH as the OS does, with `PATHEXT` on Windows, which `std::process` does not read.
 which = "8"
+# `cargo quoll dev`: its children, its signals, the connection that says a server is ready.
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
+
+# The signal that asks a child to stop.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# The process group of a child, which a Ctrl-C in the console does not reach: `cargo quoll dev` stops it.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3"

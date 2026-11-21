@@ -1,0 +1,4 @@
+[package]
+name = "web-dev"
+edition = "2024"
+publish = false
