@@ -1,5 +1,5 @@
 //! The server of the contract: answers every request with its version and the contract's document, on the address
-//! the tests give it in `FIXTURE_SERVER_ADDRESS`.
+//! the tests give it in `FIXTURE_SERVER_ADDRESS`, or exits at once with the code in `FIXTURE_SERVER_EXIT`.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -8,6 +8,11 @@ use std::net::TcpListener;
 const VERSION: &str = "server 1";
 
 fn main() {
+    // A server that fails as it starts, for the tests that ask for it.
+    if let Ok(code) = std::env::var("FIXTURE_SERVER_EXIT") {
+        std::process::exit(code.parse().expect("an exit code"));
+    }
+
     let address =
         std::env::var("FIXTURE_SERVER_ADDRESS").expect("the tests give the server its address");
     let listener = TcpListener::bind(&address).expect("the server's address is free");

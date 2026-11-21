@@ -1,6 +1,7 @@
 //! The servers of `cargo quoll dev`: built, copied out of the target directory, started, and restarted on a newer
 //! build, the one that runs stopped only once the new one has compiled.
 
+use std::fs::{self, File, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{self, ExitStatus};
@@ -39,7 +40,6 @@ struct Running {
     copy: PathBuf,
     /// The executable in the target directory it is a copy of, as it was then.
     identity: Identity,
-    ready: bool,
 }
 
 /// What tells an executable from the next one cargo builds: its size and its time.
@@ -66,35 +66,63 @@ impl Identity {
 }
 
 /// Where the executables that run are copied, so that cargo can build the next one meanwhile: Windows does not
-/// replace an executable that runs.
+/// replace an executable that runs. Each `cargo quoll dev` has a directory of its own, `quoll-dev/<pid>`, which it
+/// holds locked while it runs.
 #[derive(Debug)]
 pub(crate) struct Copies {
+    /// `quoll-dev` in the target directory.
+    root: PathBuf,
+    /// This one's directory in it.
     dir: PathBuf,
+    /// The lock of the directory, which tells another `cargo quoll dev` that it is in use.
+    lock: Option<File>,
     next: u64,
 }
 
+/// The file whose lock says a directory of copies is in use.
+const LOCK: &str = "lock";
+
 impl Copies {
     pub(crate) fn new(workspace: &Workspace) -> Self {
+        let root = workspace.target_directory.join("quoll-dev");
+
         Self {
-            dir: workspace.target_directory.join("quoll-dev"),
+            dir: root.join(process::id().to_string()),
+            root,
+            lock: None,
             next: 0,
         }
     }
 
-    /// Removes the copies an earlier `cargo quoll dev` left, when it was killed.
-    pub(crate) async fn clear(&self, reporter: &Reporter) {
-        match tokio::fs::remove_dir_all(&self.dir).await {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => reporter.status(
-                "Warning",
-                format!("cannot remove {}: {error}", self.dir.display()),
-            ),
-            _ => {}
+    /// Makes the directory of this `cargo quoll dev` and locks it, then removes those that another one left when it
+    /// was killed, whose lock no one holds.
+    pub(crate) async fn prepare(&mut self, reporter: &Reporter) {
+        let root = self.root.clone();
+        let dir = self.dir.clone();
+        let prepared = tokio::task::spawn_blocking(move || prepare(&root, &dir)).await;
+
+        match prepared {
+            Ok((lock, warnings)) => {
+                self.lock = lock;
+
+                for warning in warnings {
+                    reporter.status("Warning", warning);
+                }
+            }
+            Err(error) => reporter.status("Warning", format!("cannot clear old copies: {error}")),
         }
+    }
+
+    /// Removes the directory of this `cargo quoll dev`, once its servers stopped.
+    pub(crate) async fn finish(&mut self, reporter: &Reporter) {
+        // Windows removes no file that is open.
+        self.lock = None;
+        remove(&self.dir, reporter).await;
     }
 
     /// Copies `executable` into a directory of its own, and returns the copy.
     async fn copy(&mut self, executable: &Path) -> Result<PathBuf> {
-        let dir = self.dir.join(format!("{}-{}", process::id(), self.next));
+        let dir = self.dir.join(self.next.to_string());
         let name = executable.file_name().context("an executable is a file")?;
         let copy = dir.join(name);
 
@@ -111,6 +139,68 @@ impl Copies {
     }
 }
 
+/// Makes `dir` and locks it, then removes the other directories of `root` whose lock no one holds, and returns the
+/// lock, none when it cannot be taken, with what could not be done.
+fn prepare(root: &Path, dir: &Path) -> (Option<File>, Vec<String>) {
+    let mut warnings = Vec::new();
+    let lock = fs::create_dir_all(dir)
+        .and_then(|()| File::create(dir.join(LOCK)))
+        .and_then(|file| file.lock().map(|()| file));
+    let lock = match lock {
+        Ok(lock) => Some(lock),
+        Err(error) => {
+            warnings.push(format!("cannot lock {}: {error}", dir.display()));
+            None
+        }
+    };
+
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            warnings.push(format!("cannot read {}: {error}", root.display()));
+            return (lock, warnings);
+        }
+    };
+
+    for entry in entries.flatten() {
+        let other = entry.path();
+
+        if other == dir {
+            continue;
+        }
+
+        let stale = match File::open(other.join(LOCK)) {
+            // Its lock is taken, and let go as the file closes, before the directory is removed.
+            Ok(file) => match file.try_lock() {
+                Ok(()) => true,
+                Err(TryLockError::WouldBlock) => false,
+                Err(TryLockError::Error(error)) => {
+                    warnings.push(format!("cannot lock {}: {error}", other.display()));
+                    false
+                }
+            },
+            // Copies with no lock are those of a `cargo quoll dev` that was killed as it started.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+            Err(error) => {
+                warnings.push(format!(
+                    "cannot open the lock of {}: {error}",
+                    other.display()
+                ));
+                false
+            }
+        };
+
+        if stale
+            && let Err(error) = fs::remove_dir_all(&other)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            warnings.push(format!("cannot remove {}: {error}", other.display()));
+        }
+    }
+
+    (lock, warnings)
+}
+
 impl<'a> Server<'a> {
     pub(crate) fn new(config: &'a config::Server) -> Self {
         Self {
@@ -121,11 +211,6 @@ impl<'a> Server<'a> {
 
     pub(crate) fn package(&self) -> &str {
         &self.config.package
-    }
-
-    /// Whether the server runs and has answered.
-    pub(crate) fn is_ready(&self) -> bool {
-        self.running.as_ref().is_some_and(|running| running.ready)
     }
 
     /// The process that runs the server, when one does.
@@ -155,13 +240,12 @@ impl<'a> Server<'a> {
         };
         let (executable, identity) = match identity {
             Ok(found) => found,
-            Err(error) => return self.failed(reporter, &error),
+            Err(error) => return self.failed(reporter, &error, None),
         };
 
         // Another cargo may have built the executable first, which this build then finds fresh: what tells is the
         // executable, not the build.
         if let Some(running) = &mut self.running
-            && running.ready
             && running.identity == identity
             && running
                 .child
@@ -175,7 +259,7 @@ impl<'a> Server<'a> {
 
         let copy = match copies.copy(&executable).await {
             Ok(copy) => copy,
-            Err(error) => return self.failed(reporter, &error),
+            Err(error) => return self.failed(reporter, &error, None),
         };
 
         self.stop(reporter).await;
@@ -242,6 +326,7 @@ impl<'a> Server<'a> {
                     "another process answers on {}: the server cannot listen there",
                     self.config.url
                 ),
+                None,
             );
         }
 
@@ -260,7 +345,7 @@ impl<'a> Server<'a> {
             Ok(child) => child,
             Err(error) => {
                 remove(&dir, reporter).await;
-                return self.failed(reporter, &error);
+                return self.failed(reporter, &error, None);
             }
         };
 
@@ -281,8 +366,34 @@ impl<'a> Server<'a> {
             },
             other => other,
         };
-        let answered = match answered {
-            Ok(answered) => answered,
+        match answered {
+            Ok(true) => {
+                reporter.status(
+                    "Ready",
+                    format!("{} on {}", self.config.package, self.config.url),
+                );
+                self.event(reporter, ServerState::Ready, None);
+                self.running = Some(Running {
+                    child,
+                    copy: dir,
+                    identity,
+                });
+            }
+            Ok(false) => {
+                let status = child.stop().await;
+
+                remove(&dir, reporter).await;
+                self.failed(
+                    reporter,
+                    &anyhow!(
+                        "{} does not answer on {} after {} s: it is stopped",
+                        self.config.package,
+                        self.config.url,
+                        READY.as_secs()
+                    ),
+                    child::code(&status),
+                );
+            }
             Err(status) => {
                 drop(child);
                 remove(&dir, reporter).await;
@@ -292,46 +403,21 @@ impl<'a> Server<'a> {
                     Err(error) => error.to_string(),
                 };
 
-                reporter.error(
-                    Some(&self.config.package),
+                self.failed(
+                    reporter,
                     &anyhow!(
                         "{} exited before it answered on {}, {said}",
                         self.config.package,
                         self.config.url
                     ),
+                    child::code(&status),
                 );
-                self.event(reporter, ServerState::Stopped, child::code(&status));
-                return;
             }
-        };
-
-        if answered {
-            reporter.status(
-                "Ready",
-                format!("{} on {}", self.config.package, self.config.url),
-            );
-            self.event(reporter, ServerState::Ready, None);
-        } else {
-            reporter.error(
-                Some(&self.config.package),
-                &anyhow!(
-                    "{} does not answer on {} after {} s: it keeps running",
-                    self.config.package,
-                    self.config.url,
-                    READY.as_secs()
-                ),
-            );
         }
-
-        self.running = Some(Running {
-            child,
-            copy: dir,
-            identity,
-            ready: answered,
-        });
     }
 
-    fn failed(&self, reporter: &Reporter, error: &anyhow::Error) {
+    /// Reports a server that does not compile or cannot start, with the exit `code` of one that exited.
+    fn failed(&self, reporter: &Reporter, error: &anyhow::Error, code: Option<i32>) {
         reporter.error(Some(&self.config.package), error);
 
         let left = if self.running.is_some() {
@@ -341,7 +427,7 @@ impl<'a> Server<'a> {
         };
 
         reporter.status("Failed", format!("{}: {left}", self.config.package));
-        self.event(reporter, ServerState::Failed, None);
+        self.event(reporter, ServerState::Failed, code);
     }
 
     fn event(&self, reporter: &Reporter, state: ServerState, code: Option<i32>) {

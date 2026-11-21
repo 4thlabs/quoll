@@ -43,7 +43,7 @@ pub(crate) fn run(workspace: &Workspace, json: bool) -> Result<()> {
     let (sender, receiver) = mpsc::unbounded_channel();
     // Watching starts before the first round, so that a change made meanwhile is seen. It reads the file system, as
     // the graph does, before the runtime starts.
-    let (_watcher, watched) = watch::start(workspace, graph.clone(), roots, sender)?;
+    let (_watcher, watched) = watch::start(workspace, graph.clone(), roots, sender, &reporter)?;
 
     reporter.status("Watching", format!("{watched} package(s)"));
 
@@ -77,7 +77,6 @@ struct Dev<'a> {
     servers: Vec<Server<'a>>,
     /// `web.dev` once it runs: it starts once, and its bundler watches its own files.
     web: Option<Child>,
-    web_started: bool,
     copies: Copies,
     /// For each api, whether its `after` has to run, though its document did not change: at the start, as `gen`
     /// runs it, and until every command of a run of it succeeded, so that a document made while it could not run
@@ -93,7 +92,6 @@ impl<'a> Dev<'a> {
             graph,
             servers: workspace.config.servers.iter().map(Server::new).collect(),
             web: None,
-            web_started: false,
             copies: Copies::new(workspace),
             after_pending: vec![true; workspace.config.apis.len()],
         }
@@ -103,20 +101,37 @@ impl<'a> Dev<'a> {
         let mut shutdown =
             Shutdown::new().context("cannot listen to the signals that stop `cargo quoll dev`")?;
 
-        self.copies.clear(&self.reporter).await;
+        self.copies.prepare(&self.reporter).await;
 
-        let result = tokio::select! {
-            () = self.round(&Changed::All) => self.watch(&mut receiver, &mut shutdown).await,
-            () = shutdown.requested() => Ok(()),
+        let first = async {
+            self.round(&Changed::All).await;
+            self.start_web().await;
+        };
+        let started = tokio::select! {
+            () = first => true,
+            () = shutdown.requested() => false,
+        };
+        let result = if started {
+            self.watch(&mut receiver, &mut shutdown).await
+        } else {
+            Ok(())
         };
 
         self.reporter.status("Stopping", "every child");
 
-        // A second Ctrl-C does not wait for the children to stop: they are killed as they are dropped.
+        // The children of a round a signal cut short are stopped as they are dropped, then waited for here. A second
+        // Ctrl-C does not wait: they are killed as the runtime drops their stops.
+        let stopping = async {
+            self.stop().await;
+            process::stopped().await;
+        };
+
         tokio::select! {
-            () = self.stop() => {}
+            () = stopping => {}
             () = shutdown.requested() => {}
         }
+
+        self.copies.finish(&self.reporter).await;
 
         result
     }
@@ -173,8 +188,7 @@ impl<'a> Dev<'a> {
         }
     }
 
-    /// Makes the documents `changed` touches, then restarts the servers it touches, then starts `web.dev` once
-    /// every server is ready.
+    /// Makes the documents `changed` touches, then restarts the servers it touches.
     async fn round(&mut self, changed: &Changed) {
         let workspace = self.workspace;
 
@@ -197,8 +211,6 @@ impl<'a> Dev<'a> {
                     .await;
             }
         }
-
-        self.start_web().await;
     }
 
     /// Whether `changed` touches `package`: a change of it or of a package it is built with.
@@ -213,13 +225,8 @@ impl<'a> Dev<'a> {
             .any(|&changed| self.graph.depends_on(package, changed))
     }
 
+    /// Starts `web.dev`, once the first round has given each server its state, ready or failed.
     async fn start_web(&mut self) {
-        if self.web_started || !self.servers.iter().all(Server::is_ready) {
-            return;
-        }
-
-        self.web_started = true;
-
         let Some(web) = &self.workspace.config.web else {
             return;
         };

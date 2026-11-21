@@ -2,6 +2,7 @@
 
 use std::env;
 use std::fmt;
+use std::io::{self, Write};
 use std::path::Path;
 use std::process::{self, ExitStatus};
 
@@ -51,7 +52,13 @@ impl Command {
         let resolved = which::which_in(program, env::var_os("PATH"), dir)
             .with_context(|| format!("{key}: cannot find the program `{program}` on the PATH"))?;
 
-        eprintln!("{:>12} `{self}` in {}", "Running", dir.display());
+        // Not `eprintln!`, which panics on a terminal hung up, and would kill the children of `cargo quoll dev`.
+        let _ = writeln!(
+            io::stderr(),
+            "{:>12} `{self}` in {}",
+            "Running",
+            dir.display()
+        );
 
         let mut process = process::Command::new(&resolved);
 
