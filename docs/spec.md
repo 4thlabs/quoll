@@ -1198,11 +1198,12 @@ export function NoteView({ id, onClosed, onExpired }: Props) {
   }
 
   const { data: note, error, refetch } = useNotesGet(id);
-  // The cache follows a change here, as `mutate`'s own callbacks do not once the view is gone.
+  // The cache follows a change here, as `mutate`'s own callbacks do not once the view is gone. The note is read
+  // again rather than set to the answer, which a change elsewhere, read meanwhile, may be newer than.
   const update = useNotesUpdate({
     mutation: {
-      onSuccess: (saved) => {
-        queryClient.setQueryData(getNotesGetQueryKey(id), saved);
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getNotesGetQueryKey(id) });
         listChanged();
       },
     },

@@ -15,19 +15,26 @@ class FakeServer {
   refuseEvents = false;
   private token = "t1";
   private streams: ReadableStreamDefaultController<Uint8Array>[] = [];
-  private paused?: { requests: (request: string) => boolean; until: Promise<void> };
+  private paused?: Hold;
+  private delayed?: Hold;
 
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
-    const { pathname, searchParams } = new URL(url, "http://localhost");
-    const method = init?.method ?? "GET";
-
-    const request = `${method} ${pathname}`;
+    const { pathname } = new URL(url, "http://localhost");
+    const request = `${init?.method ?? "GET"} ${pathname}`;
 
     this.requests.push(request);
+    await this.paused?.wait(request);
 
-    if (this.paused?.requests(request)) {
-      await this.paused.until;
-    }
+    const response = await this.answer(url, init);
+
+    await this.delayed?.wait(request);
+
+    return response;
+  };
+
+  private async answer(url: string, init?: RequestInit): Promise<Response> {
+    const { pathname, searchParams } = new URL(url, "http://localhost");
+    const method = init?.method ?? "GET";
 
     if (method === "POST" && pathname === "/api/token") {
       const login = new URLSearchParams(init?.body as URLSearchParams);
@@ -81,7 +88,7 @@ class FakeServer {
     }
 
     return problem(405, `no route ${method} ${pathname}`);
-  };
+  }
 
   // A change, from the page or from elsewhere, which the note's watchers hear of.
   change(note: Note): Note {
@@ -113,14 +120,16 @@ class FakeServer {
 
   // The requests chosen, all of them by default, wait until the function returned is called.
   pause(requests: (request: string) => boolean = () => true): () => void {
-    let resume = () => {};
+    this.paused = new Hold(requests);
 
-    this.paused = { requests, until: new Promise((resolve) => (resume = resolve)) };
+    return this.paused.release;
+  }
 
-    return () => {
-      this.paused = undefined;
-      resume();
-    };
+  // The requests chosen are carried out, and their answers wait until the function returned is called.
+  delayAnswers(requests: (request: string) => boolean): () => void {
+    this.delayed = new Hold(requests);
+
+    return this.delayed.release;
   }
 
   private stream(): Response {
@@ -133,6 +142,22 @@ class FakeServer {
     const chunk = new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
 
     this.streams.forEach((stream) => stream.enqueue(chunk));
+  }
+}
+
+class Hold {
+  release = () => {};
+  private released = new Promise<void>((resolve) => (this.release = resolve));
+  private readonly requests: (request: string) => boolean;
+
+  constructor(requests: (request: string) => boolean) {
+    this.requests = requests;
+  }
+
+  async wait(request: string) {
+    if (this.requests(request)) {
+      await this.released;
+    }
   }
 }
 
@@ -310,6 +335,26 @@ it("says that a note being edited changed elsewhere, and reloads it", async () =
 
   expect(screen.getByLabelText("Text")).toHaveProperty("value", "Three bottles");
   expect(screen.queryByText(/changed elsewhere/)).toBeNull();
+});
+
+it("shows the note as it is once a slow save answers after a change elsewhere", async () => {
+  const user = await openNote("Milk");
+
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.type(screen.getByLabelText("Text"), ", and cream");
+
+  const answer = server.delayAnswers((request) => request === "PUT /api/notes/1");
+
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await vi.waitFor(() => expect(server.notes[0].body).toBe("Two bottles, and cream"));
+
+  // Another tab changes the note after the save, and its event is read before the save's answer.
+  server.change({ id: 1, title: "Milk", body: "Four bottles" });
+  expect(await screen.findByText(/changed elsewhere/)).toBeDefined();
+  answer();
+
+  expect(await screen.findByText("Four bottles")).toBeDefined();
+  expect(screen.queryByText("Two bottles, and cream")).toBeNull();
 });
 
 it("pages through the notes, not past the last one", async () => {
