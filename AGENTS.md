@@ -15,9 +15,11 @@ The maintainer writes in French. Code, comments, docs and commit messages are in
 
 ## Status
 
-Design first: the workspace and its CI stand, and the features of the spec come issue by issue. The spec is
-**Validated** by the maintainer: it changes only by a decision of theirs, made in the pull request that updates it,
-with its new date.
+The milestones of the spec are done: the contract, the server, the client, the OpenAPI document, `cargo quoll gen`,
+`build` and `dev`, the notes page and the guides. quoll is used from git, with no version yet: the first release is
+[#21](https://github.com/4thlabs/quoll/issues/21). What comes next is in the milestone
+[Later](https://github.com/4thlabs/quoll/milestone/5), one issue per piece of work. The spec is **Validated** by the
+maintainer: it changes only by a decision of theirs, made in the pull request that updates it, with its new date.
 
 ## Build and test
 
@@ -49,7 +51,6 @@ cargo quoll dev                                                    # the notes s
 
 ## Layout
 
-Planned, from the spec:
 
 - `quoll/`: the crate users depend on. Its features `server` (axum) and `client` (reqwest) are each off by default.
 - `quoll-macros/`: the proc macro behind `quoll::rest::api!`, re-exported by `quoll`, which users never name.
