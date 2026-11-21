@@ -39,3 +39,7 @@ mod testing {}
 #[cfg(doctest)]
 #[doc = include_str!("openapi.md")]
 mod openapi {}
+
+#[cfg(doctest)]
+#[doc = include_str!("typescript.md")]
+mod typescript {}

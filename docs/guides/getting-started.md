@@ -160,7 +160,7 @@ cargo run -- openapi > openapi.json
 ```
 
 The notes example has a page on it, [`examples/notes/web`](../../examples/notes/web), whose hooks orval writes from
-that document: [the web side](openapi.md#the-web-side) runs it.
+that document: [the TypeScript guide](typescript.md) says how `cargo quoll` writes it and runs the page.
 
 ## Crates by role
 
@@ -205,3 +205,4 @@ line never links axum, nor the server reqwest.
 - [Authentication](authentication.md): routes that take a token, a key or a cookie.
 - [Testing](testing.md): a server and its client in a test.
 - [OpenAPI](openapi.md): what the document holds.
+- [TypeScript](typescript.md): the page, its hooks and its streams, from the document.
