@@ -9,8 +9,8 @@ conventions.
 The TypeScript and TOML blocks of this guide are excerpts of [the notes example](../../examples/notes), under the
 name of their file. A test of its page, `web/src/guide/excerpts.test.ts`, fails when one is no longer in its file,
 and the page's build type-checks the TypeScript. The code that the page does not use, `EventSource` and the reading of
-`JsonLines` and `ByteStream`, is in its `web/src/guide/`. The Next.js recipe is of another app, and was checked by
-hand with Next.js 16.
+`JsonLines` and `ByteStream`, is in its `web/src/guide/`. The Next.js recipe and the second generator's config are
+of another app, and were checked by hand, with Next.js 16 and openapi-typescript 7.
 
 ## The chain
 

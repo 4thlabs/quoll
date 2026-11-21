@@ -62,10 +62,15 @@ it("finds the guide's blocks", () => {
   expect(all.filter((block) => block.file !== undefined).length).toBeGreaterThan(5);
 });
 
-// The Next.js recipe is of another app, checked by hand.
-it("names the file of each TypeScript block, but the Next.js recipe's", () => {
+// The sections whose blocks are of another app than the notes example, checked by hand.
+const otherApps = ["Next.js", "A second generator"];
+
+it("names the file of each TypeScript and TOML block, but those of another app", () => {
   const unnamed = all.filter(
-    (block) => block.language === "typescript" && block.file === undefined && !block.section.startsWith("Next.js"),
+    (block) =>
+      ["typescript", "toml"].includes(block.language) &&
+      block.file === undefined &&
+      !otherApps.includes(block.section),
   );
 
   expect(unnamed.map((block) => block.code.split("\n")[0])).toEqual([]);

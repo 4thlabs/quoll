@@ -73,6 +73,7 @@ Planned, from the spec:
   A guide says how to use quoll and links to the rustdoc for each item's detail; the why stays in the spec.
   The TypeScript guide's TypeScript and TOML blocks are excerpts of the notes example, each under the name of its
   file, which the page's `src/guide/excerpts.test.ts` checks; the code the page does not use is in its `src/guide/`.
+  The blocks of another app, its sections Next.js and A second generator, are checked by hand.
 
 What the macro generates is never written to disk: `cargo expand` shows it. The TypeScript that orval writes is
 generated in the example, and gitignored.
