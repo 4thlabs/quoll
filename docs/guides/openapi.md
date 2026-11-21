@@ -161,9 +161,11 @@ The [dev loop of the spec](../spec.md#the-dev-loop) lists every event and its fi
 - The bundler's own proxy sends `/api` to the server's `url`, Vite's `server.proxy`: the page calls the api on its
   own origin. The bundler's config repeats the `url`: the two change together. It needs nothing else for `Events`:
   an `Events` answer opens with a comment, which Vite's proxy, holding the head of an answer until its first bytes,
-  lets through at once, and a server that `cargo quoll dev` restarts ends its `Events` cleanly, so that the page sees
-  its stream open and end. A `JsonLines` or a `ByteStream` is seen to open with its first line or chunk, and a
-  restart cuts it, which Vite's proxy may not pass on: the page's side may stay open, a limit of the dev loop
+  lets through at once, and a server that `cargo quoll dev` restarts, sent `SIGTERM` on Linux and macOS, ends its
+  `Events` cleanly, so that the page sees its stream open and end. A `JsonLines` or a `ByteStream` is seen to open
+  with its first line or chunk. A stream the server cuts rather than ends, a `JsonLines` or a `ByteStream` at a
+  restart, any stream on Windows, where the server's job is terminated, or of a server that crashes, is not passed
+  on: Vite's proxy keeps the page's side open, a limit of the dev loop
   ([#70](https://github.com/4thlabs/quoll/issues/70)).
 - orval's config reads the document, `input: "./openapi.json"`, and `after` runs it, `npx --no orval`: the orval
   that `npm ci` installs, at the version the lock file pins, or an error that asks for it. Its mutator, one function
