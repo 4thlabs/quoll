@@ -7,8 +7,10 @@
 use std::error::Error as _;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 use http::Extensions;
+use quoll::client::Attempt;
 use quoll::rest::{self, Error};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware, Next};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -159,6 +161,37 @@ async fn a_failure_tried_again_shows_no_key() {
     let error = call(http, &url).await;
 
     assert_shows_no_key(&error, "/api/keyed");
+}
+
+#[tokio::test]
+async fn an_attempt_retry_decides_on_shows_no_key() {
+    let url = dead_url().await;
+    let shown: Arc<Mutex<Vec<String>>> = Arc::default();
+    let retry = {
+        let shown = Arc::clone(&shown);
+
+        quoll::client::retry(1).when(move |attempt: &Attempt| {
+            let error = attempt.error().expect("no answer");
+
+            shown
+                .lock()
+                .expect("no test panics while holding it")
+                .push(format!("{error}\n{error:?}\n{attempt:?}"));
+            attempt.transient()
+        })
+    };
+
+    let error = call(ClientBuilder::new(reqwest::Client::new()).with(retry), &url).await;
+
+    assert_shows_no_key(&error, "/api/keyed");
+
+    let shown = shown.lock().expect("no test panics while holding it");
+
+    assert_eq!(shown.len(), 2);
+    for shown in shown.iter() {
+        assert!(!shown.contains(KEY), "{shown}");
+        assert!(shown.contains("/api/keyed"), "{shown}");
+    }
 }
 
 #[tokio::test]

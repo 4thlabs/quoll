@@ -38,9 +38,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// [problem](Error::problem) when the body is one, and the [body](Error::body) as it came. A call that got no answer
 /// to read, a connection refused or an answer that is not the route's result, has no status. Its sources show the
 /// URL of the call by its origin and its path alone, without its credentials and its query, where a query scheme
-/// sends its key: the errors of reqwest, of reqwest-middleware and of reqwest-retry, as the client and its middleware
-/// give them, are stripped. A reqwest error that a middleware of the application's own wraps in an error type of its
-/// own is out of reach: the middleware strips it, with `reqwest::Error::without_url`.
+/// sends its key: the errors of reqwest and of reqwest-middleware, as the client and its middleware give them, are
+/// stripped. A reqwest error that a middleware of the application's own wraps in an error type of its own is out of
+/// reach: the middleware strips it, with `reqwest::Error::without_url`.
 ///
 /// A handler that returns an error its own client received answers 502, or 500 when it is the handler's own mistake,
 /// a URL that is not one: the status of another API is not passed on as this one's.
@@ -112,9 +112,9 @@ impl Error {
     /// caller sees the status alone.
     ///
     /// With the `client` feature, the URL of a reqwest error given as `error`, alone or as the error of a
-    /// reqwest-middleware or reqwest-retry chain, keeps its origin and its path alone, as the client's own errors do:
-    /// the log shows no credentials and no query, where a query scheme sends its key. A reqwest error inside an error
-    /// type of the application's own is the application's to strip, with `reqwest::Error::without_url`.
+    /// reqwest-middleware chain, keeps its origin and its path alone, as the client's own errors do: the log shows no
+    /// credentials and no query, where a query scheme sends its key. A reqwest error inside an error type of the
+    /// application's own is the application's to strip, with `reqwest::Error::without_url`.
     ///
     /// ```
     /// use quoll::rest::Error;

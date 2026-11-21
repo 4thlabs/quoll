@@ -263,7 +263,8 @@ fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
 
 - `retry(times)` tries a call again after a failure that may pass: no answer, an answer that did not begin before the
   deadline of `timeout`, or a 502, 503 or 504. It waits a random backoff between attempts. It tries again `GET`,
-  `HEAD`, `PUT` and `DELETE` only: a `POST` may have been done before its connection was cut.
+  `HEAD`, `PUT` and `DELETE` only: a `POST` may have been done before its connection was cut. `.when(..)` decides
+  otherwise, as [Deciding a retry](#deciding-a-retry) shows.
 - `timeout(duration)` is a deadline per attempt and per hop, from the request to the end of the answer's body. On a
   route whose result is a stream, it bounds the head of the answer alone.
 - `redirects(hops)` follows up to `hops` redirects, each hop through the middleware after it. A hop to another origin
@@ -274,6 +275,46 @@ Given a credential, `bearer`, `bearer_from`, `basic`, `key` or `on_request`, and
 Without either, reqwest follows redirects as it does by default.
 
 The docs of `quoll::client::retry`, `timeout` and `redirects` say how each counts and what each follows.
+
+### Deciding a retry
+
+`retry(times).when(..)` takes a closure given each `client::Attempt`: the call's `rest::Route`, its request, then the
+answer's status and headers or the error, and the attempt's number. It returns `Retry::No` to keep the answer,
+`Retry::Backoff` to try again after the backoff of `retry`, or `Retry::After(duration)`. `attempt.transient()` is the
+rule of `retry(times)` alone, for the cases the closure leaves, and `attempt.retry_after()` the wait the answer's
+`Retry-After` asks, in seconds or as an HTTP date, a minute at most unless `.max_wait(..)` sets another.
+
+```rust,no_run
+use std::time::Duration;
+
+use http::{Method, StatusCode};
+use quoll::client::{self, Attempt, Retry};
+use quoll::rest;
+
+fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
+    let retry = client::retry(3)
+        .max_wait(Duration::from_secs(30))
+        .when(|attempt: &Attempt| {
+            let request = attempt.request();
+            let keyed = request.method() == Method::POST
+                && request.headers().contains_key("Idempotency-Key");
+
+            match attempt.status() {
+                // The server did not act on it: any method may be sent again.
+                Some(StatusCode::TOO_MANY_REQUESTS) => attempt.retry_after(),
+                // A POST the server does once per key.
+                Some(status) if keyed && status.is_server_error() => Retry::Backoff,
+                _ => attempt.transient(),
+            }
+        });
+
+    client::builder().with(retry).build_http()
+}
+```
+
+The request is the one `retry` is given: the headers of its route are there, as an `Idempotency-Key` the route takes
+as an argument, but not those added after `retry`, the credentials and what `on_request` puts in. Whatever the closure
+decides, a call is tried `times` more at most, and a request whose body is a stream of the application's is sent once.
 
 ## reqwest's client
 

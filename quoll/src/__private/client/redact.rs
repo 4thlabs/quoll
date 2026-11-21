@@ -4,7 +4,6 @@
 use std::error::Error as StdError;
 
 use reqwest::Url;
-use reqwest_retry::RetryError;
 
 /// `url` without its credentials, its query and its fragment: `http://localhost:8080/api/notes`.
 pub(crate) fn redacted(url: &Url) -> String {
@@ -12,10 +11,10 @@ pub(crate) fn redacted(url: &Url) -> String {
 }
 
 /// Takes the credentials, the query and the fragment out of the URL of each reqwest error `error` holds, which reqwest
-/// writes in the error's message and its debug form. It reaches the errors of reqwest, of reqwest-middleware and of
-/// reqwest-retry, as the client and its middleware give them: `error` itself, a reqwest error or a
-/// `reqwest_middleware::Error`, and in that error's `anyhow` a reqwest error, a `reqwest_middleware::Error` or a
-/// `RetryError`, as `retry` and a middleware's `reqwest_middleware::Error::middleware` wrap them. The error stays
+/// writes in the error's message and its debug form. It reaches the errors of reqwest and of reqwest-middleware, as the
+/// client and its middleware give them: `error` itself, a reqwest error or a `reqwest_middleware::Error`, and in that
+/// error's `anyhow` a reqwest error or a `reqwest_middleware::Error`, as a middleware's
+/// `reqwest_middleware::Error::middleware` wraps them. The error stays
 /// reqwest's, which a caller still asks `is_timeout` or `is_connect`, and its URL still says where the call went.
 ///
 /// A reqwest error inside an error type of the application's own is out of reach, a source behind `&`: the
@@ -38,10 +37,6 @@ fn strip_middleware(error: &mut reqwest_middleware::Error) {
     if let Some(error) = error.downcast_mut::<reqwest::Error>() {
         strip(error.url_mut());
     } else if let Some(error) = error.downcast_mut::<reqwest_middleware::Error>() {
-        strip_middleware(error);
-    } else if let Some(RetryError::Error(error) | RetryError::WithRetries { err: error, .. }) =
-        error.downcast_mut::<RetryError>()
-    {
         strip_middleware(error);
     }
 }

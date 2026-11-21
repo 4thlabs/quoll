@@ -68,7 +68,8 @@ Decided by the maintainer:
   - every child of `cargo quoll dev` runs in a process group or a job, stopped with what it started;
   - an `Events` answer opens with a comment, `: `, and ends cleanly when the server of `server::builder()` is told to stop;
   - what a `JsonLines` or a `ByteStream` says of a stop is open, [#70](https://github.com/4thlabs/quoll/issues/70);
-  - each example is a workspace of its own, as an application's is, with the config of `cargo quoll` in its own `Cargo.toml`, the repository's root workspace holding the library's crates alone.
+  - each example is a workspace of its own, as an application's is, with the config of `cargo quoll` in its own `Cargo.toml`, the repository's root workspace holding the library's crates alone;
+  - `client::retry(times)` keeps its rule, and `.when(|attempt: &Attempt| -> Retry)` is one decision for every other case, a `429` and its `Retry-After`, a `POST` with an `Idempotency-Key`, a `500`: `Retry::No`, `Retry::Backoff` or `Retry::After(duration)`; the `Attempt` gives the contract's `Route`, the request, the answer's status and headers or the error, and its number, `transient()` the rule of `retry(times)` alone and `retry_after()` the answer's `Retry-After`, in seconds or as an HTTP date, capped by `.max_wait(..)`; the middleware is quoll's own on backon's backoff, which no public signature shows, and reqwest-retry leaves the dependencies.
 
 ## Stack and crates
 
@@ -347,7 +348,7 @@ The builders put quoll's own in the order they work in, whatever the order they 
 | `key::<Key>(value)` | the credential of a scheme the contract declares, where it travels: its header, its cookie after the request's others in one `Cookie` header (a jar's are not added there), its query key, or `Authorization: Bearer` for `openid`; on the routes that take it only |
 | `user_agent(name)` | `User-Agent`, on a request that has none |
 | `request_id()` | a new `X-Request-Id` per call, on a request that has none: added before `retry`, the attempts of a call share it |
-| `retry(times)` | backoff on a failure with no response, 502, 503 or 504; `GET`, `HEAD`, `PUT` and `DELETE` only (reqwest-retry) |
+| `retry(times)` | backoff on a failure with no response, 502, 503 or 504; `GET`, `HEAD`, `PUT` and `DELETE` only; `.when(\|attempt\| ..)` decides otherwise, `Retry::No`, `Backoff` or `After(duration)`, from the `client::Attempt`: its `Route`, its request, the answer's status and headers or the error, its number, today's rule as `transient()` and the answer's `Retry-After` as `retry_after()`, capped by `.max_wait(..)` (backon's backoff) |
 | `timeout(duration)` | a deadline per attempt and per hop, to the end of the body; on a route whose result is a stream, for the head of its answer alone, which `retry` tries again |
 | `trace()` | a tracing span per call, named by the operation id (reqwest-tracing) |
 | `redirects(n)` | follows up to `n` redirects, one hop at a time through the middleware after it, on a reqwest client built with `redirect(Policy::none())` |
@@ -409,7 +410,7 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 - `rest::Result<T>` is `Result<T, rest::Error>`, one error for the server and the client: its `status()`, the RFC 9457 problem when there is one, the raw body, and `body_as::<T>()` for a third-party API's own error shape.
 - The server answers a handler's error with its status and a problem in JSON: `Error::not_found(detail)`, `Error::bad_request(detail)`, `Error::unauthorized(detail)`, `Error::new(status, detail)`, and `Error::internal(err)` for a 500 that logs `err` without sending it.
 - An error a client received from another API answers 502 when a handler returns it, so that the other API's status is not passed on as ours.
-- On the client, a failure with no response (connection, timeout) is an `Error` without a status. Its sources, the errors of quoll's client and middlewares and those of reqwest and reqwest-retry, show the URL of the call by its origin and its path, never its credentials nor its query, where a query scheme sends its key, and so does a reqwest error given to `Error::internal`; an error the application wraps itself is its own to redact, with `reqwest::Error::without_url`.
+- On the client, a failure with no response (connection, timeout) is an `Error` without a status. Its sources, the errors of quoll's client and middlewares and those of reqwest and reqwest-middleware, show the URL of the call by its origin and its path, never its credentials nor its query, where a query scheme sends its key, and so does a reqwest error given to `Error::internal`; an error the application wraps itself is its own to redact, with `reqwest::Error::without_url`.
 - Every route has this one error, and its TypeScript the problem shape. Typed errors per route, `Result<Note, NotFound>` with `#[derive(rest::Problem)] #[problem(status = 404)]`, come later: adding them breaks no contract.
 
 ## OpenAPI and TypeScript

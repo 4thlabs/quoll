@@ -34,7 +34,9 @@ client = [
     "dep:futures-util",
     "dep:reqwest",
     "dep:reqwest-middleware",
-    "dep:reqwest-retry",
+    "dep:backon",
+    "dep:httpdate",
+    "dep:hyper",
     "dep:reqwest-tracing",
     "dep:serde_html_form",
     "dep:tokio",
@@ -44,6 +46,8 @@ client = [
 ]
 
 [dependencies]
+# The backoff of `client::retry`, out of every public signature.
+backon = { version = "1.6", default-features = false, features = ["std"], optional = true }
 # The user and the password of `Basic`, which the server reads and the client writes.
 base64 = "0.23"
 # `http1` and `tokio` serve a router, as `quoll::test::spawn` does.
@@ -55,6 +59,10 @@ futures-core = { version = "0.3", default-features = false }
 # What each side builds its streams with.
 futures-util = { version = "0.3", default-features = false, optional = true }
 http = "1"
+# The HTTP date of a `Retry-After`, which `client::Attempt::retry_after` reads.
+httpdate = { version = "1", optional = true }
+# The errors of a connection closed before its answer, which `client::retry` tries again: reqwest's own are hyper's.
+hyper = { version = "1", default-features = false, optional = true }
 # The key of a query scheme, which the server reads with neither feature.
 percent-encoding = "2"
 # The values of a stream result written as results, with no box of their own.
@@ -63,8 +71,7 @@ quoll-macros = { version = "0.1.0", path = "../quoll-macros" }
 # TLS through rustls with the platform's roots, and the system's proxy settings, as reqwest's defaults have them.
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "system-proxy"], optional = true }
 reqwest-middleware = { version = "0.5", optional = true }
-# What `client::retry` and `client::trace` are built on, out of every public signature.
-reqwest-retry = { version = "0.9", default-features = false, optional = true }
+# What `client::trace` is built on, out of every public signature.
 reqwest-tracing = { version = "0.7", optional = true }
 # The schemas of the OpenAPI document, which every type of a contract has, whatever the features.
 schemars = { version = "1", default-features = false, features = ["std"] }
