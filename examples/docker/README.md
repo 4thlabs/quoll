@@ -11,6 +11,8 @@ docker/
 
 ## Running it
 
+From this directory, a workspace of its own, with its `Cargo.lock`:
+
 ```bash
 cargo run -p docker-cli -- ps -a
 cargo run -p docker-cli -- inspect web
@@ -47,4 +49,5 @@ names none. TLS, `DOCKER_TLS_VERIFY`, and `ssh://` are not supported.
 `cli/tests/cli.rs` runs each command against a fake daemon written with axum, on port 0 and on a Unix socket.
 `cli/tests/daemon.rs` runs them against a real daemon: it pulls `alpine:3`, makes a container, then starts it, reads
 its logs and its events, stops it and removes it. With nothing listening where the daemon would, it says it is skipped and passes, unless
-`DOCKER_CLI_TEST_DAEMON=required`, which CI sets on its runners, where Docker runs.
+`DOCKER_CLI_TEST_DAEMON=required`, which CI sets on its runners, where Docker runs. `cargo test` in this directory
+runs both.

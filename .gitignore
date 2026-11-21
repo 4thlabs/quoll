@@ -4,3 +4,5 @@
 # What a build of the fixture of quoll-cli's tests, where it lies, leaves there.
 /quoll-cli/tests/fixture/**/target
 /quoll-cli/tests/fixture/**/Cargo.lock
+# The examples are workspaces of their own, each with its target directory.
+/examples/*/target

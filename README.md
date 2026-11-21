@@ -227,9 +227,10 @@ The contract is specified in [`docs/spec.md`](docs/spec.md), validated, and the 
 client and its OpenAPI document. It is used from git until it is published.
 
 The guides are in [`docs/`](docs/README.md), and the API documentation is the crate's own, from `cargo doc -p quoll
---all-features --open`. Two examples are built and
-tested with the workspace: [`examples/notes`](examples/notes), the spec's complete example, with its web page, and
-[`examples/docker`](examples/docker), a client alone of the Docker Engine API.
+--all-features --open`. Two examples are each a workspace of its own, as an application's is, built and tested from
+its directory, `cd examples/notes && cargo test`: [`examples/notes`](examples/notes), the spec's complete example,
+with its web page, which `cargo quoll dev` runs there, and [`examples/docker`](examples/docker), a client alone of the
+Docker Engine API.
 
 ## License
 

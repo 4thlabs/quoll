@@ -168,9 +168,20 @@ An application splits into crates by role, as [the notes example](../../examples
 
 ```text
 notes/
+  Cargo.toml              the workspace: its members, and the config of `cargo quoll`
+  Cargo.lock
   api/      notes-api     the contract and its models: quoll, serde, schemars
   server/   notes-server  notes-api with the feature "server": tokio, axum
   cli/      notes-cli     notes-api with the feature "client": tokio, reqwest
+  web/                    the page, whose TypeScript orval writes from the document
+```
+
+The workspace's `Cargo.toml` names its members, and `cargo build` and `cargo test` in its directory build them all:
+
+```toml
+[workspace]
+members = ["api", "server", "cli"]
+resolver = "3"
 ```
 
 The contract crate turns on neither feature of `quoll`, and passes them on:

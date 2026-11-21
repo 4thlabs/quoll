@@ -1,17 +1,8 @@
 [workspace]
-members = [
-    "quoll",
-    "quoll-macros",
-    "quoll-cli",
-    "examples/notes/api",
-    "examples/notes/server",
-    "examples/notes/cli",
-    "examples/docker/api",
-    "examples/docker/cli",
-    "docs/guides",
-]
-# The workspace that the tests of quoll-cli copy and run `cargo quoll` on.
-exclude = ["quoll-cli/tests/fixture"]
+# The library's crates. The examples are workspaces of their own, as an application's is, and the fixture of
+# quoll-cli's tests is the workspace they copy and run `cargo quoll` on.
+members = ["quoll", "quoll-macros", "quoll-cli", "docs/guides"]
+exclude = ["examples/notes", "examples/docker", "quoll-cli/tests/fixture"]
 resolver = "3"
 
 [workspace.package]
@@ -24,21 +15,3 @@ repository = "https://github.com/4thlabs/quoll"
 unsafe_code = "forbid"
 missing_docs = "warn"
 
-# The config of `cargo quoll`, for the notes example: its document and the TypeScript orval writes from it, both
-# gitignored, its server and its web page.
-[[workspace.metadata.quoll.api]]
-package = "notes-api"
-bin = "openapi"
-output = "examples/notes/web/openapi.json"
-# `--no`: the orval of the page's package-lock.json, which `npm ci` installs, never one npx would download.
-after = [["npx", "--no", "orval"]]
-
-# The page's vite.config.ts proxies `/api` to this url: the two change together.
-[[workspace.metadata.quoll.server]]
-package = "notes-server"
-url = "http://127.0.0.1:8080"
-
-[workspace.metadata.quoll.web]
-dir = "examples/notes/web"
-dev = ["npm", "run", "dev"]
-build = ["npm", "run", "build"]

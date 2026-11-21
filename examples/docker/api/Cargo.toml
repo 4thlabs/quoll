@@ -9,8 +9,8 @@ publish = false
 client = ["quoll/client"]
 
 [dependencies]
-quoll = { path = "../../../quoll" }
+quoll.workspace = true
 serde = { version = "1", features = ["derive"] }
 
-[lints.rust]
-unsafe_code = "forbid"
+[lints]
+workspace = true

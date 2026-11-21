@@ -28,10 +28,10 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
-  # Every job below runs once per combination of the quoll features, none, each alone and both, with the examples and
-  # the guides left out: their crates turn quoll's features on, which cargo would unify into the whole build. The
-  # examples run on their own, with the features their crates choose, and the guides with them, their blocks doctests.
-  # quoll-cli, which does not depend on quoll, runs once on its own; the job web runs it on the notes example.
+  # Every job below runs once per combination of the quoll features, none, each alone and both, with the guides left
+  # out: they turn quoll's features on, which cargo would unify into the whole build. The guides run on their own,
+  # their blocks doctests, and so does quoll-cli, which does not depend on quoll; the job web runs it on the notes
+  # example. The examples are workspaces of their own, in the job examples.
   clippy:
     name: clippy (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -39,11 +39,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: "" }
-          - { name: server, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: server }
-          - { name: client, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: client }
-          - { name: all, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: "server,client" }
-          - { name: examples, packages: "--package 'notes-*' --package 'docker-*' --package quoll-guides", features: "" }
+          - { name: none, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: "" }
+          - { name: server, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: server }
+          - { name: client, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: client }
+          - { name: all, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: "server,client" }
+          - { name: guides, packages: "--package quoll-guides", features: "" }
           - { name: cli, packages: "--package quoll-cli", features: "" }
     steps:
       - uses: actions/checkout@v4
@@ -60,21 +60,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: "" }
-          - { name: server, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: server }
-          - { name: client, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: client }
-          - { name: all, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: "server,client" }
-          - { name: examples, packages: "--package 'notes-*' --package 'docker-*' --package quoll-guides", features: "" }
+          - { name: none, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: "" }
+          - { name: server, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: server }
+          - { name: client, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: client }
+          - { name: all, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: "server,client" }
+          - { name: guides, packages: "--package quoll-guides", features: "" }
           - { name: cli, packages: "--package quoll-cli", features: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test ${{ matrix.packages }} --features "${{ matrix.features }}"
-        env:
-          # The runners have Docker: the example's test against a real daemon fails there when none answers, rather
-          # than skip.
-          DOCKER_CLI_TEST_DAEMON: ${{ matrix.name == 'examples' && 'required' || '' }}
 
   doc:
     name: doc (${{ matrix.name }})
@@ -83,11 +79,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: "" }
-          - { name: server, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: server }
-          - { name: client, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: client }
-          - { name: all, packages: "--workspace --exclude 'notes-*' --exclude 'docker-*' --exclude quoll-guides --exclude quoll-cli", features: "server,client" }
-          - { name: examples, packages: "--package 'notes-*' --package 'docker-*' --package quoll-guides", features: "" }
+          - { name: none, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: "" }
+          - { name: server, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: server }
+          - { name: client, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: client }
+          - { name: all, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: "server,client" }
+          - { name: guides, packages: "--package quoll-guides", features: "" }
           - { name: cli, packages: "--package quoll-cli", features: "" }
     steps:
       - uses: actions/checkout@v4
@@ -113,6 +109,36 @@ jobs:
       - run: cargo clippy --package quoll-cli --all-targets -- -D warnings
       - run: cargo test --package quoll-cli
 
+  # Each example is a workspace of its own, as an application's is, built in its directory with the features its crates
+  # choose, and with `--locked`, so that its committed Cargo.lock is the one it builds with.
+  examples:
+    name: examples (${{ matrix.example }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [notes, docker]
+    defaults:
+      run:
+        working-directory: examples/${{ matrix.example }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples/${{ matrix.example }}
+          key: ${{ matrix.example }}
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+        env:
+          # The runners have Docker: the Docker example's test against a real daemon fails there when none answers,
+          # rather than skip.
+          DOCKER_CLI_TEST_DAEMON: ${{ matrix.example == 'docker' && 'required' || '' }}
+      - run: cargo doc --workspace --no-deps --locked
+
   # The notes example's page: `cargo quoll build` writes the document, runs orval through its `after`, then checks the
   # types of the page and bundles it, so that a change of the contract that breaks the page breaks the pull request.
   web:
@@ -125,21 +151,27 @@ jobs:
           cache: npm
           cache-dependency-path: examples/notes/web/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
+      # The root's workspace, where cargo-quoll is built, and the example's, which it builds.
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            examples/notes -> target
       - run: npm ci
         working-directory: examples/notes/web
-      # Built in the workspace's target directory, which the cache keeps, rather than by `cargo install`.
+      # Built in the root's target directory, which the cache keeps, rather than by `cargo install`.
       - run: |
           cargo build --package quoll-cli
           echo "$PWD/target/debug" >> "$GITHUB_PATH"
       - run: cargo quoll build
+        working-directory: examples/notes
       - run: npm test
         working-directory: examples/notes/web
 
   # The one check branch protection requires: it fails when any job above failed or was skipped.
   ci:
     if: always()
-    needs: [fmt, clippy, test, doc, cli, web]
+    needs: [fmt, clippy, test, doc, cli, examples, web]
     runs-on: ubuntu-latest
     steps:
       - run: |
