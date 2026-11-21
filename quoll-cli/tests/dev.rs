@@ -725,6 +725,20 @@ fn write_crate(dir: &Path, name: &str, manifest: &str, lib: &str) {
     .expect("the crate is written");
 }
 
+/// The directory of the package `name` of the fixture, as cargo names it: from the directory it runs in, which is
+/// canonical on Unix, `/private/var` for `/var` on macOS. A path dependency written otherwise is another package to
+/// cargo, which refuses two of one name.
+fn member(fixture: &Fixture, name: &str) -> std::path::PathBuf {
+    let path = fixture.path(name);
+
+    // Windows' canonical form, `\\?\C:\...`, is not the one cargo gives.
+    if cfg!(unix) {
+        return fs::canonicalize(&path).expect("the package is there");
+    }
+
+    path
+}
+
 /// A path, as a manifest writes it.
 fn toml_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
@@ -849,7 +863,7 @@ fn a_package_of_the_workspace_reached_through_one_outside_it_is_watched() {
         "shared",
         &format!(
             "\n[dependencies]\nweb-dev = {{ path = \"{}\" }}\n",
-            toml_path(&fixture.path("web-dev"))
+            toml_path(&member(&fixture, "web-dev"))
         ),
         "/// The name of `web-dev`.\npub const NAME: &str = web_dev::NAME;\n",
     );
