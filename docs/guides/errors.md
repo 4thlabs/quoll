@@ -202,5 +202,5 @@ It reads the extension members of a problem too.
 
 ## Errors in a stream
 
-Once a stream's 200 is sent, an error ends it: an `Events` stream with a last `event: problem`, which the client reads
-as that error, and JSON Lines or bytes by cutting the answer short. [Streams](contract.md#streams) says more.
+Once a stream's 200 is sent, an error can no longer be its status: [Streams](contract.md#streams) says how each kind
+of stream ends on an error, and what the client reads.

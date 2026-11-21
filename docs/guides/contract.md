@@ -264,8 +264,11 @@ How a stream behaves:
 - `try_new` builds a stream from results. An error after the 200 ends an `Events` stream with a last event, `event:
   problem`, which the client reads as that error. JSON Lines and bytes have no way to say an error: the server cuts
   the answer short, and the client reads an error.
-- `client::timeout` bounds the head of a stream's answer alone, `client::retry` tries that head again, and
-  `server::compression` leaves streams out.
+- A server told to stop ends its `Events` streams cleanly: [Shutdown](server.md#shutdown) says what becomes of each
+  stream.
+- `client::timeout` and `client::retry` treat a stream's answer apart, as
+  [Retries, deadlines and redirects](client.md#retries-deadlines-and-redirects) says, and `server::compression` leaves
+  streams out.
 
 The docs of `quoll::rest::Events`, `JsonLines` and `ByteStream` say what each sends and reads on the wire.
 
