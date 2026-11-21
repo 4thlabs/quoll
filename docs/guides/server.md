@@ -269,9 +269,14 @@ async fn main() -> std::io::Result<()> {
 A server serves until Ctrl-C, or `SIGTERM` on Unix, which `docker stop` and Kubernetes send. Told to stop, it accepts
 no more connections, and returns once the requests it serves have ended.
 
-It waits 5 s for them, or what `.grace(duration)` says, or until a second Ctrl-C or `SIGTERM`: a stream may never end.
-Then it logs at `WARN` that connections were left open, and returns `Ok`. They end with the runtime, as `main`
-returns.
+The streams in flight end at once: each `Events`, `JsonLines` and `ByteStream` answer ends after the event, the line
+or the chunk it is sending, so that the client, and a proxy between, reads a clean end, as when the handler's stream
+ends. An `Events` stream ends with nothing more: a stop is no failure, and sends no `event: problem`. A router served
+by `axum::serve` itself, or `quoll::test::spawn`, leaves its streams to run.
+
+It waits 5 s for the requests a handler is still answering, or what `.grace(duration)` says, or until a second Ctrl-C
+or `SIGTERM`. Then it logs at `WARN` that connections were left open, and returns `Ok`. They end with the runtime, as
+`main` returns.
 
 `.shutdown(signal)` stops it when a future ends, in the place of the signals: a channel of a test, or
 `std::future::pending()` for a server that is never told to stop.

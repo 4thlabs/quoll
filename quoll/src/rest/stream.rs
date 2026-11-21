@@ -88,10 +88,16 @@ impl<S: Stream> Stream for Oks<S> {
 /// ```
 ///
 /// The server answers 200, with `Cache-Control: no-cache` and `X-Accel-Buffering: no`, so that neither a cache nor
-/// a proxy such as nginx holds the events back. It sends each value as it comes, as an event whose `data` is its JSON,
+/// a proxy such as nginx holds the events back. It sends an empty comment first, with the head, so that a proxy that
+/// holds the head of an answer until its first bytes, as Vite's does, lets it through at once: the client sees the
+/// stream open before its first event. Then it sends each value as it comes, as an event whose `data` is its JSON,
 /// with no `id` and no name, and a comment when 15 seconds pass with no value, so that a proxy does not close a
 /// connection it sees idle. It asks the stream for a value only once the connection has taken the last one: a client
 /// that reads slowly slows it down, and one that goes away drops it, with the connection.
+///
+/// A server of `server::builder()` that is told to stop ends the events after the one it is sending, with nothing more,
+/// as when the stream ends: a stop is no failure, and sends no `event: problem`. The client, and any proxy between,
+/// reads a clean end.
 ///
 /// When an item fails once the 200 is sent, the server logs it and ends the stream with a last event, named
 /// `problem`, whose `data` is the RFC 9457 problem the error would have answered: every value before it is sent.
@@ -188,7 +194,12 @@ impl<T> fmt::Debug for Events<T> {
 /// The server answers 200, with `Cache-Control: no-cache` and `X-Accel-Buffering: no`, so that neither a cache nor
 /// a proxy such as nginx holds the lines back. It sends each value as it comes, its JSON on one line ended by `\n`,
 /// and nothing while no value comes. It asks the stream for a value only once the connection has taken the last one: a
-/// client that reads slowly slows it down, and one that goes away drops it, with the connection.
+/// client that reads slowly slows it down, and one that goes away drops it, with the connection. JSON Lines have no
+/// comment that could go out first: a proxy that holds the head of an answer until its first bytes, as Vite's does,
+/// holds it until the first line.
+///
+/// A server of `server::builder()` that is told to stop ends the body after the line it is sending: the client, and any
+/// proxy between, reads a clean end, as when the stream ends.
 ///
 /// The client reads `application/jsonl`, `application/x-ndjson` and `application/x-jsonlines`, which some APIs send,
 /// and `application/json`, which others send their lines as, the Docker Engine API among them. It asks for them in
@@ -288,7 +299,11 @@ impl<T> fmt::Debug for JsonLines<T> {
 /// [`Bytes`](crate::rest::Bytes), `Cache-Control: no-cache` and `X-Accel-Buffering: no`, so that neither a browser, a
 /// cache nor a proxy such as nginx reads it otherwise or holds it back. It sends each chunk as it comes, as it is. It
 /// asks the stream for a chunk only once the connection has taken the last one: a client that reads slowly slows it
-/// down, and one that goes away drops it, with the connection.
+/// down, and one that goes away drops it, with the connection. Nothing goes out before the first chunk: a proxy that
+/// holds the head of an answer until its first bytes, as Vite's does, holds it until then.
+///
+/// A server of `server::builder()` that is told to stop ends the body after the chunk it is sending: the client, and
+/// any proxy between, reads a clean end, as when the stream ends.
 ///
 /// The client asks for any content type, `Accept: */*`, and reads an answer of any, as it reads
 /// [`Bytes`](crate::rest::Bytes): its content type, or `application/octet-stream` when it has none, or one that is not
