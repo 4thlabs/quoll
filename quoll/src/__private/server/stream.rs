@@ -80,11 +80,15 @@ pub fn events<E: IsEvents + Written>(result: Result<E>) -> Result<Response> {
     let opening = stream::once(future::ready(Ok(Event::default().comment(""))));
     let keep_alive = KeepAlive::new().interval(KEEP_ALIVE);
 
-    Ok(streamed(
+    let mut response = unbuffered(
         Sse::new(opening.chain(events))
             .keep_alive(keep_alive)
             .into_response(),
-    ))
+    );
+
+    response.extensions_mut().insert(EventsBody);
+
+    Ok(response)
 }
 
 /// A 200 with JSON Lines, `application/jsonl`: each value of the handler's stream as its JSON on one line, ended by
@@ -114,7 +118,7 @@ pub fn json_lines<L: IsJsonLines + Written>(result: Result<L>) -> Result<Respons
         (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
     ];
 
-    Ok(streamed(
+    Ok(unbuffered(
         (headers, Body::from_stream(lines)).into_response(),
     ))
 }
@@ -149,37 +153,35 @@ pub fn byte_stream<B: IsByteStream>(result: Result<B>) -> Result<Response> {
         (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
     ];
 
-    Ok(streamed(
+    Ok(unbuffered(
         (headers, Body::from_stream(chunks)).into_response(),
     ))
 }
 
-/// `response`, the answer of a stream result, with `X-Accel-Buffering: no`, which tells nginx, and the proxies that
-/// read it as nginx does, to send each piece of the stream as it comes rather than hold it in a buffer; and marked as
-/// a stream's, which [`ended_on_stop`] ends when the server stops.
-fn streamed(mut response: Response) -> Response {
+/// `response` with `X-Accel-Buffering: no`, which tells nginx, and the proxies that read it as nginx does, to send
+/// each piece of the stream as it comes rather than hold it in a buffer.
+fn unbuffered(mut response: Response) -> Response {
     response.headers_mut().insert(
         HeaderName::from_static("x-accel-buffering"),
         HeaderValue::from_static("no"),
     );
-    response.extensions_mut().insert(StreamBody);
 
     response
 }
 
-/// The mark of an answer whose body is a stream result's, which only quoll sets.
+/// The mark of an answer whose body is an `Events` result's, which only quoll sets.
 #[derive(Debug, Clone, Copy)]
-struct StreamBody;
+struct EventsBody;
 
 /// `response` as the server sends it once `stopping` holds `true`, or once its sender is dropped: when it is the answer
-/// of a stream result, its body ends after the piece it is sending, an event, a line or a chunk, so that the client,
-/// and any proxy between, reads a clean end rather than a connection cut by the end of the grace. Any other answer is
-/// left as it is.
+/// of an `Events` result, its body ends after the event it is sending, so that the client, and any proxy between,
+/// reads a clean end rather than a connection cut by the end of the grace. Any other answer is left as it is, a
+/// `JsonLines` and a `ByteStream` among them: a clean end would make a finite one cut by the stop look complete.
 ///
-/// An `Events` ends with nothing more, as a stream that has no more values: a stop is no failure, and is no
-/// `event: problem`. A stream that opens once the server is told to stop ends at once.
+/// The events end with nothing more, as a stream that has no more values: a stop is no failure, and is no
+/// `event: problem`. An `Events` stream that opens once the server is told to stop ends at once.
 pub(crate) fn ended_on_stop(mut response: Response, stopping: &watch::Receiver<bool>) -> Response {
-    if response.extensions_mut().remove::<StreamBody>().is_none() {
+    if response.extensions_mut().remove::<EventsBody>().is_none() {
         return response;
     }
 
@@ -189,8 +191,7 @@ pub(crate) fn ended_on_stop(mut response: Response, stopping: &watch::Receiver<b
         let _ = stopping.wait_for(|stopping| *stopping).await;
     };
 
-    // Each piece is one frame of the body, an event of axum's `Sse` or an item of the handler's stream, so the body
-    // ends between two of them.
+    // Each event of axum's `Sse` is one frame of the body, so the body ends between two of them.
     response.map(|body| Body::from_stream(body.into_data_stream().take_until(stopped)))
 }
 

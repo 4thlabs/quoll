@@ -158,9 +158,9 @@ impl Builder {
 
     /// Waits up to `grace`, once the server is told to stop, for the requests it serves to end, 5 s unless it is set.
     ///
-    /// The streams of `Events`, `JsonLines` and `ByteStream` end at once, after the piece each is sending, as
-    /// [`serve_on`](Self::serve_on) says: the grace is for the requests a handler is still answering, and for a body
-    /// that never ends of a route that is not a contract's.
+    /// An `Events` stream ends at once, after the event it is sending, as [`serve_on`](Self::serve_on) says: the grace
+    /// is for the requests a handler is still answering, and for a `JsonLines` or a `ByteStream` in flight, which may
+    /// never end: it is left to the runtime once the grace has passed.
     pub fn grace(mut self, grace: Duration) -> Self {
         self.grace = grace;
         self
@@ -193,11 +193,14 @@ impl Builder {
     /// tokio runtime, and their handlers may still run after it has returned, until the runtime ends, as when `main`
     /// returns.
     ///
-    /// The answers of the routes whose result is a stream, `Events`, `JsonLines` and `ByteStream`, end as soon as it is
-    /// told, after the event, the line or the chunk each is sending: the client, and any proxy between, reads a clean
-    /// end, as when the handler's stream ends, rather than a connection cut once the grace has passed. An `Events`
-    /// stream ends with nothing more, no `event: problem`: a stop is no failure. A router served otherwise, by
-    /// `axum::serve` or [`test::spawn`](crate::test::spawn), leaves its streams to run until their connection closes.
+    /// The answers of the routes whose result is `Events` end as soon as it is told, after the event each is sending:
+    /// the client, and any proxy between, reads a clean end, as when the handler's stream ends, rather than a
+    /// connection cut once the grace has passed. They end with nothing more, no `event: problem`: a stop is no failure.
+    /// A `JsonLines` or a `ByteStream` runs on, as any other request, until the grace has passed: then it is left to
+    /// the runtime, and cut with its connection as the runtime ends, which the client reads as an error. A clean end
+    /// would make a finite one, an export or a file, look complete; what they should say of a stop is an open
+    /// question, [#70](https://github.com/4thlabs/quoll/issues/70). A router served otherwise, by `axum::serve` or
+    /// [`test::spawn`](crate::test::spawn), leaves its `Events` to run until their connection closes.
     ///
     /// Ctrl-C and `SIGTERM` are tokio's from the first call on, and stay so once it has returned: the process does not
     /// get their default action back, and a later Ctrl-C does not end it.
@@ -235,7 +238,7 @@ impl Builder {
         };
         let (stopping, told) = watch::channel(false);
 
-        // Around the router, inside every other layer: they see the stream's body end as when its handler's stream
+        // Around the router, inside every other layer: they see the events' body end as when its handler's stream
         // ends.
         let router = router.layer(map_response(move |response: Response| {
             let response = ended_on_stop(response, &told);
@@ -290,7 +293,7 @@ mod sealed {
 }
 
 /// Serves `router` on `listener` until the first of `signals`, then for the requests it serves, up to `grace` or the
-/// next of `signals`. At the first of `signals`, `stopping` is set to `true`, which ends the streams in flight.
+/// next of `signals`. At the first of `signals`, `stopping` is set to `true`, which ends the `Events` in flight.
 async fn run<L>(
     listener: L,
     router: Router,

@@ -97,7 +97,7 @@ impl<S: Stream> Stream for Oks<S> {
 ///
 /// A server of `server::builder()` that is told to stop ends the events after the one it is sending, with nothing more,
 /// as when the stream ends: a stop is no failure, and sends no `event: problem`. The client, and any proxy between,
-/// reads a clean end.
+/// reads a clean end, which `EventSource` follows by connecting again.
 ///
 /// When an item fails once the 200 is sent, the server logs it and ends the stream with a last event, named
 /// `problem`, whose `data` is the RFC 9457 problem the error would have answered: every value before it is sent.
@@ -198,8 +198,10 @@ impl<T> fmt::Debug for Events<T> {
 /// comment that could go out first: a proxy that holds the head of an answer until its first bytes, as Vite's does,
 /// holds it until the first line.
 ///
-/// A server of `server::builder()` that is told to stop ends the body after the line it is sending: the client, and any
-/// proxy between, reads a clean end, as when the stream ends.
+/// A server of `server::builder()` that is told to stop does not end the lines: they run on until its grace has passed,
+/// and are then cut with their connection as its runtime ends, which the client reads as an error. A clean end would
+/// make a finite stream cut by the stop look complete; what it should say is an open question,
+/// [#70](https://github.com/4thlabs/quoll/issues/70).
 ///
 /// The client reads `application/jsonl`, `application/x-ndjson` and `application/x-jsonlines`, which some APIs send,
 /// and `application/json`, which others send their lines as, the Docker Engine API among them. It asks for them in
@@ -302,8 +304,10 @@ impl<T> fmt::Debug for JsonLines<T> {
 /// down, and one that goes away drops it, with the connection. Nothing goes out before the first chunk: a proxy that
 /// holds the head of an answer until its first bytes, as Vite's does, holds it until then.
 ///
-/// A server of `server::builder()` that is told to stop ends the body after the chunk it is sending: the client, and
-/// any proxy between, reads a clean end, as when the stream ends.
+/// A server of `server::builder()` that is told to stop does not end the chunks: they run on until its grace has
+/// passed, and are then cut with their connection as its runtime ends, which the client reads as an error. A clean
+/// end would make a finite stream, a file, cut by the stop look complete; what it should say is an open question,
+/// [#70](https://github.com/4thlabs/quoll/issues/70).
 ///
 /// The client asks for any content type, `Accept: */*`, and reads an answer of any, as it reads
 /// [`Bytes`](crate::rest::Bytes): its content type, or `application/octet-stream` when it has none, or one that is not

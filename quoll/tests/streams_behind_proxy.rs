@@ -1,12 +1,13 @@
-//! The streams of a server, `Events`, `JsonLines` and `ByteStream`, as a proxy between it and its client sees them:
+//! The streams of a server, `Events`, `JsonLines` and `ByteStream`, when `server::builder()`'s server is told to stop:
 //! server-sent events seen to open before their first event, through a proxy that holds the head of an answer until
-//! its first bytes, as Vite's does; and each stream in flight ended cleanly when `server::builder()`'s server is told
-//! to stop, long before its grace.
+//! its first bytes, as Vite's does, then ended cleanly at the stop, long before the grace; a `JsonLines` and a
+//! `ByteStream` left to run until the grace has passed, then cut.
 
 #![cfg(all(feature = "server", feature = "client"))]
 
 use std::io;
 use std::net::SocketAddr;
+use std::thread;
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
@@ -36,8 +37,12 @@ rest::api! {
 /// The bound a test waits for what it checks: far past what it takes, far short of a grace of an hour.
 const BOUND: Duration = Duration::from_secs(10);
 
-/// The grace of the servers of these tests: what ends before it is not ended by it.
+/// The grace of a server whose `Events` end at its stop: what ends before it is not ended by it.
 const HOUR: Duration = Duration::from_secs(3600);
+
+/// The grace of a server that cuts its `JsonLines` and `ByteStream`: long enough for its `Events` to end well before,
+/// short enough for a test to wait it out.
+const GRACE: Duration = Duration::from_secs(2);
 
 /// The service: each stream sends one value, or none for `silent`, then never ends.
 struct App;
@@ -114,6 +119,48 @@ async fn returned(serving: tokio::task::JoinHandle<io::Result<()>>, log: &Log) {
     assert!(!log.contains(" WARN "), "{log}");
 }
 
+/// What a server on a thread of its own returned, with the log of its thread, once its runtime has ended.
+type Returned = oneshot::Receiver<(io::Result<()>, Log)>;
+
+/// The api served by `server::builder()` with `grace`, on a thread of its own, whose runtime ends once `serve_on` has
+/// returned, as a server's does when `main` returns: what the server leaves open is cut then. Its address, the sender
+/// that stops it, and what `serve_on` returned with the log of its thread, once its runtime has ended.
+fn served_on_a_thread(grace: Duration) -> (SocketAddr, oneshot::Sender<()>, Returned) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port of 127.0.0.1 is free");
+    let address = listener
+        .local_addr()
+        .expect("a bound listener has an address");
+    let (stop, stopped) = oneshot::channel::<()>();
+    let (done, returned) = oneshot::channel();
+
+    listener
+        .set_nonblocking(true)
+        .expect("a listener can be made non-blocking");
+    thread::spawn(move || {
+        let (log, _capture) = support::log::capture(false);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime builds");
+        let served = runtime.block_on(async move {
+            let listener = TcpListener::from_std(listener)?;
+            let builder = server::builder().grace(grace).shutdown(async move {
+                let _ = stopped.await;
+            });
+
+            builder
+                .serve_on(listener, Api::router(ApiServices { feeds: App }))
+                .await
+        });
+
+        // The connections the server left open end with its runtime.
+        drop(runtime);
+        let _ = done.send((served, log));
+    });
+
+    (address, stop, returned)
+}
+
 /// A proxy on a free port of 127.0.0.1 to `upstream`, as Vite's holds the head of each answer until the first bytes
 /// of its body: its URL.
 async fn holding_proxy(upstream: SocketAddr) -> String {
@@ -186,9 +233,9 @@ async fn events_are_seen_to_open_and_end_through_a_proxy_that_holds_the_head() -
 }
 
 #[tokio::test]
-async fn the_streams_in_flight_end_cleanly_when_the_server_is_told_to_stop() -> Result<()> {
-    let (log, _capture) = support::log::capture(false);
-    let (address, stop, serving) = served().await;
+async fn at_the_stop_events_end_cleanly_while_lines_and_bytes_are_cut_once_the_grace_has_passed()
+-> Result<()> {
+    let (address, stop, mut done) = served_on_a_thread(GRACE);
     let api = Api::client(&format!("http://{address}"))?;
     let mut events = api.feeds().events().await?;
     let mut lines = api.feeds().lines().await?;
@@ -201,16 +248,42 @@ async fn the_streams_in_flight_end_cleanly_when_the_server_is_told_to_stop() -> 
 
     stop.send(()).expect("the server waits for its signal");
 
-    let ends = tokio::time::timeout(
+    let end = tokio::time::timeout(BOUND, events.next())
+        .await
+        .expect("the events end when the server stops");
+
+    assert!(end.is_none(), "the events end cleanly, not {end:?}");
+
+    // The lines and the bytes still hold the server, which waits for them until its grace has passed.
+    assert!(
+        matches!(done.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+        "the server still waits for the lines and the bytes"
+    );
+
+    let (line, chunk) = tokio::time::timeout(
         BOUND,
-        futures_util::future::join3(events.next(), lines.next(), bytes.next()),
+        futures_util::future::join(lines.next(), bytes.next()),
     )
     .await
-    .expect("the streams end when the server stops");
+    .expect("the lines and the bytes are cut once the grace has passed");
 
-    assert!(ends.0.is_none(), "the events end cleanly, not {:?}", ends.0);
-    assert!(ends.1.is_none(), "the lines end cleanly, not {:?}", ends.1);
-    assert!(ends.2.is_none(), "the bytes end cleanly, not {:?}", ends.2);
-    returned(serving, &log).await;
+    assert!(
+        matches!(line, Some(Err(_))),
+        "the lines are cut, not {line:?}"
+    );
+    assert!(
+        matches!(chunk, Some(Err(_))),
+        "the bytes are cut, not {chunk:?}"
+    );
+
+    let (served, log) = done.await.expect("the server's thread does not panic");
+
+    served.expect("the server stops with no error");
+
+    let log = log.text();
+    let warned: Vec<&str> = log.lines().filter(|line| line.contains(" WARN ")).collect();
+
+    assert_eq!(warned.len(), 1, "{log}");
+    assert!(warned[0].contains("the grace ran out"), "{log}");
     Ok(())
 }
