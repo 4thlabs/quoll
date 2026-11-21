@@ -29,7 +29,10 @@ use crate::rest::Result;
 /// ```
 ///
 /// On the client, a call's `.response()` gives the answer it got, whatever its status, its body read as the route's
-/// value on a success and as the error of the answer otherwise: see [`Call`](crate::rest::Call).
+/// value on a success and as the error of the answer otherwise: see [`Call`], with the feature `client`.
+///
+#[cfg_attr(feature = "client", doc = "[`Call`]: crate::rest::Call")]
+#[cfg_attr(not(feature = "client"), doc = "[`Call`]: crate#features")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response<T> {
     /// The status given: the answer's on the client, the handler's on the server, where `None` is the contract's.
@@ -177,12 +180,15 @@ impl<T> Response<T> {
 }
 
 impl<T> Response<Result<T>> {
-    /// The route's value, or the error of the answer, to go up with `?`: what [`Call`](crate::rest::Call)'s
+    /// The route's value, or the error of the answer, to go up with `?`: what [`Call`]'s
     /// `.response()` gives once its status and its headers are read.
     ///
     /// # Errors
     ///
     /// The error of an answer with an error status, which holds its status, its problem and its body.
+    ///
+    #[cfg_attr(feature = "client", doc = "[`Call`]: crate::rest::Call")]
+    #[cfg_attr(not(feature = "client"), doc = "[`Call`]: crate#features")]
     pub fn into_value(self) -> Result<T> {
         self.body
     }
