@@ -1,4 +1,3 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -7,57 +6,120 @@ import { signOut } from "./api/fetch";
 import type { Note } from "./api/generated";
 import { App } from "./App";
 
-// The notes server, as far as the page calls it: the demo's password is `right`, and the events of note 1 are the
-// ones a test pushes.
+const PAGE_SIZE = 20;
+
+// The notes server, as far as the page calls it: the demo's password is `right`, and it takes one token at a time.
 class FakeServer {
   notes: Note[] = [{ id: 1, title: "Milk", body: "Two bottles" }];
-  updates: unknown[] = [];
-  private events?: ReadableStreamDefaultController<Uint8Array>;
+  requests: string[] = [];
+  refuseEvents = false;
+  private token = "t1";
+  private streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+  private paused?: Promise<void>;
 
   fetch = async (url: string, init?: RequestInit): Promise<Response> => {
-    const { pathname } = new URL(url, "http://localhost");
+    const { pathname, searchParams } = new URL(url, "http://localhost");
     const method = init?.method ?? "GET";
+
+    this.requests.push(`${method} ${pathname}`);
+    await this.paused;
 
     if (method === "POST" && pathname === "/api/token") {
       const login = new URLSearchParams(init?.body as URLSearchParams);
 
       return login.get("password") === "right"
-        ? Response.json({ access_token: "t1" })
+        ? Response.json({ access_token: this.token })
         : problem(401, "wrong user or password");
     }
 
-    if (new Headers(init?.headers).get("Authorization") !== "Bearer t1") {
+    if (new Headers(init?.headers).get("Authorization") !== `Bearer ${this.token}`) {
       return problem(401, "unknown or expired token");
     }
 
     if (method === "GET" && pathname === "/api/notes") {
-      return Response.json(this.notes);
+      const page = Number(searchParams.get("page") ?? 1);
+
+      return Response.json(this.notes.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE));
     }
 
-    if (method === "GET" && pathname === "/api/notes/1") {
-      return this.notes.length > 0 ? Response.json(this.notes[0]) : problem(404, "no such note");
+    const [, id, events] = pathname.match(/^\/api\/notes\/(\d+)(\/events)?$/) ?? [];
+    const note = this.notes.find((note) => note.id === Number(id));
+
+    if (!note) {
+      return problem(404, "no such note");
     }
 
-    if (method === "PUT" && pathname === "/api/notes/1") {
-      const changes = JSON.parse(init?.body as string);
-
-      this.updates.push(changes);
-      this.notes[0] = { id: 1, ...changes };
-
-      return Response.json(this.notes[0]);
+    if (events) {
+      return this.refuseEvents ? problem(401, "unknown or expired token") : this.stream();
     }
 
-    if (method === "GET" && pathname === "/api/notes/1/events") {
-      const body = new ReadableStream<Uint8Array>({ start: (controller) => (this.events = controller) });
-
-      return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+    if (method === "GET") {
+      return Response.json(note);
     }
 
-    return problem(404, `no route ${method} ${pathname}`);
+    if (method === "PUT") {
+      return Response.json(this.change({ id: note.id, ...JSON.parse(init?.body as string) }));
+    }
+
+    if (method === "DELETE") {
+      this.remove(note.id);
+
+      return new Response(null, { status: 204 });
+    }
+
+    return problem(405, `no route ${method} ${pathname}`);
   };
 
-  push(event: object) {
-    this.events?.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+  // A change, from the page or from elsewhere, which the note's watchers hear of.
+  change(note: Note): Note {
+    this.notes = this.notes.map((stored) => (stored.id === note.id ? note : stored));
+    this.send({ kind: "edited", ...note });
+
+    return note;
+  }
+
+  remove(id: number) {
+    this.notes = this.notes.filter((note) => note.id !== id);
+    this.send({ kind: "removed", id });
+  }
+
+  // As a restart of the server does: the token it gave is refused.
+  forgetToken() {
+    this.token = "t2";
+  }
+
+  // The streams of events open now.
+  get watchers(): number {
+    return this.streams.length;
+  }
+
+  endEvents() {
+    this.streams.forEach((stream) => stream.close());
+    this.streams = [];
+  }
+
+  // Every request waits until the function returned is called.
+  pause(): () => void {
+    let resume = () => {};
+
+    this.paused = new Promise((resolve) => (resume = resolve));
+
+    return () => {
+      this.paused = undefined;
+      resume();
+    };
+  }
+
+  private stream(): Response {
+    const body = new ReadableStream<Uint8Array>({ start: (controller) => void this.streams.push(controller) });
+
+    return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+  }
+
+  private send(event: object) {
+    const chunk = new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+
+    this.streams.forEach((stream) => stream.enqueue(chunk));
   }
 }
 
@@ -73,11 +135,7 @@ let server: FakeServer;
 beforeEach(() => {
   server = new FakeServer();
   vi.stubGlobal("fetch", vi.fn(server.fetch));
-  render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <App />
-    </QueryClientProvider>,
-  );
+  render(<App />);
 });
 
 afterEach(() => {
@@ -95,6 +153,20 @@ async function signInWith(password: string) {
   return user;
 }
 
+async function openNote(title: string) {
+  const user = await signInWith("right");
+
+  await user.click(await screen.findByRole("button", { name: title }));
+  await screen.findByRole("article");
+  await vi.waitFor(() => expect(server.watchers).toBe(1));
+
+  return user;
+}
+
+function noteList() {
+  return within(screen.getByRole("navigation"));
+}
+
 it("shows the problem of a wrong password", async () => {
   await signInWith("wrong");
 
@@ -102,10 +174,9 @@ it("shows the problem of a wrong password", async () => {
 });
 
 it("edits a note, then closes it once another tab removes it", async () => {
-  const user = await signInWith("right");
+  const user = await openNote("Milk");
 
-  await user.click(await screen.findByRole("button", { name: "Milk" }));
-  expect(await screen.findByText("Two bottles")).toBeDefined();
+  expect(screen.getByText("Two bottles")).toBeDefined();
 
   await user.click(screen.getByRole("button", { name: "Edit" }));
   await user.clear(screen.getByLabelText("Text"));
@@ -113,13 +184,110 @@ it("edits a note, then closes it once another tab removes it", async () => {
   await user.click(screen.getByRole("button", { name: "Save" }));
 
   expect(await screen.findByText("Three bottles")).toBeDefined();
-  expect(server.updates).toEqual([{ title: "Milk", body: "Three bottles" }]);
+  expect(screen.queryByText(/changed elsewhere/)).toBeNull();
 
-  server.notes = [];
-  server.push({ kind: "removed", id: 1 });
+  server.remove(1);
 
   await vi.waitFor(() => expect(screen.getByRole("main").children).toHaveLength(0));
-  await vi.waitFor(() => {
-    expect(within(screen.getByRole("navigation")).queryByRole("button", { name: "Milk" })).toBeNull();
-  });
+  await vi.waitFor(() => expect(noteList().queryByRole("button", { name: "Milk" })).toBeNull());
+});
+
+it("shows a missing note's error at once, asking once", async () => {
+  server.notes.push({ id: 2, title: "Eggs", body: "" });
+  const user = await signInWith("right");
+
+  const eggs = await screen.findByRole("button", { name: "Eggs" });
+
+  server.notes.pop();
+  await user.click(eggs);
+
+  expect(await screen.findByText("no such note")).toBeDefined();
+  expect(server.requests.filter((request) => request === "GET /api/notes/2")).toHaveLength(1);
+});
+
+it("signs out to the form once the server refuses the token", async () => {
+  const user = await openNote("Milk");
+
+  server.forgetToken();
+  await user.click(screen.getByRole("button", { name: "Remove" }));
+
+  expect(await screen.findByText("Your session ended: sign in again.")).toBeDefined();
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeDefined();
+});
+
+it("signs out to the form once a search is refused", async () => {
+  const user = await signInWith("right");
+
+  await noteList().findByRole("button", { name: "Milk" });
+  server.forgetToken();
+  await user.type(screen.getByLabelText("Find text"), "milk");
+  await user.click(screen.getByRole("button", { name: "Search" }));
+
+  expect(await screen.findByText("Your session ended: sign in again.")).toBeDefined();
+});
+
+it("signs out to the form when the note's events refuse the token", async () => {
+  server.refuseEvents = true;
+  await signInWith("right");
+
+  await userEvent.click(await screen.findByRole("button", { name: "Milk" }));
+
+  expect(await screen.findByText("Your session ended: sign in again.")).toBeDefined();
+});
+
+it("says when the note's events end, and follows them again", async () => {
+  const user = await openNote("Milk");
+
+  server.endEvents();
+  await user.click(await screen.findByRole("button", { name: "Follow them again" }));
+
+  expect(screen.queryByText(/no longer show/)).toBeNull();
+  await vi.waitFor(() => expect(server.watchers).toBe(1));
+  server.change({ id: 1, title: "Milk", body: "Four bottles" });
+  expect(await screen.findByText("Four bottles")).toBeDefined();
+});
+
+it("shows the error of a failed refresh above the note", async () => {
+  await openNote("Milk");
+
+  // Gone without its event: the refresh that an edit elsewhere asks for finds no note.
+  server.change({ id: 1, title: "Milk", body: "Two bottles" });
+  server.notes = [];
+
+  expect(await screen.findByText("no such note")).toBeDefined();
+  expect(screen.getByRole("article")).toBeDefined();
+});
+
+it("says that a note being edited changed elsewhere, and reloads it", async () => {
+  const user = await openNote("Milk");
+
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.type(screen.getByLabelText("Text"), ", and cream");
+  server.change({ id: 1, title: "Milk", body: "Three bottles" });
+  await user.click(await screen.findByRole("button", { name: "Reload" }));
+
+  expect(screen.getByLabelText("Text")).toHaveProperty("value", "Three bottles");
+  expect(screen.queryByText(/changed elsewhere/)).toBeNull();
+});
+
+it("pages through the notes, not past the last one", async () => {
+  server.notes = Array.from({ length: PAGE_SIZE + 1 }, (_, i) => ({ id: i + 1, title: `Note ${i + 1}`, body: "" }));
+  const user = await signInWith("right");
+  const next = await noteList().findByRole("button", { name: "Next" });
+
+  await vi.waitFor(() => expect(next).toHaveProperty("disabled", false));
+
+  // While page 2 is on its way, page 1 still shows, and Next waits for it.
+  const resume = server.pause();
+
+  await user.click(next);
+  expect(next).toHaveProperty("disabled", true);
+  resume();
+
+  await user.click(await noteList().findByRole("button", { name: "Note 21" }));
+  await user.click(await screen.findByRole("button", { name: "Remove" }));
+
+  // Page 2 came back empty: page 1 is the last one.
+  expect(await noteList().findByText("Page 1")).toBeDefined();
+  expect(noteList().getByRole("button", { name: "Note 20" })).toBeDefined();
 });

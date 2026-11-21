@@ -84,7 +84,7 @@ Its config is in the workspace's `Cargo.toml`, with paths from the workspace's r
 package = "notes-api"
 bin = "openapi"
 output = "web/openapi.json"
-after = [["npx", "orval"]]
+after = [["npx", "--no", "orval"]]
 
 [workspace.metadata.quoll.web]
 dir = "web"
@@ -159,8 +159,10 @@ The [dev loop of the spec](../spec.md#the-dev-loop) lists every event and its fi
 [`examples/notes/web`](../../examples/notes/web), does.
 
 - The bundler's own proxy sends `/api` to the server's `url`, Vite's `server.proxy`: the page calls the api on its
-  own origin.
-- orval's config reads the document, `input: "./openapi.json"`, and `after` runs it. Its mutator, one function of the
+  own origin. The bundler's config repeats the `url`: the two change together. Vite's proxy keeps a stream open
+  once the server drops it, as it stops: the page's `vite.config.ts` ends it, so that the page sees the end.
+- orval's config reads the document, `input: "./openapi.json"`, and `after` runs it, `npx --no orval`: the orval
+  that `npm ci` installs, at the version the lock file pins, or an error that asks for it. Its mutator, one function of the
   application, adds the credential and throws the problem of an error; with `httpClient: "fetch"`,
   `override.fetch.includeHttpResponseReturnType: false` makes a hook's data the body the mutator returns.
 - `EventSource` cannot send a header credential: the page reads an `Events` route with `fetch` and

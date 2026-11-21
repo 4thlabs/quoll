@@ -78,9 +78,9 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
   answer. `quoll-cli`, which does not depend on `quoll`, is left out of the four as well, and has a run of its own,
   `--package quoll-cli`, and its clippy and tests run on macOS and Windows too, in the job `cli`, where `cargo quoll
   dev` stops its children in other ways. The job `web` builds `cargo-quoll` and runs `cargo quoll build` at the root,
-  which writes the notes document, runs orval and bundles the page, then `cargo quoll gen --check` and the page's
-  `npm test`: a change of the contract that breaks the page breaks the pull request. Warnings are errors, in rustc and
-  in rustdoc.
+  which writes the notes document, runs orval and bundles the page, then the page's `npm test`: a change of the
+  contract that breaks the page breaks the pull request. The document itself is checked by the snapshot test of the
+  notes contract, `notes-api`'s `tests/openapi.rs`. Warnings are errors, in rustc and in rustdoc.
 - The `ci` job gathers all of them and is the one check `main` requires: a new job goes in its `needs`. The branch must
   be up to date with `main`, and every review thread resolved, before the merge.
 - A pull request is merged with a rebase, and its branch deleted. Closing its issue is done in its description with

@@ -1,5 +1,5 @@
 import { keepPreviousData } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { type NotesSearchParams, useNotesSearch } from "../api/generated";
 import { ErrorMessage } from "../ErrorMessage";
@@ -17,10 +17,18 @@ export function NoteList({ selected, onSelect, onNew }: Props) {
   const [filter, setFilter] = useState<NotesSearchParams>({});
   const [page, setPage] = useState(1);
   // The page shown stays until the next one arrives, rather than blink.
-  const { data: notes = [], error } = useNotesSearch(
+  const { data, error, isPlaceholderData } = useNotesSearch(
     { ...filter, page },
     { query: { placeholderData: keepPreviousData } },
   );
+  const notes = data ?? [];
+
+  // The last notes of the last page went, removed here or elsewhere: the page before is the last one now.
+  useEffect(() => {
+    if (page > 1 && !isPlaceholderData && data?.length === 0) {
+      setPage(page - 1);
+    }
+  }, [page, isPlaceholderData, data]);
 
   function search(next: NotesSearchParams) {
     setFilter(next);
@@ -46,7 +54,7 @@ export function NoteList({ selected, onSelect, onNew }: Props) {
           Previous
         </button>
         <span>Page {page}</span>
-        <button disabled={notes.length < PAGE_SIZE} onClick={() => setPage(page + 1)}>
+        <button disabled={notes.length < PAGE_SIZE || isPlaceholderData} onClick={() => setPage(page + 1)}>
           Next
         </button>
       </div>

@@ -377,7 +377,7 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 package = "notes-api"
 bin = "openapi"                       # the contract's binary, which prints the document
 output = "examples/notes/web/openapi.json"
-after = [["npx", "orval"]]            # commands run, in order, after the document
+after = [["npx", "--no", "orval"]]    # commands run, in order, after the document
 
 [[workspace.metadata.quoll.server]]
 package = "notes-server"
@@ -915,7 +915,7 @@ async fn main() -> anyhow::Result<()> {
 package = "notes-api"
 bin = "openapi"
 output = "examples/notes/web/openapi.json"
-after = [["npx", "orval"]]
+after = [["npx", "--no", "orval"]]
 
 [[workspace.metadata.quoll.server]]
 package = "notes-server"
@@ -936,7 +936,22 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react()],
   server: {
-    proxy: { "/api": "http://127.0.0.1:8080" },
+    proxy: {
+      // The server's `url` in the workspace's Cargo.toml, `[[workspace.metadata.quoll.server]]`: the two change together.
+      "/api": {
+        target: "http://127.0.0.1:8080",
+        // A stream the server drops, as it stops, ends for the page too: Vite's proxy would keep it open.
+        configure: (proxy) => {
+          proxy.on("proxyRes", (upstream, _request, response) => {
+            upstream.on("close", () => {
+              if (!upstream.complete) {
+                response.destroy();
+              }
+            });
+          });
+        },
+      },
+    },
   },
 });
 ```
@@ -963,7 +978,7 @@ export default defineConfig({
 });
 ```
 
-The page takes a bearer token, which `EventSource` cannot send: `apiEvents` reads the events with `fetch`, and splits them itself, as quoll's server writes them, each line ending in `\n`. Every event that has data is an item, whatever its name, an event with no data and a comment are skipped, and an `event: problem` ends the stream with an error. An error the server answers is an `ApiError`, whose message is the problem's detail, which the page shows.
+The page takes a bearer token, which `EventSource` cannot send: `apiEvents` reads the events with `fetch`, and splits them itself, as quoll's server writes them, each line ending in `\n`. Every event that has data is an item, whatever its name, an event with no data and a comment are skipped, and an `event: problem` ends the stream with an error; `onEnd` hears of an end the page did not ask for, a failure or a clean end. An error the server answers is an `ApiError`, whose message is the problem's detail, which the page shows; a refused token signs the page out.
 
 `web/src/api/fetch.ts`
 
@@ -1006,11 +1021,24 @@ function authorization(init?: HeadersInit): Headers {
   return headers;
 }
 
-// A proxy that cannot reach the server answers with no problem: its status alone is the error.
+// The token was refused: it expired, or the server that gave it restarted.
+export function isUnauthorized(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
+// A proxy that cannot reach the server answers with no problem, and a body may be cut: the status alone is the error.
 async function apiError(response: Response): Promise<ApiError> {
   const isProblem = response.headers.get("Content-Type")?.startsWith("application/problem+json");
 
-  return new ApiError(response.status, isProblem ? await response.json() : undefined);
+  if (!isProblem) {
+    return new ApiError(response.status);
+  }
+
+  try {
+    return new ApiError(response.status, await response.json());
+  } catch {
+    return new ApiError(response.status);
+  }
 }
 
 export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
@@ -1024,21 +1052,30 @@ export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
 }
 
 // Reads a stream of server-sent events, calling `onItem` with each one's data parsed, until the function it returns
-// is called. A failure, before the stream or within it, goes to `onError`.
+// is called. `onEnd` hears of an end it did not ask for: with the error of a failure, before the stream or within it,
+// or with nothing when the server ended the stream.
 export function apiEvents<T>(
   url: string,
   onItem: (item: T) => void,
-  onError: (error: unknown) => void = console.error,
+  onEnd: (error?: unknown) => void = logFailure,
 ): () => void {
   const controller = new AbortController();
 
-  readEvents(url, onItem, controller.signal).catch((error) => {
+  function ended(error?: unknown) {
     if (!controller.signal.aborted) {
-      onError(error);
+      onEnd(error);
     }
-  });
+  }
+
+  readEvents(url, onItem, controller.signal).then(() => ended(), ended);
 
   return () => controller.abort();
+}
+
+function logFailure(error?: unknown) {
+  if (error !== undefined) {
+    console.error(error);
+  }
 }
 
 async function readEvents<T>(url: string, onItem: (item: T) => void, signal: AbortSignal) {
@@ -1102,13 +1139,13 @@ function parseEvent(block: string): { event?: string; data?: string } {
 }
 ```
 
-`web/src/notes/NoteView.tsx`, a note, edited in a `NoteEditor` beside it, and read again when it changes elsewhere.
+`web/src/notes/NoteView.tsx`, a note, edited in a `NoteEditor` beside it, read again when it changes elsewhere, and saying when its changes no longer arrive.
 
 ```typescript
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useEffectEvent, useState } from "react";
 
-import { apiEvents } from "../api/fetch";
+import { apiEvents, isUnauthorized } from "../api/fetch";
 import {
   getNotesEventsUrl,
   getNotesGetQueryKey,
@@ -1126,14 +1163,18 @@ import { NoteEditor } from "./NoteEditor";
 type Props = {
   id: number;
   onClosed: () => void;
+  onUnauthorized: () => void;
 };
 
-export function NoteView({ id, onClosed }: Props) {
+export function NoteView({ id, onClosed, onUnauthorized }: Props) {
   const queryClient = useQueryClient();
   const { data: note, error, refetch } = useNotesGet(id);
   const update = useNotesUpdate();
   const remove = useNotesRemove();
   const [editing, setEditing] = useState(false);
+  // Whether the note's events still arrive; following them again starts a new stream.
+  const [live, setLive] = useState(true);
+  const [follows, setFollows] = useState(0);
 
   function listChanged() {
     queryClient.invalidateQueries({ queryKey: getNotesSearchQueryKey() });
@@ -1150,14 +1191,25 @@ export function NoteView({ id, onClosed }: Props) {
     }
   });
 
-  useEffect(() => apiEvents<NoteEvent>(getNotesEventsUrl(id), changed), [id]);
+  // The stream ended before the note was removed: the server stopped, or the network failed.
+  const ended = useEffectEvent((error?: unknown) => {
+    if (isUnauthorized(error)) {
+      onUnauthorized();
+    } else {
+      setLive(false);
+    }
+  });
 
-  if (error) {
-    return <ErrorMessage error={error} />;
-  }
+  useEffect(() => apiEvents<NoteEvent>(getNotesEventsUrl(id), changed, ended), [id, follows]);
 
   if (!note) {
-    return <p>Loading</p>;
+    return error ? <ErrorMessage error={error} /> : <p>Loading</p>;
+  }
+
+  function follow() {
+    setLive(true);
+    setFollows(follows + 1);
+    refetch();
   }
 
   function save(changes: NewNote) {
@@ -1185,19 +1237,27 @@ export function NoteView({ id, onClosed }: Props) {
     );
   }
 
-  if (editing) {
-    return (
-      <NoteEditor
-        note={note}
-        saving={update.isPending}
-        error={update.error}
-        onSave={save}
-        onCancel={() => setEditing(false)}
-      />
-    );
-  }
-
-  return <NoteText note={note} error={remove.error} onEdit={() => setEditing(true)} onRemove={removeNote} />;
+  return (
+    <>
+      <ErrorMessage error={error} />
+      {!live && (
+        <p role="status">
+          Changes made elsewhere no longer show. <button onClick={follow}>Follow them again</button>
+        </p>
+      )}
+      {editing ? (
+        <NoteEditor
+          note={note}
+          saving={update.isPending}
+          error={update.error}
+          onSave={save}
+          onCancel={() => setEditing(false)}
+        />
+      ) : (
+        <NoteText note={note} error={remove.error} onEdit={() => setEditing(true)} onRemove={removeNote} />
+      )}
+    </>
+  );
 }
 
 // orval types the `edited` event as the plain `Note` it holds, without its `kind`.

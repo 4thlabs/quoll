@@ -36,11 +36,24 @@ function authorization(init?: HeadersInit): Headers {
   return headers;
 }
 
-// A proxy that cannot reach the server answers with no problem: its status alone is the error.
+// The token was refused: it expired, or the server that gave it restarted.
+export function isUnauthorized(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
+// A proxy that cannot reach the server answers with no problem, and a body may be cut: the status alone is the error.
 async function apiError(response: Response): Promise<ApiError> {
   const isProblem = response.headers.get("Content-Type")?.startsWith("application/problem+json");
 
-  return new ApiError(response.status, isProblem ? await response.json() : undefined);
+  if (!isProblem) {
+    return new ApiError(response.status);
+  }
+
+  try {
+    return new ApiError(response.status, await response.json());
+  } catch {
+    return new ApiError(response.status);
+  }
 }
 
 export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
@@ -54,21 +67,30 @@ export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
 }
 
 // Reads a stream of server-sent events, calling `onItem` with each one's data parsed, until the function it returns
-// is called. A failure, before the stream or within it, goes to `onError`.
+// is called. `onEnd` hears of an end it did not ask for: with the error of a failure, before the stream or within it,
+// or with nothing when the server ended the stream.
 export function apiEvents<T>(
   url: string,
   onItem: (item: T) => void,
-  onError: (error: unknown) => void = console.error,
+  onEnd: (error?: unknown) => void = logFailure,
 ): () => void {
   const controller = new AbortController();
 
-  readEvents(url, onItem, controller.signal).catch((error) => {
+  function ended(error?: unknown) {
     if (!controller.signal.aborted) {
-      onError(error);
+      onEnd(error);
     }
-  });
+  }
+
+  readEvents(url, onItem, controller.signal).then(() => ended(), ended);
 
   return () => controller.abort();
+}
+
+function logFailure(error?: unknown) {
+  if (error !== undefined) {
+    console.error(error);
+  }
 }
 
 async function readEvents<T>(url: string, onItem: (item: T) => void, signal: AbortSignal) {

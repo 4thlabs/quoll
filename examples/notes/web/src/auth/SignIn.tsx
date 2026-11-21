@@ -4,7 +4,12 @@ import { signIn } from "../api/fetch";
 import { useAuthToken } from "../api/generated";
 import { ErrorMessage } from "../ErrorMessage";
 
-export function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
+type Props = {
+  expired: boolean;
+  onSignedIn: () => void;
+};
+
+export function SignIn({ expired, onSignedIn }: Props) {
   const [user, setUser] = useState("demo");
   const [password, setPassword] = useState("");
   const token = useAuthToken();
@@ -25,6 +30,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
   return (
     <form className="sign-in" onSubmit={submit}>
       <h1>Notes</h1>
+      {expired && <p role="status">Your session ended: sign in again.</p>}
       <label>
         User
         <input value={user} onChange={(event) => setUser(event.target.value)} />

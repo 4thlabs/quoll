@@ -133,7 +133,6 @@ jobs:
           cargo build --package quoll-cli
           echo "$PWD/target/debug" >> "$GITHUB_PATH"
       - run: cargo quoll build
-      - run: cargo quoll gen --check
       - run: npm test
         working-directory: examples/notes/web
 

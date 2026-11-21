@@ -30,8 +30,10 @@ missing_docs = "warn"
 package = "notes-api"
 bin = "openapi"
 output = "examples/notes/web/openapi.json"
-after = [["npx", "orval"]]
+# `--no`: the orval of the page's package-lock.json, which `npm ci` installs, never one npx would download.
+after = [["npx", "--no", "orval"]]
 
+# The page's vite.config.ts proxies `/api` to this url: the two change together.
 [[workspace.metadata.quoll.server]]
 package = "notes-server"
 url = "http://127.0.0.1:8080"
