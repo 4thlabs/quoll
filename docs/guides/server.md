@@ -269,14 +269,17 @@ async fn main() -> std::io::Result<()> {
 A server serves until Ctrl-C, or `SIGTERM` on Unix, which `docker stop` and Kubernetes send. Told to stop, it accepts
 no more connections, and returns once the requests it serves have ended.
 
-The streams in flight end at once: each `Events`, `JsonLines` and `ByteStream` answer ends after the event, the line
-or the chunk it is sending, so that the client, and a proxy between, reads a clean end, as when the handler's stream
-ends. An `Events` stream ends with nothing more: a stop is no failure, and sends no `event: problem`. A router served
-by `axum::serve` itself, or `quoll::test::spawn`, leaves its streams to run.
+The `Events` streams in flight end at once, after the event each is sending, so that the client, and a proxy between,
+reads a clean end, as when the handler's stream ends. They end with nothing more: a stop is no failure, and sends no
+`event: problem`. A router served by `axum::serve` itself, or `quoll::test::spawn`, leaves them to run.
 
-It waits 5 s for the requests a handler is still answering, or what `.grace(duration)` says, or until a second Ctrl-C
-or `SIGTERM`. Then it logs at `WARN` that connections were left open, and returns `Ok`. They end with the runtime, as
-`main` returns.
+It waits 5 s for the other requests, or what `.grace(duration)` says, or until a second Ctrl-C or `SIGTERM`. Then it
+logs at `WARN` that connections were left open, and returns `Ok`. They end with the runtime, as `main` returns.
+
+A `JsonLines` or a `ByteStream` in flight is one of those requests: it is not ended, as a clean end would make a finite
+one, an export or a file, cut by the stop look complete. It runs on until the grace has passed, and is cut with its
+connection as the runtime ends, which its client reads as an error. What it should say of a stop is an open question,
+[#70](https://github.com/4thlabs/quoll/issues/70).
 
 `.shutdown(signal)` stops it when a future ends, in the place of the signals: a channel of a test, or
 `std::future::pending()` for a server that is never told to stop.
