@@ -4,12 +4,16 @@
 //!
 //! schemars writes one for a newtype variant of an internally tagged enum, the variant's struct beside its tag, and for
 //! a field whose type is a struct and which has a `///` comment or a default. The annotations stay on the outer
-//! schema, where generators read a field's comment, its default and whether it is read or written only.
+//! schema, where generators read a field's comment, its default and whether it is read or written only, and so do
+//! `$defs`, which the reference may point into, and `unevaluatedProperties`, which sees what both members of the
+//! `allOf` evaluate only from there.
 
 use serde_json::{Map, Value, json};
 
-/// The keywords that annotate a schema rather than constrain it, which stay beside the `allOf`.
-const ANNOTATIONS: [&str; 8] = [
+/// The keywords that stay on the outer schema, beside the `allOf`: the annotations, which generators read there; the
+/// keywords that name the schema or hold its definitions, which the reference may point into; and those that constrain
+/// what the other keywords did not evaluate, which see what both members of the `allOf` evaluate only from there.
+const OUTER: [&str; 16] = [
     "title",
     "description",
     "default",
@@ -18,6 +22,14 @@ const ANNOTATIONS: [&str; 8] = [
     "readOnly",
     "writeOnly",
     "$comment",
+    "$id",
+    "$schema",
+    "$anchor",
+    "$dynamicAnchor",
+    "$vocabulary",
+    "$defs",
+    "unevaluatedProperties",
+    "unevaluatedItems",
 ];
 
 /// The keywords whose value is a schema.
@@ -163,13 +175,13 @@ fn schema(value: &mut Value) {
     }
 }
 
-/// `object`, a `$ref` beside other keywords, as an `allOf` of the reference and of the keywords that constrain, the
-/// annotations beside it.
+/// `object`, a `$ref` beside other keywords, as an `allOf` of the reference and of the keywords that constrain, those
+/// of `OUTER` beside it.
 fn all_of(object: &mut Map<String, Value>) {
     let mut rest = std::mem::take(object);
     let reference = rest.remove("$ref");
 
-    for key in ANNOTATIONS {
+    for key in OUTER {
         if let Some(value) = rest.remove(key) {
             object.insert(key.into(), value);
         }
@@ -313,6 +325,39 @@ mod tests {
                 "allOf": [reference("Note"), { "minProperties": 1 }],
             })
         );
+    }
+
+    #[test]
+    fn the_unevaluated_keywords_see_what_the_reference_evaluates_and_the_definitions_stay() {
+        assert_eq!(
+            rewritten(json!({
+                "$ref": "#/components/schemas/Note",
+                "properties": { "kind": { "const": "edited" } },
+                "unevaluatedProperties": false,
+                "unevaluatedItems": false,
+            })),
+            json!({
+                "allOf": [reference("Note"), { "properties": { "kind": { "const": "edited" } } }],
+                "unevaluatedProperties": false,
+                "unevaluatedItems": false,
+            })
+        );
+        assert_eq!(
+            rewritten(
+                json!({ "$ref": "#/components/schemas/Note", "unevaluatedProperties": false })
+            ),
+            json!({ "allOf": [reference("Note")], "unevaluatedProperties": false })
+        );
+
+        let strict = rewritten(json!({
+            "$defs": { "Note": { "properties": { "id": { "type": "integer" } } } },
+            "$ref": "#/$defs/Note",
+            "properties": { "kind": { "const": "edited" } },
+            "unevaluatedProperties": false,
+        }));
+        let validator = jsonschema::validator_for(&strict).unwrap();
+        assert!(validator.is_valid(&json!({ "id": 1, "kind": "edited" })));
+        assert!(!validator.is_valid(&json!({ "id": 1, "kind": "edited", "other": 2 })));
     }
 
     #[test]
