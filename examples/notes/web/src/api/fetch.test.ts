@@ -72,6 +72,16 @@ describe("apiFetch", () => {
     expect(error).toMatchObject({ status: 404, message: "no such note", problem: { detail: "no such note" } });
   });
 
+  it("throws the status of a problem whose body does not read", async () => {
+    answer(() => new Response("{", { status: 500, headers: { "Content-Type": "application/problem+json" } }));
+
+    await expect(apiFetch("/api/notes", {})).rejects.toMatchObject({
+      status: 500,
+      message: "the server answered 500",
+      problem: undefined,
+    });
+  });
+
   it("throws the status of an error that is no problem", async () => {
     answer(() => new Response("Bad Gateway", { status: 502 }));
 
@@ -93,6 +103,16 @@ describe("apiEvents", () => {
     await vi.waitFor(() => expect(items).toEqual([{ kind: "edited", id: 1 }, 2]));
   });
 
+  it("tells of a clean end, with no error", async () => {
+    answer(() => events("data: 1\n\n"));
+    const onEnd = vi.fn();
+
+    apiEvents("/api/notes/1/events", () => {}, onEnd);
+
+    await vi.waitFor(() => expect(onEnd).toHaveBeenCalledOnce());
+    expect(onEnd.mock.calls[0][0]).toBeUndefined();
+  });
+
   it("skips comments and events with no data, and joins lines of data", async () => {
     answer(() => events(": ping\n\nevent: empty\n\ndata: [1,\ndata: 2]\n\n"));
     const items: unknown[] = [];
@@ -105,24 +125,24 @@ describe("apiEvents", () => {
   it("ends with the problem of an `event: problem`", async () => {
     answer(() => events('data: 1\n\nevent: problem\ndata: {"status":503,"detail":"the store is gone"}\n\ndata: 2\n\n'));
     const items: unknown[] = [];
-    const onError = vi.fn();
+    const onEnd = vi.fn();
 
-    apiEvents("/api/notes/1/events", (item) => items.push(item), onError);
+    apiEvents("/api/notes/1/events", (item) => items.push(item), onEnd);
 
-    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
-    expect(onError.mock.calls[0][0]).toMatchObject({ status: 503, message: "the store is gone" });
+    await vi.waitFor(() => expect(onEnd).toHaveBeenCalledOnce());
+    expect(onEnd.mock.calls[0][0]).toMatchObject({ status: 503, message: "the store is gone" });
     expect(items).toEqual([1]);
   });
 
   it("sends the token, and reports the problem of a refusal", async () => {
     const fetch = answer(() => problem(401, "unknown or expired token"));
-    const onError = vi.fn();
+    const onEnd = vi.fn();
 
     signIn("secret");
-    apiEvents("/api/notes/1/events", () => {}, onError);
+    apiEvents("/api/notes/1/events", () => {}, onEnd);
 
-    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(onEnd).toHaveBeenCalledOnce());
     expect(new Headers(fetch.mock.calls[0][1]?.headers).get("Authorization")).toBe("Bearer secret");
-    expect(onError.mock.calls[0][0]).toMatchObject({ status: 401, message: "unknown or expired token" });
+    expect(onEnd.mock.calls[0][0]).toMatchObject({ status: 401, message: "unknown or expired token" });
   });
 });

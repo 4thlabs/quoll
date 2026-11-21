@@ -11,10 +11,20 @@ type Props = {
   onCancel: () => void;
 };
 
-// The form of a note, new or edited: it keeps its own draft until it is saved.
+// The form of a note, new or edited: it keeps its own draft until it is saved, and says when the note it started
+// from changed elsewhere meanwhile, which saving overwrites.
 export function NoteEditor({ note, saving, error, onSave, onCancel }: Props) {
+  const [base, setBase] = useState(note);
   const [title, setTitle] = useState(note.title);
   const [body, setBody] = useState(note.body);
+  // A note that came to read as the draft, as the echo of this very save does, is no conflict.
+  const changedElsewhere = !same(note, base) && !same(note, { title, body });
+
+  function reload() {
+    setBase(note);
+    setTitle(note.title);
+    setBody(note.body);
+  }
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -23,6 +33,14 @@ export function NoteEditor({ note, saving, error, onSave, onCancel }: Props) {
 
   return (
     <form className="note-editor" onSubmit={submit}>
+      {changedElsewhere && (
+        <p role="status">
+          This note changed elsewhere: saving overwrites it.{" "}
+          <button type="button" onClick={reload}>
+            Reload
+          </button>
+        </p>
+      )}
       <label>
         Title
         <input value={title} onChange={(event) => setTitle(event.target.value)} required />
@@ -40,4 +58,8 @@ export function NoteEditor({ note, saving, error, onSave, onCancel }: Props) {
       <ErrorMessage error={error} />
     </form>
   );
+}
+
+function same(note: NewNote, other: NewNote): boolean {
+  return note.title === other.title && note.body === other.body;
 }
