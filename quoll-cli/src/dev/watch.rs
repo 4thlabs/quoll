@@ -83,7 +83,7 @@ impl Graph {
         }
 
         // The path dependencies of those outside the workspace, which count as the package of the workspace built
-        // with them.
+        // with them. One that is a package of the workspace again is a dependency of that package.
         let mut external = Vec::new();
 
         while let Some((dir, dependent)) = next.pop() {
@@ -92,13 +92,17 @@ impl Graph {
             }
 
             match Workspace::path_dependencies_of(&dir) {
-                Ok(paths) => next.extend(
-                    paths
-                        .iter()
-                        .map(|path| canonical(path))
-                        .filter(|path| !dirs.contains(path))
-                        .map(|path| (path, dependent)),
-                ),
+                Ok(paths) => {
+                    for path in paths.iter().map(|path| canonical(path)) {
+                        match dirs.iter().position(|dir| *dir == path) {
+                            Some(member) if !dependencies[dependent].contains(&member) => {
+                                dependencies[dependent].push(member);
+                            }
+                            Some(_) => {}
+                            None => next.push((path, dependent)),
+                        }
+                    }
+                }
                 Err(error) => reporter.status(
                     "Warning",
                     format!(
@@ -269,6 +273,12 @@ impl Rule {
             for path in &event.paths {
                 let path = canonical(path);
 
+                // A directory modified is no change of its own: its entries made or removed have their events.
+                // Windows reports the times of a directory it updates late, long after the files were written.
+                if directory_modified(&event.kind) && path.is_dir() {
+                    continue;
+                }
+
                 for package in self.packages(&path) {
                     changed.entry(package).or_insert_with(|| {
                         let shown = path.strip_prefix(&self.root).unwrap_or(&path);
@@ -316,6 +326,13 @@ impl Rule {
 
         dirs
     }
+}
+
+/// Whether an event may be the modification of a directory's own times or attributes: not a rename, which moves a
+/// tree.
+fn directory_modified(kind: &EventKind) -> bool {
+    matches!(kind, EventKind::Any)
+        || matches!(kind, EventKind::Modify(modify) if !matches!(modify, ModifyKind::Name(_)))
 }
 
 /// Whether a part of a path inside a package leaves it out: a hidden file or directory, as `.git` or an editor's swap
@@ -666,6 +683,65 @@ mod tests {
                 .into_keys()
                 .collect::<BTreeSet<_>>(),
             rule.watched
+        );
+    }
+
+    #[test]
+    fn a_directory_modified_is_no_change() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let root = canonical(dir.path());
+        let src = root.join("server/src");
+
+        fs::create_dir_all(&src).expect("the directory is made");
+        fs::write(src.join("main.rs"), "fn main() {}\n").expect("the file is written");
+
+        let rule = Rule {
+            graph: Graph {
+                names: vec!["server".into()],
+                dirs: vec![root.join("server")],
+                dependencies: vec![vec![]],
+                external: vec![],
+            },
+            watched: BTreeSet::from([0]),
+            target: root.join("target"),
+            web: None,
+            outputs: vec![],
+            manifests: vec![],
+            root: root.clone(),
+        };
+        let event = |kind: EventKind, path: &Path| {
+            DebouncedEvent::new(
+                notify::Event::new(kind).add_path(path.to_path_buf()),
+                std::time::Instant::now(),
+            )
+        };
+
+        assert_eq!(
+            rule.changed(&[event(EventKind::Modify(ModifyKind::Any), &src)]),
+            BTreeMap::new()
+        );
+        assert_eq!(
+            rule.changed(&[event(EventKind::Any, &src)]),
+            BTreeMap::new()
+        );
+        assert_eq!(
+            rule.changed(&[event(
+                EventKind::Modify(ModifyKind::Any),
+                &src.join("main.rs")
+            )])
+            .into_keys()
+            .collect::<Vec<_>>(),
+            [0]
+        );
+        assert_eq!(
+            rule.changed(&[event(
+                EventKind::Create(notify::event::CreateKind::Folder),
+                &src
+            )])
+            .into_keys()
+            .collect::<Vec<_>>(),
+            [0],
+            "a directory made is a change"
         );
     }
 
