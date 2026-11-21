@@ -11,8 +11,8 @@ type Props = {
   onCancel: () => void;
 };
 
-// The form of a note, new or edited: it keeps its own draft until it is saved, and says when the note it started
-// from changed elsewhere meanwhile, which saving overwrites.
+// The form of a note, new or edited: it keeps its own draft until it is saved, which is read-only while it is saved,
+// and says when the note it started from changed elsewhere meanwhile, which saving overwrites.
 export function NoteEditor({ note, saving, error, onSave, onCancel }: Props) {
   const [base, setBase] = useState(note);
   const [title, setTitle] = useState(note.title);
@@ -43,11 +43,11 @@ export function NoteEditor({ note, saving, error, onSave, onCancel }: Props) {
       )}
       <label>
         Title
-        <input value={title} onChange={(event) => setTitle(event.target.value)} required />
+        <input value={title} onChange={(event) => setTitle(event.target.value)} readOnly={saving} required />
       </label>
       <label>
         Text
-        <textarea value={body} onChange={(event) => setBody(event.target.value)} rows={10} />
+        <textarea value={body} onChange={(event) => setBody(event.target.value)} readOnly={saving} rows={10} />
       </label>
       <div className="actions">
         <button disabled={saving}>Save</button>

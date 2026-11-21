@@ -7,8 +7,8 @@ import { NoteEditor } from "./NoteEditor";
 
 afterEach(cleanup);
 
-function editor(note: NewNote) {
-  return <NoteEditor note={note} saving={false} error={null} onSave={() => {}} onCancel={() => {}} />;
+function editor(note: NewNote, saving = false) {
+  return <NoteEditor note={note} saving={saving} error={null} onSave={() => {}} onCancel={() => {}} />;
 }
 
 it("sees no change elsewhere in a note that reads as the draft", async () => {
@@ -22,4 +22,14 @@ it("sees no change elsewhere in a note that reads as the draft", async () => {
 
   rerender(editor({ title: "Milk", body: "Three bottles" }));
   expect(screen.getByText(/changed elsewhere/)).toBeDefined();
+});
+
+it("keeps the draft as it is sent while it is saved", async () => {
+  render(editor({ title: "Milk", body: "Two bottles" }, true));
+
+  await userEvent.type(screen.getByLabelText("Text"), ", and cream");
+  await userEvent.type(screen.getByLabelText("Title"), "!");
+
+  expect(screen.getByLabelText("Text")).toHaveProperty("value", "Two bottles");
+  expect(screen.getByLabelText("Title")).toHaveProperty("value", "Milk");
 });
