@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::rest::openapi::{Document, SecurityScheme};
 
+mod refs;
 mod schemas;
 
 /// The version of OpenAPI the document follows.
@@ -342,7 +343,10 @@ pub fn document(api: &'static Api) -> Document {
     document.insert("paths".into(), paths);
     document.insert("components".into(), Value::Object(components));
 
-    Document::new(Value::Object(document))
+    let mut document = Value::Object(document);
+    refs::rewrite(&mut document);
+
+    Document::new(document)
 }
 
 /// The schemes of `api`, each once by its name: the declared ones, in the order the contract writes them, then the

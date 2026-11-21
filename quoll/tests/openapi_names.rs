@@ -91,8 +91,12 @@ fn each_reference_points_at_its_own_types_schema_on_its_own_side() {
     let written = resolve(&document, result("/api/holder"));
     assert_eq!(properties(read), ["n"]);
     assert_eq!(properties(written), ["n", "old"]);
+    // Its default and `readOnly` beside the reference make it an `allOf`.
     assert_eq!(
-        properties(resolve(&document, &written["properties"]["old"])),
+        properties(resolve(
+            &document,
+            &written["properties"]["old"]["allOf"][0]
+        )),
         ["x"]
     );
 }

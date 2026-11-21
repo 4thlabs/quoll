@@ -104,17 +104,23 @@
       "NoteEvent": {
         "oneOf": [
           {
-            "$ref": "#/components/schemas/Note",
-            "properties": {
-              "kind": {
-                "const": "edited",
-                "type": "string"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Note"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "edited",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
               }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
+            ]
           },
           {
             "description": "The last event of the note's stream.",
