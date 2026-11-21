@@ -215,6 +215,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "backon"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
+dependencies = [
+ "fastrand",
+]
+
+[[package]]
 name = "base64"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1560,18 +1569,20 @@ name = "quoll"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "backon",
  "base64",
  "bytes",
  "futures-core",
  "futures-util",
  "http",
+ "httpdate",
+ "hyper",
  "jsonschema",
  "percent-encoding",
  "pin-project-lite",
  "quoll-macros",
  "reqwest",
  "reqwest-middleware",
- "reqwest-retry",
  "reqwest-tracing",
  "schemars",
  "serde",
@@ -1809,26 +1820,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reqwest-retry"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe2412db2af7d2268e7a5406be0431f37d9eb67ff390f35b395716f5f06c2eaa"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures",
- "getrandom 0.2.17",
- "http",
- "hyper",
- "reqwest",
- "reqwest-middleware",
- "retry-policies",
- "thiserror",
- "tokio",
- "wasmtimer",
-]
-
-[[package]]
 name = "reqwest-tracing"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1842,15 +1833,6 @@ dependencies = [
  "reqwest",
  "reqwest-middleware",
  "tracing",
-]
-
-[[package]]
-name = "retry-policies"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc05fbf560421a0357a750cbe78c7ca19d4923918490daabba313d5dbc871e47"
-dependencies = [
- "rand",
 ]
 
 [[package]]
@@ -2780,20 +2762,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b1f9c3798725016c6ee5f2f57869ec0831e8bbc0ab0310a86e787e97f41389e"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "wasmtimer"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c62b7f338e4397a45d054c15a2b36a93d57cccdda7be11a7d7b045d47b5e70ce"
-dependencies = [
- "futures",
- "js-sys",
- "parking_lot",
- "pin-project-lite",
- "slab",
- "wasm-bindgen",
 ]
 
 [[package]]

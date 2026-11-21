@@ -13,7 +13,7 @@
 //! | [`on_request()`]  | a closure that changes each request of a contract before it leaves                  |
 //! | [`user_agent()`]  | `User-Agent`, on a request that has none                                            |
 //! | [`request_id()`]  | a new `X-Request-Id` per call, on a request that has none                           |
-//! | [`retry()`]       | a call tried again after a failure that may pass                                    |
+//! | [`retry()`]       | a call tried again after a failure that may pass, or as a closure decides           |
 //! | [`timeout()`]     | a deadline per attempt and per hop                                                  |
 //! | [`trace()`]       | a tracing span per call, named by its operation                                     |
 //! | [`redirects()`]   | redirects followed one hop at a time, through the middleware after it               |
@@ -106,7 +106,7 @@ mod trace;
 pub use builder::{Builder, Contract, builder};
 pub use redirects::redirects;
 pub use request::{on_request, request_id, timeout, user_agent};
-pub use retry::retry;
+pub use retry::{Attempt, Retry, Retrying, retry};
 pub use token::{TokenSource, bearer_from};
 pub use trace::trace;
 

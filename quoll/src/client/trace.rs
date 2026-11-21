@@ -5,7 +5,6 @@ use std::error::Error as StdError;
 use http::Extensions;
 use reqwest::{Request, Response, Url};
 use reqwest_middleware::Middleware;
-use reqwest_retry::RetryError;
 use reqwest_tracing::{
     ERROR_CAUSE_CHAIN, ERROR_MESSAGE, OTEL_STATUS_CODE, ReqwestOtelSpanBackend, TracingMiddleware,
     default_on_request_success, default_span_name, reqwest_otel_span,
@@ -100,8 +99,8 @@ fn without_urls(error: &reqwest_middleware::Error) -> (String, String) {
 }
 
 /// Gathers in `urls` the URLs of the reqwest errors `error` holds, itself, through the errors it comes from, and
-/// through those that show a reqwest error's message as their own, reqwest-middleware's and reqwest-retry's, which
-/// leave it out of the errors they come from.
+/// through those that show a reqwest error's message as their own, reqwest-middleware's, which leave it out of the
+/// errors they come from.
 fn urls_in(error: &(dyn StdError + 'static), urls: &mut Vec<Url>) {
     if let Some(error) = error.downcast_ref::<reqwest::Error>() {
         urls.extend(error.url().cloned());
@@ -111,12 +110,6 @@ fn urls_in(error: &(dyn StdError + 'static), urls: &mut Vec<Url>) {
         Some(reqwest_middleware::Error::Reqwest(error)) => urls.extend(error.url().cloned()),
         Some(reqwest_middleware::Error::Middleware(error)) => urls_in(&**error, urls),
         None => {}
-    }
-
-    if let Some(RetryError::Error(error) | RetryError::WithRetries { err: error, .. }) =
-        error.downcast_ref::<RetryError>()
-    {
-        urls_in(error, urls);
     }
 
     if let Some(source) = error.source() {

@@ -8,11 +8,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{StreamExt, stream};
 use http::Extensions;
-use quoll::client::TokenSource;
+use quoll::client::{Attempt, Retry, TokenSource};
 use quoll::rest::{self, Authenticate, Bearer, ByteStream, Error, Events, Result, Route, Text};
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware, Next};
@@ -49,6 +49,11 @@ rest::api! {
         PUT    "/flaky/{status}"  => put(status: u16, text: Text) -> u32;
         DELETE "/flaky/{status}"  => delete(status: u16) -> u32;
         POST   "/flaky/{status}"  => post(status: u16, text: Text) -> u32;
+        POST   "/flaky/{status}/keyed" => post_keyed(
+                                         status: u16,
+                                         header("Idempotency-Key") key: Option<String>,
+                                         text: Text,
+                                     ) -> u32;
     }
 
     #[auth(Bearer)]
@@ -147,6 +152,10 @@ impl CallsServer for App {
     }
 
     async fn post(&self, status: u16, _: Text) -> Result<u32> {
+        self.flaky(status)
+    }
+
+    async fn post_keyed(&self, status: u16, _: Option<String>, _: Text) -> Result<u32> {
         self.flaky(status)
     }
 }
@@ -384,13 +393,18 @@ async fn request_id_is_new_on_each_call_and_kept_on_its_attempts() -> Result<()>
 /// A client through `retry(times)`, of a server whose `flaky` routes fail `failures` times: the client and the
 /// service.
 async fn flaky(failures: usize, times: u32) -> (ApiClient, App) {
+    flaky_with(failures, quoll::client::retry(times)).await
+}
+
+/// A client through `retry`, of a server whose `flaky` routes fail `failures` times: the client and the service.
+async fn flaky_with(failures: usize, retry: quoll::client::Retrying) -> (ApiClient, App) {
     let app = App {
         failures,
         ..App::default()
     };
     let url = serve(&app).await;
     let http = ClientBuilder::new(reqwest::Client::new())
-        .with(quoll::client::retry(times))
+        .with(retry)
         .build();
 
     (client(http, &url), app)
@@ -459,26 +473,207 @@ async fn retry_tries_again_get_head_put_and_delete_but_not_post() -> Result<()> 
 }
 
 #[tokio::test]
-async fn retry_tries_again_a_call_that_got_no_response() {
-    // A server that closes each connection it accepts, before any answer.
+async fn retry_when_tries_again_a_post_that_carries_an_idempotency_key() -> Result<()> {
+    let keyed = || {
+        quoll::client::retry(3).when(|attempt: &Attempt| {
+            let request = attempt.request();
+            let keyed = request.method() == http::Method::POST
+                && request.headers().contains_key("Idempotency-Key");
+
+            match attempt.status() {
+                Some(status) if keyed && status.is_server_error() => Retry::Backoff,
+                _ => attempt.transient(),
+            }
+        })
+    };
+    let (api, app) = flaky_with(2, keyed()).await;
+
+    let attempts = api
+        .calls()
+        .post_keyed(500, Some("k-1".into()), Text("a body".into()))
+        .await?;
+
+    assert_eq!(attempts, 3);
+    assert_eq!(app.attempts.load(Ordering::SeqCst), 3);
+
+    let (api, app) = flaky_with(2, keyed()).await;
+    let error = api
+        .calls()
+        .post_keyed(500, None, Text("a body".into()))
+        .await
+        .expect_err("a POST with no key is sent once");
+
+    assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
+    assert_eq!(app.attempts.load(Ordering::SeqCst), 1);
+
+    // The rule of `transient` still holds where the closure leaves it.
+    let (api, app) = flaky_with(1, keyed()).await;
+
+    assert_eq!(api.calls().get(503).await?, 2);
+    assert_eq!(app.attempts.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+/// What the closure of `retry(..).when` is given of an attempt: its number, its operation and its status.
+type Given = (u32, Option<&'static str>, Option<u16>);
+
+#[tokio::test]
+async fn retry_when_is_given_each_attempt_its_route_its_number_and_its_answer() -> Result<()> {
+    let seen: Arc<Mutex<Vec<Given>>> = Arc::default();
+    let retry = {
+        let seen = Arc::clone(&seen);
+
+        quoll::client::retry(5).when(move |attempt: &Attempt| {
+            seen.lock().expect("no test panics while holding it").push((
+                attempt.number(),
+                attempt.route().map(Route::operation_id),
+                attempt.status().map(|status| status.as_u16()),
+            ));
+
+            if attempt.number() < 2 {
+                Retry::Backoff
+            } else {
+                Retry::No
+            }
+        })
+    };
+    let (api, app) = flaky_with(10, retry).await;
+
+    let error = api.calls().get(503).await.expect_err("always 503");
+
+    assert_eq!(error.status(), Some(StatusCode::SERVICE_UNAVAILABLE));
+    assert_eq!(app.attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        *seen.lock().expect("no test panics while holding it"),
+        [
+            (1, Some("calls_get"), Some(503)),
+            (2, Some("calls_get"), Some(503))
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn retry_when_is_given_the_error_of_an_attempt_with_no_answer() {
+    let url = closes_each_connection(Arc::default()).await;
+    let errors = Arc::new(AtomicUsize::new(0));
+    let retry = {
+        let errors = Arc::clone(&errors);
+
+        quoll::client::retry(1).when(move |attempt: &Attempt| {
+            assert_eq!(attempt.status(), None);
+            assert!(attempt.headers().is_none());
+
+            if attempt.error().is_some() {
+                errors.fetch_add(1, Ordering::SeqCst);
+            }
+
+            attempt.transient()
+        })
+    };
+    let http = ClientBuilder::new(reqwest::Client::new())
+        .with(retry)
+        .build();
+
+    let error = client(http, &url)
+        .calls()
+        .get(200)
+        .await
+        .expect_err("no server");
+
+    assert_eq!(error.status(), None);
+    assert_eq!(errors.load(Ordering::SeqCst), 2);
+}
+
+/// A middleware that answers its first request itself, 429 with `Retry-After: <value>`, and sends the others on.
+fn too_many_once(value: &'static str) -> impl Middleware {
+    let answered = AtomicUsize::new(0);
+
+    middleware(move |request, extensions, next| {
+        if answered.fetch_add(1, Ordering::SeqCst) > 0 {
+            return Box::pin(next.run(request, extensions));
+        }
+
+        let answer = http::Response::builder()
+            .status(StatusCode::TOO_MANY_REQUESTS)
+            .header(http::header::RETRY_AFTER, value)
+            .body("")
+            .expect("an answer");
+
+        Box::pin(async move { Ok(reqwest::Response::from(answer)) })
+    })
+}
+
+/// The `retry` of a 429 waited out as its `Retry-After` says.
+fn after_429() -> quoll::client::Retrying {
+    quoll::client::retry(2).when(|attempt: &Attempt| match attempt.status() {
+        Some(StatusCode::TOO_MANY_REQUESTS) => attempt.retry_after(),
+        _ => attempt.transient(),
+    })
+}
+
+#[tokio::test]
+async fn retry_after_waits_as_long_as_the_server_says() -> Result<()> {
+    let url = serve(&App::default()).await;
+    let http = ClientBuilder::new(reqwest::Client::new())
+        .with(after_429())
+        .with(too_many_once("1"))
+        .build();
+    let started = Instant::now();
+
+    assert_eq!(client(http, &url).calls().get(200).await?, 1);
+
+    let waited = started.elapsed();
+
+    // The backoff alone waits 100 ms at most before the second attempt.
+    assert!(waited >= Duration::from_secs(1), "{waited:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn retry_after_waits_no_longer_than_max_wait() -> Result<()> {
+    let url = serve(&App::default()).await;
+    let http = ClientBuilder::new(reqwest::Client::new())
+        .with(after_429().max_wait(Duration::from_millis(300)))
+        .with(too_many_once("3600"))
+        .build();
+    let started = Instant::now();
+
+    let called = tokio::time::timeout(Duration::from_secs(30), client(http, &url).calls().get(200))
+        .await
+        .expect("a wait of 300 ms, not of an hour");
+
+    assert_eq!(called?, 1);
+
+    let waited = started.elapsed();
+
+    assert!(waited >= Duration::from_millis(300), "{waited:?}");
+    Ok(())
+}
+
+/// A server that closes each connection it accepts, before any answer, counting them in `accepted`: its URL.
+async fn closes_each_connection(accepted: Arc<AtomicUsize>) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("a free port");
     let url = format!("http://{}", listener.local_addr().expect("an address"));
+
+    tokio::spawn(async move {
+        loop {
+            let (connection, _) = listener.accept().await.expect("a connection");
+
+            accepted.fetch_add(1, Ordering::SeqCst);
+            drop(connection);
+        }
+    });
+
+    url
+}
+
+#[tokio::test]
+async fn retry_tries_again_a_call_that_got_no_response() {
     let accepted = Arc::new(AtomicUsize::new(0));
-
-    {
-        let accepted = Arc::clone(&accepted);
-
-        tokio::spawn(async move {
-            loop {
-                let (connection, _) = listener.accept().await.expect("a connection");
-
-                accepted.fetch_add(1, Ordering::SeqCst);
-                drop(connection);
-            }
-        });
-    }
+    let url = closes_each_connection(Arc::clone(&accepted)).await;
     let http = ClientBuilder::new(reqwest::Client::new())
         .with(quoll::client::retry(2))
         .build();

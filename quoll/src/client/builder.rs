@@ -9,7 +9,7 @@ use reqwest::redirect::Policy;
 use reqwest_middleware::{ClientWithMiddleware, Middleware};
 use sync_wrapper::SyncWrapper;
 
-use super::{Helper, Rank, redirects};
+use super::{Helper, Rank, Retrying, redirects};
 use crate::order::arrange;
 use crate::rest::{Error, Result};
 
@@ -105,9 +105,11 @@ pub struct Builder {
 impl Builder {
     /// Adds `middleware`: a helper of quoll's, at the place its kind works at, or any other, at the place it is given.
     pub fn with<M: Middleware>(mut self, middleware: M) -> Self {
-        let rank = (&middleware as &dyn Any)
-            .downcast_ref::<Helper>()
-            .map(|helper| helper.rank);
+        let any = &middleware as &dyn Any;
+        let rank = match any.downcast_ref::<Helper>() {
+            Some(helper) => Some(helper.rank),
+            None => any.is::<Retrying>().then_some(Rank::Retry),
+        };
 
         self.middleware.push((rank, Arc::new(middleware)));
         self
