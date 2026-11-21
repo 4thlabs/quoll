@@ -71,6 +71,8 @@ Planned, from the spec:
   needs a network is `rust,no_run`, one of tests `rust,test_harness`, one that shows a mistake `rust,compile_fail`.
   Its dev-dependency on `notes-api` is a path into the notes example's workspace, which cargo builds from the root.
   A guide says how to use quoll and links to the rustdoc for each item's detail; the why stays in the spec.
+  The TypeScript guide's TypeScript and TOML blocks are excerpts of the notes example, each under the name of its
+  file, which the page's `src/guide/excerpts.test.ts` checks; the code the page does not use is in its `src/guide/`.
 
 What the macro generates is never written to disk: `cargo expand` shows it. The TypeScript that orval writes is
 generated in the example, and gitignored.

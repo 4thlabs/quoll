@@ -12,10 +12,20 @@ Each guide says how to use one part of quoll, with examples to copy. The API doc
 | [Authentication](guides/authentication.md)      | schemes, alternatives, optional credentials, scopes, cookies and their origin |
 | [Errors](guides/errors.md)                      | `rest::Error`, the problems a server answers, what a client sees              |
 | [Testing](guides/testing.md)                    | a server and its client in a test, fakes, the OpenAPI snapshot                |
-| [OpenAPI](guides/openapi.md)                    | `Api::openapi()`, `cargo quoll gen` and `dev`, what the document holds, contracts that are only called |
+| [OpenAPI](guides/openapi.md)                    | `Api::openapi()`, what the document holds, contracts that are only called      |
+| [TypeScript](guides/typescript.md)              | `cargo quoll gen`, `build` and `dev`, Vite and orval, the mutator, streams, Next.js, CI |
 
 The Rust blocks of the guides are compiled, and run, as the doctests of the crate `quoll-guides`, in `guides/`:
 
 ```bash
 cargo test -p quoll-guides
+```
+
+The TypeScript and TOML blocks of the TypeScript guide are excerpts of the notes example, which a test of its page
+checks, once `cargo quoll gen` has written its TypeScript:
+
+```bash
+cd examples/notes
+cargo quoll gen
+npm test --prefix web
 ```

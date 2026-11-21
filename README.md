@@ -16,6 +16,7 @@
 
   <p>
     <a href="docs/README.md"><strong>The guides</strong></a> ·
+    <a href="docs/guides/typescript.md">TypeScript</a> ·
     <a href="docs/spec.md"><strong>The spec</strong></a> ·
     <a href="docs/spec.md#a-complete-example">A complete example</a> ·
     <a href="docs/spec.md#later">Later</a>
