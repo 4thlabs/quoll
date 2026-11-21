@@ -72,6 +72,31 @@ describe("apiFetch", () => {
     expect(error).toMatchObject({ status: 404, message: "no such note", problem: { detail: "no such note" } });
   });
 
+  it("calls a refusal of the token it holds an expiry, not one of a token signed out since", async () => {
+    answer(() => problem(401, "unknown or expired token"));
+
+    signIn("old");
+    await expect(apiFetch("/api/notes", {})).rejects.toMatchObject({ status: 401, expired: true });
+
+    // The answer comes once the page signed in again: it says nothing of the new token.
+    let respond: (response: Response) => void = () => {};
+
+    vi.stubGlobal("fetch", () => new Promise<Response>((resolve) => (respond = resolve)));
+    const late = apiFetch("/api/notes", {}).catch((error: unknown) => error);
+
+    signOut();
+    signIn("new");
+    respond(problem(401, "unknown or expired token"));
+
+    expect(await late).toMatchObject({ status: 401, expired: false });
+  });
+
+  it("calls no refusal of a sign-in an expiry", async () => {
+    answer(() => problem(401, "wrong user or password"));
+
+    await expect(apiFetch("/api/token", { method: "POST" })).rejects.toMatchObject({ status: 401, expired: false });
+  });
+
   it("throws the status of a problem whose body does not read", async () => {
     answer(() => new Response("{", { status: 500, headers: { "Content-Type": "application/problem+json" } }));
 
@@ -98,26 +123,29 @@ describe("apiEvents", () => {
     answer(() => events('data: {"kind":"ed', 'ited","id":1}\n', "\nevent: other\ndata: 2\n\n"));
     const items: unknown[] = [];
 
-    apiEvents("/api/notes/1/events", (item) => items.push(item));
+    apiEvents("/api/notes/1/events", { onItem: (item) => items.push(item) });
 
     await vi.waitFor(() => expect(items).toEqual([{ kind: "edited", id: 1 }, 2]));
   });
 
-  it("tells of a clean end, with no error", async () => {
+  it("tells of its opening before its items, then of a clean end, with no error", async () => {
     answer(() => events("data: 1\n\n"));
-    const onEnd = vi.fn();
+    const heard: unknown[] = [];
 
-    apiEvents("/api/notes/1/events", () => {}, onEnd);
+    apiEvents("/api/notes/1/events", {
+      onItem: (item) => heard.push(item),
+      onOpen: () => heard.push("open"),
+      onEnd: (error) => heard.push(["end", error]),
+    });
 
-    await vi.waitFor(() => expect(onEnd).toHaveBeenCalledOnce());
-    expect(onEnd.mock.calls[0][0]).toBeUndefined();
+    await vi.waitFor(() => expect(heard).toEqual(["open", 1, ["end", undefined]]));
   });
 
   it("skips comments and events with no data, and joins lines of data", async () => {
     answer(() => events(": ping\n\nevent: empty\n\ndata: [1,\ndata: 2]\n\n"));
     const items: unknown[] = [];
 
-    apiEvents("/api/notes/1/events", (item) => items.push(item));
+    apiEvents("/api/notes/1/events", { onItem: (item) => items.push(item) });
 
     await vi.waitFor(() => expect(items).toEqual([[1, 2]]));
   });
@@ -127,7 +155,7 @@ describe("apiEvents", () => {
     const items: unknown[] = [];
     const onEnd = vi.fn();
 
-    apiEvents("/api/notes/1/events", (item) => items.push(item), onEnd);
+    apiEvents("/api/notes/1/events", { onItem: (item) => items.push(item), onEnd });
 
     await vi.waitFor(() => expect(onEnd).toHaveBeenCalledOnce());
     expect(onEnd.mock.calls[0][0]).toMatchObject({ status: 503, message: "the store is gone" });
@@ -139,10 +167,10 @@ describe("apiEvents", () => {
     const onEnd = vi.fn();
 
     signIn("secret");
-    apiEvents("/api/notes/1/events", () => {}, onEnd);
+    apiEvents("/api/notes/1/events", { onItem: () => {}, onEnd });
 
     await vi.waitFor(() => expect(onEnd).toHaveBeenCalledOnce());
     expect(new Headers(fetch.mock.calls[0][1]?.headers).get("Authorization")).toBe("Bearer secret");
-    expect(onEnd.mock.calls[0][0]).toMatchObject({ status: 401, message: "unknown or expired token" });
+    expect(onEnd.mock.calls[0][0]).toMatchObject({ status: 401, message: "unknown or expired token", expired: true });
   });
 });
