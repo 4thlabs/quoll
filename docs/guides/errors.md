@@ -7,7 +7,7 @@ handler returns one, the server answers it as an RFC 9457 problem, and the clien
 
 ```rust
 use http::StatusCode;
-use quoll::rest::{self, Error, Result};
+use quoll::rest::{self, Error, Response, Result};
 
 rest::api! {
     pub api Api = "/api";
@@ -20,7 +20,7 @@ rest::api! {
 struct App;
 
 impl NotesServer for App {
-    async fn rename(&self, id: i64, title: String) -> Result<String> {
+    async fn rename(&self, id: i64, title: String) -> Result<Response<String>> {
         if title.is_empty() {
             return Err(Error::bad_request("a title is not empty"));
         }
@@ -35,7 +35,7 @@ impl NotesServer for App {
 
         let stored = store(id, &title).map_err(Error::internal)?;
 
-        Ok(stored)
+        Ok(Response::new(stored))
     }
 }
 
@@ -88,7 +88,7 @@ has none.
 
 ```rust
 use http::StatusCode;
-use quoll::rest::{self, Error, Result};
+use quoll::rest::{self, Error, Response, Result};
 use quoll::{client, test};
 
 rest::api! {
@@ -102,7 +102,7 @@ rest::api! {
 struct App;
 
 impl NotesServer for App {
-    async fn get(&self, _id: i64) -> Result<String> {
+    async fn get(&self, _id: i64) -> Result<Response<String>> {
         Err(Error::not_found("no such note"))
     }
 }
@@ -154,6 +154,9 @@ async fn main() -> rest::Result<()> {
     Ok(())
 }
 ```
+
+The headers of an error's answer, a `Retry-After` or a rate limit, come with the whole answer, which a call's
+`.response()` gives: its body is then the error. [The whole answer](client.md#the-whole-answer) shows it.
 
 ## Another API's errors
 

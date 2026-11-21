@@ -1,5 +1,5 @@
 use notes_api::{AuthServer, Key, Login, TokenResponse};
-use quoll::rest::{Authenticate, Bearer, Error, Form, Result};
+use quoll::rest::{Authenticate, Bearer, Error, Form, Response, Result};
 
 use crate::App;
 
@@ -15,7 +15,7 @@ pub struct Operator {
 }
 
 impl AuthServer for App {
-    async fn token(&self, login: Form<Login>) -> Result<TokenResponse> {
+    async fn token(&self, login: Form<Login>) -> Result<Response<TokenResponse>> {
         let user = self
             .store
             .check_password(&login.user, &login.password)
@@ -23,9 +23,9 @@ impl AuthServer for App {
             .map_err(Error::internal)?
             .ok_or_else(|| Error::unauthorized("wrong user or password"))?;
 
-        Ok(TokenResponse {
+        Ok(Response::new(TokenResponse {
             access_token: self.sessions.open(user),
-        })
+        }))
     }
 }
 

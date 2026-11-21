@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use http::Extensions;
-use quoll::rest::{self, Authenticate, Bearer, Created, Error, Result, Route};
+use quoll::rest::{self, Authenticate, Bearer, Created, Error, Response, Result, Route};
 use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, WWW_AUTHENTICATE};
 use reqwest_middleware::{ClientBuilder, Next};
@@ -88,44 +88,44 @@ impl Authenticate<Bearer> for App {
 }
 
 impl NotesServer for App {
-    async fn get(&self, user: &User, id: i64) -> Result<Note> {
+    async fn get(&self, user: &User, id: i64) -> Result<Response<Note>> {
         self.handled();
 
-        Ok(Note {
+        Ok(Response::new(Note {
             id,
             owner: user.name.clone(),
             title: "Milk".into(),
-        })
+        }))
     }
 
-    async fn create(&self, user: &User, note: NewNote) -> Result<Created<Note>> {
+    async fn create(&self, user: &User, note: NewNote) -> Result<Response<Note>> {
         self.handled();
 
-        Ok(Created::new(Note {
+        Ok(Response::new(Note {
             id: 1,
             owner: user.name.clone(),
             title: note.title,
         }))
     }
 
-    async fn public(&self) -> Result<String> {
+    async fn public(&self) -> Result<Response<String>> {
         self.handled();
 
-        Ok("open to all".into())
+        Ok(Response::new("open to all".into()))
     }
 }
 
 impl OpenServer for App {
-    async fn open(&self) -> Result<String> {
+    async fn open(&self) -> Result<Response<String>> {
         self.handled();
 
-        Ok("open".into())
+        Ok(Response::new("open".into()))
     }
 
-    async fn me(&self, user: &User) -> Result<String> {
+    async fn me(&self, user: &User) -> Result<Response<String>> {
         self.handled();
 
-        Ok(user.name.clone())
+        Ok(Response::new(user.name.clone()))
     }
 }
 

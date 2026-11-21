@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
-use quoll::rest::{self, Authenticate, ByteStream, Bytes, Events, Form, JsonLines, Result, Text};
+use quoll::rest::{
+    self, Authenticate, ByteStream, Bytes, Events, Form, JsonLines, Response, Result, Text,
+};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use schemars::JsonSchema;
@@ -103,81 +105,85 @@ fn text_of(note: Note) -> Vec<u8> {
 }
 
 impl LayersServer for App {
-    async fn get(&self, id: i64) -> Result<Note> {
-        Ok(note(id))
+    async fn get(&self, id: i64) -> Result<Response<Note>> {
+        Ok(Response::new(note(id)))
     }
 
-    async fn options(&self, id: i64) -> Result<String> {
-        Ok(format!("options {id}"))
+    async fn options(&self, id: i64) -> Result<Response<String>> {
+        Ok(Response::new(format!("options {id}")))
     }
 
-    async fn request_id(&self) -> Result<String> {
-        Ok(quoll::server::RequestId::current().map_or_else(String::new, |id| id.to_string()))
+    async fn request_id(&self) -> Result<Response<String>> {
+        Ok(Response::new(
+            quoll::server::RequestId::current().map_or_else(String::new, |id| id.to_string()),
+        ))
     }
 
-    async fn slow(&self) -> Result<String> {
+    async fn slow(&self) -> Result<Response<String>> {
         std::future::pending().await
     }
 
-    async fn failing(&self) -> Result<String> {
+    async fn failing(&self) -> Result<Response<String>> {
         Err(rest::Error::internal("the store went away"))
     }
 
-    async fn unavailable(&self) -> Result<String> {
+    async fn unavailable(&self) -> Result<Response<String>> {
         Err(rest::Error::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "the store is closed",
         ))
     }
 
-    async fn large(&self) -> Result<Vec<Note>> {
-        Ok((1..=200).map(note).collect())
+    async fn large(&self) -> Result<Response<Vec<Note>>> {
+        Ok(Response::new((1..=200).map(note).collect()))
     }
 
-    async fn held_events(&self) -> Result<Events<Note>> {
-        Ok(Events::new(self.held()))
+    async fn held_events(&self) -> Result<Response<Events<Note>>> {
+        Ok(Response::new(Events::new(self.held())))
     }
 
-    async fn held_lines(&self) -> Result<JsonLines<Note>> {
-        Ok(JsonLines::new(self.held()))
+    async fn held_lines(&self) -> Result<Response<JsonLines<Note>>> {
+        Ok(Response::new(JsonLines::new(self.held())))
     }
 
-    async fn late_events(&self) -> Result<Events<Note>> {
-        Ok(Events::new(late()))
+    async fn late_events(&self) -> Result<Response<Events<Note>>> {
+        Ok(Response::new(Events::new(late())))
     }
 
-    async fn late_lines(&self) -> Result<JsonLines<Note>> {
-        Ok(JsonLines::new(late()))
+    async fn late_lines(&self) -> Result<Response<JsonLines<Note>>> {
+        Ok(Response::new(JsonLines::new(late())))
     }
 
-    async fn held_bytes(&self) -> Result<ByteStream> {
-        Ok(ByteStream::new(self.held().map(text_of)).with_content_type("text/plain"))
+    async fn held_bytes(&self) -> Result<Response<ByteStream>> {
+        Ok(Response::new(
+            ByteStream::new(self.held().map(text_of)).with_content_type("text/plain"),
+        ))
     }
 
-    async fn late_bytes(&self) -> Result<ByteStream> {
-        Ok(ByteStream::new(late().map(text_of)))
+    async fn late_bytes(&self) -> Result<Response<ByteStream>> {
+        Ok(Response::new(ByteStream::new(late().map(text_of))))
     }
 
-    async fn json(&self, _note: Note) -> Result<()> {
-        Ok(())
+    async fn json(&self, _note: Note) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 
-    async fn form(&self, _note: Form<Note>) -> Result<()> {
-        Ok(())
+    async fn form(&self, _note: Form<Note>) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 
-    async fn text(&self, _text: Text) -> Result<()> {
-        Ok(())
+    async fn text(&self, _text: Text) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 
-    async fn bytes(&self, _bytes: Bytes) -> Result<()> {
-        Ok(())
+    async fn bytes(&self, _bytes: Bytes) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 }
 
 impl SessionsServer for App {
-    async fn touch(&self, _caller: &()) -> Result<()> {
-        Ok(())
+    async fn touch(&self, _caller: &()) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 }
 

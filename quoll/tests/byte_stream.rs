@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
-use quoll::rest::{self, ByteStream, Error, Result};
+use quoll::rest::{self, ByteStream, Error, Response, Result};
 use reqwest::StatusCode;
 use reqwest::header::{ACCEPT, CACHE_CONTROL, CONTENT_TYPE};
 use tokio::sync::mpsc;
@@ -67,17 +67,21 @@ struct App {
 }
 
 impl OutputServer for App {
-    async fn chunks(&self, count: u32) -> Result<ByteStream> {
-        Ok(ByteStream::new(stream::iter((1..=count).map(chunk))))
+    async fn chunks(&self, count: u32) -> Result<Response<ByteStream>> {
+        Ok(Response::new(ByteStream::new(stream::iter(
+            (1..=count).map(chunk),
+        ))))
     }
 
-    async fn typed(&self) -> Result<ByteStream> {
+    async fn typed(&self) -> Result<Response<ByteStream>> {
         let chunks = stream::iter([b"caf".to_vec(), "\u{e9}".as_bytes().to_vec()]);
 
-        Ok(ByteStream::new(chunks).with_content_type("text/plain; charset=utf-8"))
+        Ok(Response::new(
+            ByteStream::new(chunks).with_content_type("text/plain; charset=utf-8"),
+        ))
     }
 
-    async fn failing(&self) -> Result<ByteStream> {
+    async fn failing(&self) -> Result<Response<ByteStream>> {
         let chunks = [
             Ok(chunk(1)),
             Ok(chunk(2)),
@@ -85,23 +89,25 @@ impl OutputServer for App {
             Ok(chunk(3)),
         ];
 
-        Ok(ByteStream::try_new(stream::iter(chunks)))
+        Ok(Response::new(ByteStream::try_new(stream::iter(chunks))))
     }
 
-    async fn missing(&self) -> Result<ByteStream> {
+    async fn missing(&self) -> Result<Response<ByteStream>> {
         Err(Error::not_found("no such output"))
     }
 
-    async fn held(&self) -> Result<ByteStream> {
-        Ok(ByteStream::new(held_after(
+    async fn held(&self) -> Result<Response<ByteStream>> {
+        Ok(Response::new(ByteStream::new(held_after(
             vec![chunk(1)],
             &self.dropped,
             "held",
-        )))
+        ))))
     }
 
-    async fn mistyped(&self) -> Result<ByteStream> {
-        Ok(ByteStream::new(stream::iter([chunk(1)])).with_content_type("not a type"))
+    async fn mistyped(&self) -> Result<Response<ByteStream>> {
+        Ok(Response::new(
+            ByteStream::new(stream::iter([chunk(1)])).with_content_type("not a type"),
+        ))
     }
 }
 

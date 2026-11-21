@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use quoll::rest::{self, Created, Error, Result};
+use quoll::rest::{self, Call, Created, Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -36,34 +36,40 @@ struct Fake {
 }
 
 impl Notes for Fake {
-    async fn get(&self, id: i64) -> Result<Note> {
-        let notes = self.notes.lock().expect("no test panics while holding it");
+    fn get(&self, id: i64) -> impl Call<Note> {
+        async move {
+            let notes = self.notes.lock().expect("no test panics while holding it");
 
-        notes
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| Error::not_found("no such note"))
+            notes
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| Error::not_found("no such note"))
+        }
     }
 
-    async fn create(&self, note: NewNote) -> Result<Note> {
-        let mut notes = self.notes.lock().expect("no test panics while holding it");
-        let id = i64::try_from(notes.len()).expect("few notes") + 1;
-        let note = Note {
-            id,
-            title: note.title,
-        };
-        notes.insert(id, note.clone());
+    fn create(&self, note: NewNote) -> impl Call<Note> {
+        async move {
+            let mut notes = self.notes.lock().expect("no test panics while holding it");
+            let id = i64::try_from(notes.len()).expect("few notes") + 1;
+            let note = Note {
+                id,
+                title: note.title,
+            };
+            notes.insert(id, note.clone());
 
-        Ok(note)
+            Ok(note)
+        }
     }
 
-    async fn remove(&self, id: i64) -> Result<()> {
-        let mut notes = self.notes.lock().expect("no test panics while holding it");
+    fn remove(&self, id: i64) -> impl Call<()> {
+        async move {
+            let mut notes = self.notes.lock().expect("no test panics while holding it");
 
-        notes
-            .remove(&id)
-            .map(|_| ())
-            .ok_or_else(|| Error::not_found("no such note"))
+            notes
+                .remove(&id)
+                .map(|_| ())
+                .ok_or_else(|| Error::not_found("no such note"))
+        }
     }
 }
 

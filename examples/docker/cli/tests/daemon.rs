@@ -65,7 +65,7 @@ impl Drop for Removed {
                 .build()
                 .expect("a runtime");
 
-            runtime.block_on(docker().containers().remove(name, true))
+            runtime.block_on(docker().containers().remove(name, true).into_future())
         })
         .join();
 

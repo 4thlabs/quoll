@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures_util::{StreamExt, stream};
-use quoll::rest::{self, ByteStream, Events, JsonLines, Result};
+use quoll::rest::{self, ByteStream, Events, JsonLines, Response, Result};
 use quoll::server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -84,30 +84,32 @@ fn held<T: Send + 'static>(
 }
 
 impl FeedsServer for App {
-    async fn events(&self) -> Result<Events<u32>> {
-        Ok(Events::new(held(Some(1))))
+    async fn events(&self) -> Result<Response<Events<u32>>> {
+        Ok(Response::new(Events::new(held(Some(1)))))
     }
 
-    async fn silent(&self) -> Result<Events<u32>> {
-        Ok(Events::new(held(None)))
+    async fn silent(&self) -> Result<Response<Events<u32>>> {
+        Ok(Response::new(Events::new(held(None))))
     }
 
-    async fn lines(&self) -> Result<JsonLines<u32>> {
-        Ok(JsonLines::new(held(Some(1))))
+    async fn lines(&self) -> Result<Response<JsonLines<u32>>> {
+        Ok(Response::new(JsonLines::new(held(Some(1)))))
     }
 
-    async fn bytes(&self) -> Result<ByteStream> {
-        Ok(ByteStream::new(held(Some(b"chunk\n".to_vec()))))
+    async fn bytes(&self) -> Result<Response<ByteStream>> {
+        Ok(Response::new(ByteStream::new(held(Some(
+            b"chunk\n".to_vec(),
+        )))))
     }
 
-    async fn late(&self) -> Result<Events<u32>> {
+    async fn late(&self) -> Result<Response<Events<u32>>> {
         let mut release = self.release.clone();
 
         // The test waits for these: it holds their receivers until it has heard them.
         let _ = self.entered.send(());
         let _ = release.wait_for(|released| *released).await;
 
-        Ok(Events::new(held(Some(1))))
+        Ok(Response::new(Events::new(held(Some(1)))))
     }
 }
 

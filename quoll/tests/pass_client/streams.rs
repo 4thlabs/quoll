@@ -1,5 +1,5 @@
 use futures_util::{StreamExt, stream};
-use quoll::rest::{self, ByteStream, Events, JsonLines, Result};
+use quoll::rest::{self, ByteStream, Call, Events, JsonLines, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -46,16 +46,24 @@ async fn watch(feeds: &impl Feeds) -> Result<()> {
 struct Fake;
 
 impl Feeds for Fake {
-    async fn events(&self) -> Result<Events<Change>> {
-        Ok(Events::new(stream::iter([Change { id: 1 }])))
+    fn events(&self) -> impl Call<Events<Change>> {
+        async move {
+            Ok(Events::new(stream::iter([Change { id: 1 }])))
+        }
     }
 
-    async fn export(&self) -> Result<JsonLines<Change>> {
-        Ok(JsonLines::new(stream::empty()))
+    fn export(&self) -> impl Call<JsonLines<Change>> {
+        async move {
+            Ok(JsonLines::new(stream::empty()))
+        }
     }
 
-    async fn logs(&self) -> Result<ByteStream> {
-        Ok(ByteStream::new(stream::iter([b"a line\n".to_vec()])).with_content_type("text/plain"))
+    fn logs(&self) -> impl Call<ByteStream> {
+        async move {
+            let lines = stream::iter([b"a line\n".to_vec()]);
+
+            Ok(ByteStream::new(lines).with_content_type("text/plain"))
+        }
     }
 }
 

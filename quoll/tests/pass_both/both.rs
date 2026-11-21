@@ -1,4 +1,4 @@
-use quoll::rest::{self, Created, Result};
+use quoll::rest::{self, Call, Created, Response, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -20,22 +20,26 @@ rest::api! {
 struct Local;
 
 impl NotesServer for Local {
-    async fn get(&self, id: i64) -> Result<Note> {
-        Ok(Note { id })
+    async fn get(&self, id: i64) -> Result<Response<Note>> {
+        Ok(Response::new(Note { id }))
     }
 
-    async fn create(&self, note: Note) -> Result<Created<Note>> {
-        Ok(Created::new(note))
+    async fn create(&self, note: Note) -> Result<Response<Note>> {
+        Ok(Response::new(note))
     }
 }
 
 impl Notes for Local {
-    async fn get(&self, id: i64) -> Result<Note> {
-        Ok(Note { id })
+    fn get(&self, id: i64) -> impl Call<Note> {
+        async move {
+            Ok(Note { id })
+        }
     }
 
-    async fn create(&self, note: Note) -> Result<Note> {
-        Ok(note)
+    fn create(&self, note: Note) -> impl Call<Note> {
+        async move {
+            Ok(note)
+        }
     }
 }
 
@@ -43,12 +47,12 @@ impl Notes for Local {
 struct Forward(ApiClient);
 
 impl NotesServer for Forward {
-    async fn get(&self, id: i64) -> Result<Note> {
-        self.0.notes().get(id).await
+    async fn get(&self, id: i64) -> Result<Response<Note>> {
+        self.0.notes().get(id).await.map(Response::new)
     }
 
-    async fn create(&self, note: Note) -> Result<Created<Note>> {
-        self.0.notes().create(note).await.map(Created::new)
+    async fn create(&self, note: Note) -> Result<Response<Note>> {
+        self.0.notes().create(note).await.map(Response::new)
     }
 }
 

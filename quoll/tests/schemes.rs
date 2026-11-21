@@ -13,7 +13,8 @@ use http::Extensions;
 use http::request::Parts;
 use quoll::rest::openapi::SecurityScheme;
 use quoll::rest::{
-    self, Authenticate, Basic, BasicCredential, Bearer, Error, Result, Route, Scheme, Scoped, Text,
+    self, Authenticate, Basic, BasicCredential, Bearer, Error, Response, Result, Route, Scheme,
+    Scoped, Text,
 };
 use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, COOKIE, WWW_AUTHENTICATE};
@@ -223,63 +224,64 @@ impl Authenticate<Hmac> for App {
 }
 
 impl AdminServer for App {
-    async fn basic(&self, user: &User) -> Result<String> {
+    async fn basic(&self, user: &User) -> Result<Response<String>> {
+        self.handled(user).map(Response::new)
+    }
+
+    async fn key(&self, user: &User) -> Result<Response<String>> {
+        self.handled(user).map(Response::new)
+    }
+
+    async fn session(&self, user: &User) -> Result<Response<String>> {
+        self.handled(user).map(Response::new)
+    }
+
+    async fn post_session(&self, user: &User, text: Text) -> Result<Response<String>> {
         self.handled(user)
+            .map(|name| Response::new(format!("{name}: {}", text.0)))
     }
 
-    async fn key(&self, user: &User) -> Result<String> {
-        self.handled(user)
-    }
-
-    async fn session(&self, user: &User) -> Result<String> {
-        self.handled(user)
-    }
-
-    async fn post_session(&self, user: &User, text: Text) -> Result<String> {
-        self.handled(user).map(|name| format!("{name}: {}", text.0))
-    }
-
-    async fn token(&self, user: &User, page: Option<u32>) -> Result<String> {
+    async fn token(&self, user: &User, page: Option<u32>) -> Result<Response<String>> {
         *self.page.lock().expect("no test panics while holding it") = page;
 
-        self.handled(user)
+        self.handled(user).map(Response::new)
     }
 
-    async fn login(&self, user: &User) -> Result<String> {
-        self.handled(user)
+    async fn login(&self, user: &User) -> Result<Response<String>> {
+        self.handled(user).map(Response::new)
     }
 
-    async fn signed(&self, user: &User) -> Result<String> {
-        self.handled(user)
+    async fn signed(&self, user: &User) -> Result<Response<String>> {
+        self.handled(user).map(Response::new)
     }
 
-    async fn either(&self, user: &User) -> Result<String> {
-        self.handled(user)
+    async fn either(&self, user: &User) -> Result<Response<String>> {
+        self.handled(user).map(Response::new)
     }
 
-    async fn key_first(&self, user: &User) -> Result<String> {
-        self.handled(user)
+    async fn key_first(&self, user: &User) -> Result<Response<String>> {
+        self.handled(user).map(Response::new)
     }
 
-    async fn maybe(&self, user: Option<&User>) -> Result<String> {
+    async fn maybe(&self, user: Option<&User>) -> Result<Response<String>> {
         match user {
-            Some(user) => self.handled(user),
+            Some(user) => self.handled(user).map(Response::new),
             None => {
                 self.handled.fetch_add(1, Ordering::SeqCst);
 
-                Ok("anonymous".into())
+                Ok(Response::new("anonymous".into()))
             }
         }
     }
 
-    async fn remove(&self, user: &User) -> Result<()> {
-        self.handled(user).map(drop)
+    async fn remove(&self, user: &User) -> Result<Response<()>> {
+        self.handled(user).map(|_| Response::new(()))
     }
 
-    async fn open(&self) -> Result<String> {
+    async fn open(&self) -> Result<Response<String>> {
         self.handled.fetch_add(1, Ordering::SeqCst);
 
-        Ok("open".into())
+        Ok(Response::new("open".into()))
     }
 }
 
@@ -296,8 +298,8 @@ impl Authenticate<other::Key> for OtherApp {
 }
 
 impl other::OtherServer for OtherApp {
-    async fn key(&self, key: &String) -> Result<String> {
-        Ok(key.clone())
+    async fn key(&self, key: &String) -> Result<Response<String>> {
+        Ok(Response::new(key.clone()))
     }
 }
 

@@ -68,7 +68,58 @@ async fn main() -> rest::Result<()> {
 - A query parameter that is `None` is left out, and a header that is `None` is not sent.
 - Rust has no named arguments: a route with many optional keys takes a [query struct](contract.md#query-structs),
   which the caller fills with `..Default::default()`.
-- Each call returns a `rest::Result`. [Errors](errors.md#what-a-client-sees) says what its error holds.
+- Each call returns a `rest::Call`, which `.await` sends: it gives a `rest::Result`.
+  [Errors](errors.md#what-a-client-sees) says what its error holds.
+
+## The whole answer
+
+Each method returns a `rest::Call`, the call described and not sent yet: `.await` sends it and gives the route's
+value, or an error that goes up. Its methods change it before:
+
+- `.response()` gives the whole answer, whatever its status: its `status()`, its `headers()`, a rate limit or a
+  `Retry-After`, and its body, the route's value on a success and the error of the answer otherwise, which
+  `.into_value()` gives to go up with `?`.
+- `.timeout(duration)` is a deadline for this call alone, in place of the client's `client::timeout`, as
+  [Retries, deadlines and redirects](#retries-deadlines-and-redirects) says.
+
+```rust,no_run
+use std::time::Duration;
+
+use http::StatusCode;
+use quoll::rest::{self, Call};
+
+rest::api! {
+    pub api Api = "/api";
+
+    pub group Notes {
+        GET "/notes/{id}" => get(id: i64) -> String;
+    }
+}
+
+async fn find(api: &ApiClient, id: i64) -> rest::Result<Option<String>> {
+    let response = api
+        .notes()
+        .get(id)
+        .timeout(Duration::from_secs(5))
+        .response()
+        .await?;
+
+    if let Some(remaining) = response.headers().get("x-ratelimit-remaining") {
+        println!("{remaining:?} calls left");
+    }
+
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+
+    Ok(Some(response.into_value()?))
+}
+# let _ = find;
+```
+
+The `Err` of `.response()` is a call that got no answer it can read: a connection refused, a deadline passed, an
+answer with a success status that is not the route's result. A 304 Not Modified is an answer of its own: its status
+and its headers, with no body, whose error `.into_value()` gives; `.await` gives that error too.
 
 ## Building a client
 
@@ -267,6 +318,28 @@ fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
   otherwise, as [Deciding a retry](#deciding-a-retry) shows.
 - `timeout(duration)` is a deadline per attempt and per hop, from the request to the end of the answer's body. On a
   route whose result is a stream, it bounds the head of the answer alone.
+- A call's `.timeout(duration)` is a deadline for that call alone, in place of `timeout`'s, with the same meaning: a
+  long call, a slow export, waits longer than the others, and a client with no `timeout` takes it too.
+
+```rust,no_run
+# use std::time::Duration;
+# use quoll::rest::{self, Call};
+# rest::api! {
+#     pub api Api = "/api";
+#     pub group Exports {
+#         POST "/exports" => create(name: String) -> u64;
+#     }
+# }
+# async fn run(api: &ApiClient) -> rest::Result<()> {
+let job = api
+    .exports()
+    .create("notes".into())
+    .timeout(Duration::from_secs(600))
+    .await?;
+# let _ = job;
+# Ok(())
+# }
+```
 - `redirects(hops)` follows up to `hops` redirects, each hop through the middleware after it. A hop to another origin
   carries no credential.
 

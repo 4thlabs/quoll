@@ -1,4 +1,4 @@
-use quoll::rest::{self, Authenticate, Bearer, Error, Result};
+use quoll::rest::{self, Authenticate, Bearer, Error, Response, Result};
 
 rest::api! {
     pub api Api = "/api";
@@ -39,22 +39,22 @@ impl Authenticate<Bearer> for App {
 }
 
 impl AuthServer for App {
-    async fn token(&self, login: String) -> Result<String> {
-        Ok(login)
+    async fn token(&self, login: String) -> Result<Response<String>> {
+        Ok(Response::new(login))
     }
 
-    async fn revoke(&self, _user: &User) -> Result<()> {
-        Ok(())
+    async fn revoke(&self, _user: &User) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 }
 
 impl NotesServer for App {
-    async fn get(&self, user: &User, id: i64, caller: Option<String>) -> Result<String> {
-        Ok(format!("{} {id} {caller:?}", user.name))
+    async fn get(&self, user: &User, id: i64, caller: Option<String>) -> Result<Response<String>> {
+        Ok(Response::new(format!("{} {id} {caller:?}", user.name)))
     }
 
-    async fn public(&self) -> Result<String> {
-        Ok("open".into())
+    async fn public(&self) -> Result<Response<String>> {
+        Ok(Response::new("open".into()))
     }
 }
 

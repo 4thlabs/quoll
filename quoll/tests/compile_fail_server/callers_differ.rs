@@ -1,4 +1,4 @@
-use quoll::rest::{self, Authenticate, Bearer, Result};
+use quoll::rest::{self, Authenticate, Bearer, Response, Result};
 
 rest::api! {
     pub api Api = "/api";
@@ -33,8 +33,8 @@ impl Authenticate<Key> for App {
 }
 
 impl AdminServer for App {
-    async fn stats(&self, _user: &User) -> Result<String> {
-        Ok("stats".into())
+    async fn stats(&self, _user: &User) -> Result<Response<String>> {
+        Ok(Response::new("stats".into()))
     }
 }
 

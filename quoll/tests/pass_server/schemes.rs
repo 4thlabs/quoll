@@ -1,4 +1,4 @@
-use quoll::rest::{self, Authenticate, Basic, BasicCredential, Bearer, Result, Scoped};
+use quoll::rest::{self, Authenticate, Basic, BasicCredential, Bearer, Response, Result, Scoped};
 
 rest::api! {
     pub api Api = "/api";
@@ -54,20 +54,20 @@ impl Authenticate<Basic> for App {
 }
 
 impl AdminServer for App {
-    async fn stats(&self, _user: &User) -> Result<String> {
-        Ok("stats".into())
+    async fn stats(&self, _user: &User) -> Result<Response<String>> {
+        Ok(Response::new("stats".into()))
     }
 
-    async fn me(&self, user: Option<&User>) -> Result<String> {
-        Ok(if user.is_some() { "signed in" } else { "anonymous" }.into())
+    async fn me(&self, user: Option<&User>) -> Result<Response<String>> {
+        Ok(Response::new(if user.is_some() { "signed in" } else { "anonymous" }.into()))
     }
 
-    async fn reset(&self, _user: &User) -> Result<()> {
-        Ok(())
+    async fn reset(&self, _user: &User) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 
-    async fn basic(&self, _operator: &Operator) -> Result<String> {
-        Ok("basic".into())
+    async fn basic(&self, _operator: &Operator) -> Result<Response<String>> {
+        Ok(Response::new("basic".into()))
     }
 }
 

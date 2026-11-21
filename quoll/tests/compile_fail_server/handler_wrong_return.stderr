@@ -1,11 +1,11 @@
-error[E0271]: expected `impl Future<Output = Result<i64, Error>>` to be a future that resolves to `Result<String, Error>`, but it resolves to `Result<i64, Error>`
+error[E0271]: expected `impl Future<Output = Result<Response<i64>, Error>>` to be a future that resolves to `Result<Response<String>, Error>`, but it resolves to `Result<Response<i64>, Error>`
   --> tests/compile_fail_server/handler_wrong_return.rs:15:37
    |
-15 |     async fn get(&self, id: i64) -> Result<i64> {
-   |                                     ^^^^^^^^^^^ expected `Result<String, Error>`, found `Result<i64, Error>`
+15 |     async fn get(&self, id: i64) -> Result<Response<i64>> {
+   |                                     ^^^^^^^^^^^^^^^^^^^^^ expected `Result<Response<String>, Error>`, found `Result<Response<i64>, Error>`
    |
-   = note: expected enum `Result<String, Error>`
-              found enum `Result<i64, Error>`
+   = note: expected enum `Result<Response<String>, Error>`
+              found enum `Result<Response<i64>, Error>`
 note: required by a bound in `NotesServer::get::{anon_assoc#0}`
   --> tests/compile_fail_server/handler_wrong_return.rs:7:30
    |

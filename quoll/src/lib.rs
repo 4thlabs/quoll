@@ -66,7 +66,8 @@
 //! #         DELETE "/notes/{id}" => remove(id: i64);
 //! #     }
 //! # }
-//! use quoll::rest::{Authenticate, Bearer, Error, Result};
+//! use http::header::LOCATION;
+//! use quoll::rest::{Authenticate, Bearer, Error, Response, Result};
 //! use quoll::server;
 //!
 //! struct App;
@@ -88,22 +89,23 @@
 //! }
 //!
 //! impl NotesServer for App {
-//!     async fn get(&self, user: &User, id: i64) -> Result<Note> {
+//!     async fn get(&self, user: &User, id: i64) -> Result<Response<Note>> {
 //!         if id != user.id {
 //!             return Err(Error::not_found("no such note"));
 //!         }
 //!
-//!         Ok(Note { id, title: "Milk".into() })
+//!         Ok(Response::new(Note { id, title: "Milk".into() }))
 //!     }
 //!
-//!     async fn create(&self, _user: &User, note: NewNote) -> Result<Created<Note>> {
+//!     async fn create(&self, _user: &User, note: NewNote) -> Result<Response<Note>> {
 //!         let note = Note { id: 2, title: note.title };
+//!         let location = format!("/api/notes/{}", note.id);
 //!
-//!         Ok(Created::at(format!("/api/notes/{}", note.id), note))
+//!         Ok(Response::new(note).header(LOCATION, location))
 //!     }
 //!
-//!     async fn remove(&self, _user: &User, _id: i64) -> Result<()> {
-//!         Ok(())
+//!     async fn remove(&self, _user: &User, _id: i64) -> Result<Response<()>> {
+//!         Ok(Response::new(()))
 //!     }
 //! }
 //!

@@ -13,7 +13,9 @@ use std::time::{Duration, Instant};
 use futures_util::{StreamExt, stream};
 use http::Extensions;
 use quoll::client::{Attempt, Retry, TokenSource};
-use quoll::rest::{self, Authenticate, Bearer, ByteStream, Error, Events, Result, Route, Text};
+use quoll::rest::{
+    self, Authenticate, Bearer, ByteStream, Error, Events, Response, Result, Route, Text,
+};
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware, Next};
 use schemars::JsonSchema;
@@ -101,62 +103,64 @@ impl CallsServer for App {
         agent: Option<String>,
         id: Option<String>,
         signature: Option<String>,
-    ) -> Result<Seen> {
-        Ok(Seen {
+    ) -> Result<Response<Seen>> {
+        Ok(Response::new(Seen {
             agent,
             id,
             signature,
-        })
+        }))
     }
 
-    async fn held(&self) -> Result<()> {
+    async fn held(&self) -> Result<Response<()>> {
         std::future::pending().await
     }
 
-    async fn events(&self) -> Result<Events<u32>> {
+    async fn events(&self) -> Result<Response<Events<u32>>> {
         let release = Arc::clone(&self.release);
         let second = stream::once(async move {
             release.notified().await;
             2
         });
 
-        Ok(Events::new(stream::once(async { 1 }).chain(second)))
+        Ok(Response::new(Events::new(
+            stream::once(async { 1 }).chain(second),
+        )))
     }
 
-    async fn output(&self) -> Result<ByteStream> {
+    async fn output(&self) -> Result<Response<ByteStream>> {
         let release = Arc::clone(&self.release);
         let second = stream::once(async move {
             release.notified().await;
             b"2".to_vec()
         });
 
-        Ok(ByteStream::new(
+        Ok(Response::new(ByteStream::new(
             stream::once(async { b"1".to_vec() }).chain(second),
-        ))
+        )))
     }
 
-    async fn get(&self, status: u16) -> Result<u32> {
-        self.flaky(status)
+    async fn get(&self, status: u16) -> Result<Response<u32>> {
+        self.flaky(status).map(Response::new)
     }
 
-    async fn head(&self, status: u16) -> Result<()> {
-        self.flaky(status).map(|_| ())
+    async fn head(&self, status: u16) -> Result<Response<()>> {
+        self.flaky(status).map(|_| Response::new(()))
     }
 
-    async fn put(&self, status: u16, _: Text) -> Result<u32> {
-        self.flaky(status)
+    async fn put(&self, status: u16, _: Text) -> Result<Response<u32>> {
+        self.flaky(status).map(Response::new)
     }
 
-    async fn delete(&self, status: u16) -> Result<u32> {
-        self.flaky(status)
+    async fn delete(&self, status: u16) -> Result<Response<u32>> {
+        self.flaky(status).map(Response::new)
     }
 
-    async fn post(&self, status: u16, _: Text) -> Result<u32> {
-        self.flaky(status)
+    async fn post(&self, status: u16, _: Text) -> Result<Response<u32>> {
+        self.flaky(status).map(Response::new)
     }
 
-    async fn post_keyed(&self, status: u16, _: Option<String>, _: Text) -> Result<u32> {
-        self.flaky(status)
+    async fn post_keyed(&self, status: u16, _: Option<String>, _: Text) -> Result<Response<u32>> {
+        self.flaky(status).map(Response::new)
     }
 }
 
@@ -177,12 +181,12 @@ impl Authenticate<Bearer> for App {
 }
 
 impl SecureServer for App {
-    async fn me(&self, _: &()) -> Result<String> {
-        Ok("ana".into())
+    async fn me(&self, _: &()) -> Result<Response<String>> {
+        Ok(Response::new("ana".into()))
     }
 
-    async fn post_me(&self, _: &(), text: Text) -> Result<String> {
-        Ok(text.0)
+    async fn post_me(&self, _: &(), text: Text) -> Result<Response<String>> {
+        Ok(Response::new(text.0))
     }
 }
 
@@ -195,8 +199,8 @@ impl Authenticate<Token> for App {
 }
 
 impl KeyedServer for App {
-    async fn keyed(&self, _: &()) -> Result<String> {
-        Ok("keyed".into())
+    async fn keyed(&self, _: &()) -> Result<Response<String>> {
+        Ok(Response::new("keyed".into()))
     }
 }
 

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
-use quoll::rest::{self, Error, Events, JsonLines, Result};
+use quoll::rest::{self, Error, Events, JsonLines, Response, Result};
 use reqwest::StatusCode;
 use reqwest::header::{ACCEPT, CACHE_CONTROL, CONTENT_TYPE};
 use schemars::JsonSchema;
@@ -96,46 +96,46 @@ fn failing() -> impl futures_util::Stream<Item = Result<Change>> + Send + 'stati
 }
 
 impl FeedsServer for App {
-    async fn events(&self, count: u32) -> Result<Events<Change>> {
-        Ok(Events::new(changes(count)))
+    async fn events(&self, count: u32) -> Result<Response<Events<Change>>> {
+        Ok(Response::new(Events::new(changes(count))))
     }
 
-    async fn lines(&self, count: u32) -> Result<JsonLines<Change>> {
-        Ok(JsonLines::new(changes(count)))
+    async fn lines(&self, count: u32) -> Result<Response<JsonLines<Change>>> {
+        Ok(Response::new(JsonLines::new(changes(count))))
     }
 
-    async fn failing_events(&self) -> Result<Events<Change>> {
-        Ok(Events::try_new(failing()))
+    async fn failing_events(&self) -> Result<Response<Events<Change>>> {
+        Ok(Response::new(Events::try_new(failing())))
     }
 
-    async fn failing_lines(&self) -> Result<JsonLines<Change>> {
-        Ok(JsonLines::try_new(failing()))
+    async fn failing_lines(&self) -> Result<Response<JsonLines<Change>>> {
+        Ok(Response::new(JsonLines::try_new(failing())))
     }
 
-    async fn gone_events(&self) -> Result<Events<Change>> {
+    async fn gone_events(&self) -> Result<Response<Events<Change>>> {
         let changes = [Ok(change(1)), Err(Error::not_found("the note is gone"))];
 
-        Ok(Events::try_new(stream::iter(changes)))
+        Ok(Response::new(Events::try_new(stream::iter(changes))))
     }
 
-    async fn missing_events(&self) -> Result<Events<Change>> {
+    async fn missing_events(&self) -> Result<Response<Events<Change>>> {
         Err(Error::not_found("no such feed"))
     }
 
-    async fn missing_lines(&self) -> Result<JsonLines<Change>> {
+    async fn missing_lines(&self) -> Result<Response<JsonLines<Change>>> {
         Err(Error::not_found("no such feed"))
     }
 
-    async fn held_events(&self) -> Result<Events<Change>> {
-        Ok(Events::new(held(&self.dropped, "events")))
+    async fn held_events(&self) -> Result<Response<Events<Change>>> {
+        Ok(Response::new(Events::new(held(&self.dropped, "events"))))
     }
 
-    async fn held_lines(&self) -> Result<JsonLines<Change>> {
-        Ok(JsonLines::new(held(&self.dropped, "lines")))
+    async fn held_lines(&self) -> Result<Response<JsonLines<Change>>> {
+        Ok(Response::new(JsonLines::new(held(&self.dropped, "lines"))))
     }
 
-    async fn silent_events(&self) -> Result<Events<Change>> {
-        Ok(Events::new(stream::pending()))
+    async fn silent_events(&self) -> Result<Response<Events<Change>>> {
+        Ok(Response::new(Events::new(stream::pending())))
     }
 }
 
@@ -743,7 +743,7 @@ async fn endless_client() -> (ApiClient, mpsc::UnboundedReceiver<&'static str>) 
 }
 
 /// `call`, which fails the test rather than wait for ever.
-async fn soon<T>(call: impl Future<Output = T>) -> T {
+async fn soon<T>(call: impl IntoFuture<Output = T>) -> T {
     tokio::time::timeout(Duration::from_secs(10), call)
         .await
         .expect("the call does not wait for the body to end")

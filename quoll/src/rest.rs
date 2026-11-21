@@ -353,19 +353,25 @@
 mod accepted;
 pub(crate) mod auth;
 mod body;
+#[cfg(feature = "client")]
+mod call;
 mod created;
 pub(crate) mod error;
 pub mod openapi;
 mod problem;
+mod response;
 mod route;
 pub(crate) mod stream;
 
 pub use accepted::Accepted;
 pub use auth::{Authenticate, Basic, BasicCredential, Bearer, Scheme, Scoped};
 pub use body::{Bytes, Form, Text};
+#[cfg(feature = "client")]
+pub use call::Call;
 pub use created::Created;
 pub use error::{Error, Result};
 pub use problem::Problem;
 pub use quoll_macros::{api, group};
+pub use response::{InvalidStatus, Response, Status};
 pub use route::Route;
 pub use stream::{ByteStream, Events, JsonLines};

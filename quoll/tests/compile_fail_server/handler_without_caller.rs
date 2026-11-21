@@ -1,4 +1,4 @@
-use quoll::rest::{self, Authenticate, Bearer, Result};
+use quoll::rest::{self, Authenticate, Bearer, Response, Result};
 
 rest::api! {
     pub api Api = "/api";
@@ -22,8 +22,8 @@ impl Authenticate<Bearer> for App {
 
 // The handler of a route that takes a scheme receives its caller first, `user: &User`.
 impl NotesServer for App {
-    async fn get(&self, id: i64) -> Result<String> {
-        Ok(id.to_string())
+    async fn get(&self, id: i64) -> Result<Response<String>> {
+        Ok(Response::new(id.to_string()))
     }
 }
 

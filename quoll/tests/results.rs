@@ -7,7 +7,7 @@ use std::error::Error as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use quoll::rest::{self, Accepted, Bytes, Error, Result, Text};
+use quoll::rest::{self, Accepted, Bytes, Error, Response, Result, Text};
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
 use schemars::JsonSchema;
@@ -46,46 +46,46 @@ rest::api! {
 struct App;
 
 impl FilesServer for App {
-    async fn export(&self, export: Export) -> Result<Accepted<Job>> {
-        Ok(Accepted::new(Job {
+    async fn export(&self, export: Export) -> Result<Response<Job>> {
+        Ok(Response::new(Job {
             id: 7,
             name: export.name,
         }))
     }
 
-    async fn text(&self, value: String) -> Result<Text> {
-        Ok(Text(value))
+    async fn text(&self, value: String) -> Result<Response<Text>> {
+        Ok(Response::new(Text(value)))
     }
 
-    async fn bytes(&self, len: usize) -> Result<Bytes> {
-        Ok(Bytes::new(pattern(len)))
+    async fn bytes(&self, len: usize) -> Result<Response<Bytes>> {
+        Ok(Response::new(Bytes::new(pattern(len))))
     }
 
-    async fn image(&self, content_type: Option<String>) -> Result<Bytes> {
+    async fn image(&self, content_type: Option<String>) -> Result<Response<Bytes>> {
         let png = Bytes::new(PNG);
 
-        Ok(match content_type {
+        Ok(Response::new(match content_type {
             Some(content_type) => png.with_content_type(content_type),
             None => png,
-        })
+        }))
     }
 
-    async fn missing(&self) -> Result<Text> {
+    async fn missing(&self) -> Result<Response<Text>> {
         Err(Error::not_found("no such text"))
     }
 }
 
 impl AcceptsServer for App {
-    async fn json(&self) -> Result<String> {
-        Ok(String::new())
+    async fn json(&self) -> Result<Response<String>> {
+        Ok(Response::new(String::new()))
     }
 
-    async fn none(&self) -> Result<()> {
-        Ok(())
+    async fn none(&self) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 
-    async fn preferred(&self, accept: Option<String>) -> Result<Text> {
-        Ok(Text(accept.unwrap_or_default()))
+    async fn preferred(&self, accept: Option<String>) -> Result<Response<Text>> {
+        Ok(Response::new(Text(accept.unwrap_or_default())))
     }
 }
 

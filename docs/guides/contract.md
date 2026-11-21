@@ -171,20 +171,20 @@ parameter whose type is a struct.
 | `JsonLines<T>`    | 200, one JSON value per line         | a stream of `T`    |
 | `ByteStream`      | 200, bytes as they come              | a stream of bytes  |
 
-A handler builds each of them:
+A handler returns each of them in a `Response`, the `T` alone for a `Created<T>` or an `Accepted<T>`, whose status
+the contract gives, with the headers it sends:
 
 ```rust
-use quoll::rest::{Accepted, Bytes, Created, Text};
+use http::header::LOCATION;
+use quoll::rest::{Bytes, Response, Text};
 
-let created = Created::at("/api/notes/7", 7);
-let without_location = Created::new(7);
-let accepted = Accepted::new("export-1");
+let created = Response::new(7).header(LOCATION, "/api/notes/7");
+let accepted = Response::new("export-1");
 let readme = Text::from("# Notes");
 let logo = Bytes::new(vec![0x89, b'P', b'N', b'G']).with_content_type("image/png");
 
-assert_eq!(created.location(), Some("/api/notes/7"));
-assert_eq!(without_location.location(), None);
-assert_eq!(accepted.value(), &"export-1");
+assert_eq!(created.headers()[LOCATION], "/api/notes/7");
+assert_eq!(accepted.body(), &"export-1");
 assert_eq!(&*readme, "# Notes");
 assert_eq!(logo.content_type(), "image/png");
 ```
@@ -205,7 +205,7 @@ the same type, a `Stream` of `Result<T>`, or of `Result<Vec<u8>>` for a `ByteStr
 
 ```rust
 use futures::{StreamExt, stream};
-use quoll::rest::{self, ByteStream, Events, Result};
+use quoll::rest::{self, ByteStream, Events, Response, Result};
 use quoll::{client, test};
 
 rest::api! {
@@ -220,16 +220,18 @@ rest::api! {
 struct App;
 
 impl LiveServer for App {
-    async fn events(&self, id: i64) -> Result<Events<String>> {
+    async fn events(&self, id: i64) -> Result<Response<Events<String>>> {
         let changes = vec![format!("note {id} edited"), format!("note {id} removed")];
 
-        Ok(Events::new(stream::iter(changes)))
+        Ok(Response::new(Events::new(stream::iter(changes))))
     }
 
-    async fn logs(&self) -> Result<ByteStream> {
+    async fn logs(&self) -> Result<Response<ByteStream>> {
         let lines = vec![b"started\n".to_vec(), b"ready\n".to_vec()];
 
-        Ok(ByteStream::new(stream::iter(lines)).with_content_type("text/plain; charset=utf-8"))
+        Ok(Response::new(
+            ByteStream::new(stream::iter(lines)).with_content_type("text/plain; charset=utf-8"),
+        ))
     }
 }
 

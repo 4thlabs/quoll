@@ -6,7 +6,7 @@ becomes a caller, and which type that caller is. The client sends the credential
 ## A route that takes a credential
 
 ```rust
-use quoll::rest::{self, Authenticate, Bearer, Error, Result};
+use quoll::rest::{self, Authenticate, Bearer, Error, Response, Result};
 use quoll::{client, test};
 
 rest::api! {
@@ -37,8 +37,8 @@ impl Authenticate<Bearer> for App {
 }
 
 impl NotesServer for App {
-    async fn get(&self, user: &User, id: i64) -> Result<String> {
-        Ok(format!("note {id} of {}", user.name))
+    async fn get(&self, user: &User, id: i64) -> Result<Response<String>> {
+        Ok(Response::new(format!("note {id} of {}", user.name)))
     }
 }
 
@@ -192,7 +192,7 @@ carries none, and an error when it carries one that is not well formed. The doc 
 credential that is malformed, or that `authenticate` refuses, is still answered 401.
 
 ```rust
-use quoll::rest::{self, Authenticate, Bearer, Error, Result};
+use quoll::rest::{self, Authenticate, Bearer, Error, Response, Result};
 
 rest::api! {
     pub api Api = "/api";
@@ -221,10 +221,10 @@ impl Authenticate<Bearer> for App {
 }
 
 impl NotesServer for App {
-    async fn likes(&self, user: Option<&User>, id: i64) -> Result<String> {
+    async fn likes(&self, user: Option<&User>, id: i64) -> Result<Response<String>> {
         let who = user.map_or("someone", |user| user.name.as_str());
 
-        Ok(format!("{who} reads the likes of note {id}"))
+        Ok(Response::new(format!("{who} reads the likes of note {id}")))
     }
 }
 ```
@@ -236,7 +236,7 @@ router answers 403 when the caller lacks one: after `authenticate`, before the h
 and the body are read.
 
 ```rust
-use quoll::rest::{self, Authenticate, Bearer, Error, Result, Scoped};
+use quoll::rest::{self, Authenticate, Bearer, Error, Response, Result, Scoped};
 
 rest::api! {
     pub api Api = "/api";
@@ -275,8 +275,8 @@ impl Authenticate<Bearer> for App {
 }
 
 impl NotesServer for App {
-    async fn remove(&self, _user: &User, _id: i64) -> Result<()> {
-        Ok(())
+    async fn remove(&self, _user: &User, _id: i64) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 }
 ```

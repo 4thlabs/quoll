@@ -1,4 +1,4 @@
-use quoll::rest::{self, Authenticate, Bearer, Result};
+use quoll::rest::{self, Authenticate, Bearer, Response, Result};
 
 rest::api! {
     pub api Api = "/api";
@@ -22,8 +22,8 @@ impl Authenticate<Bearer> for App {
 }
 
 impl ReposServer for App {
-    async fn remove(&self, _user: &User, _id: i64) -> Result<()> {
-        Ok(())
+    async fn remove(&self, _user: &User, _id: i64) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 }
 

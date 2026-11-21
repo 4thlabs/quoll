@@ -1,4 +1,4 @@
-use quoll::rest::{self, Result};
+use quoll::rest::{self, Call};
 
 rest::api! {
     pub api Api = "/api";
@@ -12,8 +12,10 @@ rest::api! {
 struct Fake;
 
 impl Notes for Fake {
-    async fn get(&self, _id: i64) -> Result<String> {
-        Ok(String::new())
+    fn get(&self, _id: i64) -> impl Call<String> {
+        async move {
+            Ok(String::new())
+        }
     }
 }
 

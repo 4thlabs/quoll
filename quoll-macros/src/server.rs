@@ -111,10 +111,12 @@ fn method(prefix: Option<&str>, bounds: &Bounds, route: &Route) -> TokenStream {
         .params
         .iter()
         .map(|Param { name, ty, .. }| quote! { #name: #ty });
+    // The value a handler returns in its response: the `T` of a `Created<T>` or an `Accepted<T>`, whose status the
+    // contract says, as the client returns it.
     let output = match route.reply.as_deref() {
         None => quote! { () },
         Some(returned) => {
-            let ty = &returned.served;
+            let ty = &returned.value;
 
             quote! { #ty }
         }
@@ -138,7 +140,7 @@ fn method(prefix: Option<&str>, bounds: &Bounds, route: &Route) -> TokenStream {
     quote_spanned! {route.name.span()=>
         #docs
         fn #name(&self, #caller #(#args),*)
-            -> impl ::core::future::Future<Output = ::quoll::rest::Result<#output>> + ::core::marker::Send;
+            -> impl ::core::future::Future<Output = ::quoll::rest::Result<::quoll::rest::Response<#output>>> + ::core::marker::Send;
     }
 }
 
