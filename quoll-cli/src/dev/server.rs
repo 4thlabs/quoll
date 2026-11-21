@@ -4,7 +4,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{self, ExitStatus};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result, anyhow};
 use tokio::net::TcpStream;
@@ -21,6 +21,10 @@ const READY: Duration = Duration::from_secs(60);
 /// How often a server that does not answer yet is tried again.
 const RETRY: Duration = Duration::from_millis(50);
 
+/// How long a connection to a server's url is waited for before it starts, to know whether another process holds its
+/// port. A port no one holds refuses at once, but on Windows, which tries again for 2 s.
+const HELD: Duration = Duration::from_millis(250);
+
 /// A server of the config, and the process that runs it.
 #[derive(Debug)]
 pub(crate) struct Server<'a> {
@@ -33,7 +37,32 @@ struct Running {
     child: Child,
     /// The directory of the copy of its executable that runs.
     copy: PathBuf,
+    /// The executable in the target directory it is a copy of, as it was then.
+    identity: Identity,
     ready: bool,
+}
+
+/// What tells an executable from the next one cargo builds: its size and its time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Identity {
+    len: u64,
+    modified: SystemTime,
+}
+
+impl Identity {
+    async fn of(executable: &Path) -> Result<Self> {
+        let metadata = tokio::fs::metadata(executable)
+            .await
+            .with_context(|| format!("cannot read {}", executable.display()))?;
+        let modified = metadata
+            .modified()
+            .with_context(|| format!("cannot read the time of {}", executable.display()))?;
+
+        Ok(Self {
+            len: metadata.len(),
+            modified,
+        })
+    }
 }
 
 /// Where the executables that run are copied, so that cargo can build the next one meanwhile: Windows does not
@@ -53,9 +82,14 @@ impl Copies {
     }
 
     /// Removes the copies an earlier `cargo quoll dev` left, when it was killed.
-    pub(crate) async fn clear(&self) {
-        // A copy that a stray server still runs cannot be removed on Windows: it stays, as it is no copy of ours.
-        let _ = tokio::fs::remove_dir_all(&self.dir).await;
+    pub(crate) async fn clear(&self, reporter: &Reporter) {
+        match tokio::fs::remove_dir_all(&self.dir).await {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => reporter.status(
+                "Warning",
+                format!("cannot remove {}: {error}", self.dir.display()),
+            ),
+            _ => {}
+        }
     }
 
     /// Copies `executable` into a directory of its own, and returns the copy.
@@ -99,8 +133,8 @@ impl<'a> Server<'a> {
         self.running.as_mut().map(|running| &mut running.child)
     }
 
-    /// Builds the server, then, when the build is new or none runs, stops the one that runs and starts the new one.
-    /// A build that fails is reported, and leaves the one that runs.
+    /// Builds the server, then, unless the one that runs is a copy of the executable cargo gives and still runs, stops
+    /// it and starts the new one. A build that fails is reported, and leaves the one that runs.
     pub(crate) async fn restart(
         &mut self,
         workspace: &Workspace,
@@ -113,12 +147,27 @@ impl<'a> Server<'a> {
         self.event(reporter, ServerState::Building, None);
 
         let built = build::build(workspace, package, &self.config.bin, reporter).await;
-        let Built { executable, fresh } = match built {
-            Ok(built) => built,
+        let identity = match built {
+            Ok(Built { executable }) => Identity::of(&executable)
+                .await
+                .map(|identity| (executable, identity)),
+            Err(error) => Err(error),
+        };
+        let (executable, identity) = match identity {
+            Ok(found) => found,
             Err(error) => return self.failed(reporter, &error),
         };
 
-        if fresh && self.is_ready() {
+        // Another cargo may have built the executable first, which this build then finds fresh: what tells is the
+        // executable, not the build.
+        if let Some(running) = &mut self.running
+            && running.ready
+            && running.identity == identity
+            && running
+                .child
+                .try_wait()
+                .is_ok_and(|status| status.is_none())
+        {
             reporter.status("Unchanged", &self.config.package);
             self.event(reporter, ServerState::Ready, None);
             return;
@@ -130,7 +179,7 @@ impl<'a> Server<'a> {
         };
 
         self.stop(reporter).await;
-        self.start(workspace, reporter, copy).await;
+        self.start(workspace, reporter, copy, identity).await;
     }
 
     /// Stops the server that runs, when one does.
@@ -168,11 +217,34 @@ impl<'a> Server<'a> {
     }
 
     /// Starts `copy`, and waits for it to answer on the server's url, or to exit.
-    async fn start(&mut self, workspace: &Workspace, reporter: &Reporter, copy: PathBuf) {
+    async fn start(
+        &mut self,
+        workspace: &Workspace,
+        reporter: &Reporter,
+        copy: PathBuf,
+        identity: Identity,
+    ) {
         let dir = copy
             .parent()
             .expect("a copy is in a directory of its own")
             .to_path_buf();
+
+        // A server that cannot listen would exit, but only once it started, while the process that holds its port
+        // answers for it.
+        if tokio::time::timeout(HELD, TcpStream::connect(&self.config.address))
+            .await
+            .is_ok_and(|connected| connected.is_ok())
+        {
+            remove(&dir, reporter).await;
+            return self.failed(
+                reporter,
+                &anyhow!(
+                    "another process answers on {}: the server cannot listen there",
+                    self.config.url
+                ),
+            );
+        }
+
         let mut command = process::Command::new(&copy);
 
         command.current_dir(&workspace.root);
@@ -198,8 +270,20 @@ impl<'a> Server<'a> {
         );
 
         let answered = tokio::select! {
-            answered = tokio::time::timeout(READY, answers(&self.config.address)) => answered.is_ok(),
-            status = child.wait() => {
+            answered = tokio::time::timeout(READY, answers(&self.config.address)) => Ok(answered.is_ok()),
+            status = child.wait() => Err(status),
+        };
+        // A process that held the port since the check, rather than the server, may have answered.
+        let answered = match answered {
+            Ok(true) => match child.try_wait() {
+                Ok(Some(status)) => Err(Ok(status)),
+                _ => Ok(true),
+            },
+            other => other,
+        };
+        let answered = match answered {
+            Ok(answered) => answered,
+            Err(status) => {
                 drop(child);
                 remove(&dir, reporter).await;
 
@@ -210,7 +294,11 @@ impl<'a> Server<'a> {
 
                 reporter.error(
                     Some(&self.config.package),
-                    &anyhow!("{} exited before it answered on {}, {said}", self.config.package, self.config.url),
+                    &anyhow!(
+                        "{} exited before it answered on {}, {said}",
+                        self.config.package,
+                        self.config.url
+                    ),
                 );
                 self.event(reporter, ServerState::Stopped, child::code(&status));
                 return;
@@ -238,6 +326,7 @@ impl<'a> Server<'a> {
         self.running = Some(Running {
             child,
             copy: dir,
+            identity,
             ready: answered,
         });
     }

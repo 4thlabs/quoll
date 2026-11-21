@@ -128,15 +128,16 @@ build = ["npm", "run", "build"]
 - A server runs the binary `cargo run` would run: its package's only binary, or its `default-run`. It is ready when
   its `url` accepts a connection.
 - A change to a contract, or to a crate it is built with, writes its document when its content changed, runs its
-  `after` commands then, and restarts the servers built with it. A document that did not change is left as it is, so
-  that the bundler reloads nothing.
+  `after` commands then, or until they succeeded once, and restarts the servers built with it. A document that did
+  not change is left as it is, so that the bundler reloads nothing.
 - A change to a server restarts that server alone. The one that runs stops only once the new one has compiled: a
   server that does not compile prints cargo's errors, and the last one that compiled keeps answering.
 - `web.dev` starts once every server is ready, in `web.dir`, and runs until the end: the bundler watches its own
   files, the TypeScript that `after` writes among them.
 - Ctrl-C, or `SIGTERM`, stops `web.dev`, then the servers, each with what it started, on Linux, macOS and Windows.
 
-The target directory, `web.dir`, the documents and hidden files are not watched. `cargo quoll dev --json` prints one
+A package's own `target/`, hidden files, `node_modules`, the documents and `web.dir`, but the crates inside it, are
+not watched. `cargo quoll dev --json` prints one
 JSON line per event on stdout, for a tool that reads them, and its output for a person on stderr:
 
 ```text
