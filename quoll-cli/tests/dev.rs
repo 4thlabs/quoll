@@ -81,10 +81,16 @@ impl Dev {
         )
         .expect("the config is written");
 
+        Self::spawn(fixture, server, &[])
+    }
+
+    /// `cargo quoll dev` on the config the fixture has, its server on `server`, with `envs` set.
+    fn spawn(fixture: &Fixture, server: SocketAddr, envs: &[(&str, &str)]) -> Self {
         let mut child = fixture
             .command()
             .args(["dev", "--json"])
             .env("FIXTURE_SERVER_ADDRESS", server.to_string())
+            .envs(envs.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -644,6 +650,212 @@ fn a_port_held_by_another_process_fails_the_server() {
             .as_str()
             .is_some_and(|message| message.contains("another process answers")),
         "{error}"
+    );
+}
+
+/// Writes the config of the tests, its server on `server`, as `edit` makes it.
+fn configure(fixture: &Fixture, server: SocketAddr, edit: impl Fn(String) -> String) {
+    let config = edit(CONFIG.replace("{address}", &server.to_string()));
+
+    fs::write(
+        fixture.path("Cargo.toml"),
+        fs::read_to_string(fixture.path("Cargo.toml")).expect("the workspace's Cargo.toml is read")
+            + &config,
+    )
+    .expect("the config is written");
+}
+
+#[test]
+fn a_directory_removed_and_made_again_is_watched() {
+    let fixture = Fixture::new("");
+    let mut dev = Dev::start(&fixture);
+    let assets = fixture.path("server/assets");
+
+    dev.ready();
+
+    fs::create_dir(&assets).expect("the directory is made");
+    dev.ready();
+
+    // Removed and made again within the same gathering of events.
+    fs::remove_dir(&assets).expect("the directory is removed");
+    fs::create_dir(&assets).expect("the directory is made again");
+    dev.ready();
+
+    fs::write(assets.join("logo.svg"), "<svg/>").expect("the file is written");
+    let events = dev.ready();
+
+    position(&events, |event| is(event, "server", "building"));
+}
+
+#[test]
+fn a_change_of_the_cargo_lock_makes_everything_again() {
+    let fixture = Fixture::new("");
+    let mut dev = Dev::start(&fixture);
+    let lock = fixture.path("Cargo.lock");
+
+    dev.ready();
+
+    let content = fs::read(&lock).expect("the Cargo.lock is read");
+    fs::write(&lock, content).expect("the Cargo.lock is written");
+    let events = dev.ready();
+
+    let document = position(&events, |event| event["event"] == "document");
+    let building = position(&events, |event| is(event, "server", "building"));
+    assert!(document < building, "{events:?}");
+}
+
+#[test]
+fn a_path_dependency_outside_the_workspace_is_watched() {
+    let fixture = Fixture::new("");
+    let shared = tempfile::tempdir().expect("a temporary directory");
+
+    fs::create_dir(shared.path().join("src")).expect("the directory is made");
+    fs::write(
+        shared.path().join("Cargo.toml"),
+        "[package]\nname = \"shared\"\nedition = \"2024\"\npublish = false\n",
+    )
+    .expect("the manifest is written");
+    fs::write(
+        shared.path().join("src/lib.rs"),
+        "//! Shared.\n\n/// Its name.\npub const NAME: &str = \"shared 1\";\n",
+    )
+    .expect("the crate is written");
+
+    let manifest = fixture.path("server/Cargo.toml");
+    let path = shared.path().to_string_lossy().replace('\\', "/");
+    let server = fixture.path("server/src/main.rs");
+
+    fs::write(
+        &manifest,
+        fs::read_to_string(&manifest).expect("the manifest is read")
+            + &format!("shared = {{ path = \"{path}\" }}\n"),
+    )
+    .expect("the manifest is written");
+    fs::write(
+        &server,
+        fs::read_to_string(&server)
+            .expect("the server is read")
+            .replace(
+                "format!(\"{VERSION} {}\", contract::DOCUMENT)",
+                "format!(\"{VERSION} {} {}\", contract::DOCUMENT, shared::NAME)",
+            ),
+    )
+    .expect("the server is written");
+
+    let mut dev = Dev::start(&fixture);
+
+    dev.ready();
+    assert_eq!(dev.get(), format!("server 1 {DOCUMENT} shared 1"));
+
+    fs::write(
+        shared.path().join("src/lib.rs"),
+        "//! Shared.\n\n/// Its name.\npub const NAME: &str = \"shared 2\";\n",
+    )
+    .expect("the crate is written");
+    dev.ready();
+
+    assert_eq!(dev.get(), format!("server 1 {DOCUMENT} shared 2"));
+}
+
+#[test]
+fn a_server_that_exits_before_it_answers_fails_and_web_dev_starts() {
+    let fixture = Fixture::new("");
+    let server = free_address();
+
+    configure(&fixture, server, |config| config);
+    let mut dev = Dev::spawn(&fixture, server, &[("FIXTURE_SERVER_EXIT", "3")]);
+
+    let events = dev.until("web started", |event| is(event, "web", "started"));
+
+    let failed = &events[position(&events, |event| is(event, "server", "failed"))];
+    assert_eq!(failed["code"], 3, "{failed}");
+    assert!(
+        !events.iter().any(|event| is(event, "server", "stopped")),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_second_dev_leaves_the_copies_of_the_first() {
+    let fixture = Fixture::new("");
+    let mut first = Dev::start(&fixture);
+
+    first.ready();
+
+    let copies = fixture.path(&format!("target/quoll-dev/{}/0", first.child.id()));
+    assert!(copies.is_dir(), "{} is there", copies.display());
+
+    // The second one finds the server's port held, by the first one's server.
+    let mut second = Dev::spawn(&fixture, first.server, &[]);
+
+    second.until("server failed", |event| is(event, "server", "failed"));
+
+    assert!(copies.is_dir(), "{} is left", copies.display());
+    assert_eq!(first.get(), format!("server 1 {DOCUMENT}"));
+}
+
+/// A child's script for the tests: says it runs, then, asked to stop, takes its time and writes `stopped.txt`
+/// before it exits.
+#[cfg(unix)]
+const TRAPPING: &str = "trap 'sleep 0.3; echo stopped > stopped.txt; exit 0' TERM\n\
+                        echo 'child: trapping'\n\
+                        while :; do sleep 0.05; done\n";
+
+#[cfg(unix)]
+#[test]
+fn what_web_dev_started_is_stopped_before_it_is_killed() {
+    let fixture = Fixture::new("");
+
+    fs::create_dir(fixture.path("web")).expect("the directory is made");
+    fs::write(fixture.path("web/child.sh"), TRAPPING).expect("the script is written");
+    let mut dev = Dev::start_with(&fixture, free_address(), |config| {
+        config.replace(
+            "dev = [\"web-dev\"]",
+            "dev = [\"sh\", \"-c\", \"sh child.sh & wait\"]",
+        )
+    });
+
+    dev.until("web started", |event| is(event, "web", "started"));
+    dev.stderr_line("child: trapping");
+
+    dev.signal("-INT");
+    dev.exit();
+
+    assert_eq!(
+        fs::read_to_string(fixture.path("web/stopped.txt"))
+            .ok()
+            .as_deref(),
+        Some("stopped\n"),
+        "the child of the shell stopped as asked"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_signal_during_a_round_stops_its_children_as_asked() {
+    let fixture = Fixture::new("");
+
+    fs::create_dir(fixture.path("web")).expect("the directory is made");
+    fs::write(fixture.path("web/child.sh"), TRAPPING).expect("the script is written");
+    let mut dev = Dev::start_with(&fixture, free_address(), |config| {
+        config.replace(
+            "after = [[\"record\", \"after\"]]",
+            "after = [[\"sh\", \"child.sh\"]]",
+        )
+    });
+
+    dev.stderr_line("child: trapping");
+
+    dev.signal("-INT");
+    let (status, _) = dev.exit();
+
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        fs::read_to_string(fixture.path("web/stopped.txt"))
+            .ok()
+            .as_deref(),
+        Some("stopped\n"),
+        "the after cut short stopped as asked"
     );
 }
 

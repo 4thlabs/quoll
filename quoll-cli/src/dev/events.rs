@@ -88,8 +88,11 @@ impl Reporter {
     }
 
     /// A line for a person, on stderr, as cargo writes its own: a verb, then what it is about.
+    ///
+    /// A line that cannot be written is left: `eprintln!` would panic on a terminal hung up or a pipe closed, and the
+    /// panic would kill the children it is about to stop.
     pub(crate) fn status(&self, verb: &str, text: impl Display) {
-        eprintln!("{verb:>12} {text}");
+        let _ = writeln!(io::stderr(), "{verb:>12} {text}");
     }
 
     /// The event in JSON, on stdout, with `--json`.
@@ -105,7 +108,10 @@ impl Reporter {
             .and_then(|()| stdout.flush());
 
         if let Err(error) = written {
-            eprintln!("error: cannot write an event on stdout: {error}");
+            let _ = writeln!(
+                io::stderr(),
+                "error: cannot write an event on stdout: {error}"
+            );
         }
     }
 
@@ -113,7 +119,7 @@ impl Reporter {
     pub(crate) fn error(&self, package: Option<&str>, error: &anyhow::Error) {
         let message = format!("{error:#}");
 
-        eprintln!("error: {message}");
+        let _ = writeln!(io::stderr(), "error: {message}");
         self.event(&Event::Error {
             source: Source::Quoll,
             package,
@@ -127,7 +133,7 @@ impl Reporter {
     /// A diagnostic of the compiler on `package`, printed as rustc renders it, and the event of an error.
     pub(crate) fn diagnostic(&self, package: &str, diagnostic: &Diagnostic) {
         if let Some(rendered) = &diagnostic.rendered {
-            eprint!("{rendered}");
+            let _ = write!(io::stderr(), "{rendered}");
         }
 
         // rustc ends with an error that counts the others, which points at nothing.

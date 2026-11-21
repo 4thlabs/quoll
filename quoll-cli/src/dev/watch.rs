@@ -1,27 +1,29 @@
-//! What `cargo quoll dev` watches: the directories of the packages its apis and servers are built from, and the
-//! package a changed file belongs to. One rule says both, so that what is watched and what counts never disagree.
+//! What `cargo quoll dev` watches: the directories of the packages its apis and servers are built from, of the path
+//! dependencies they have outside the workspace, and the workspace's `Cargo.toml` and `Cargo.lock`. One rule says
+//! what a change counts as.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use notify_debouncer_full::notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
-use notify_debouncer_full::notify::{
-    EventKind, RecommendedWatcher, RecursiveMode, Watcher as _, WatcherKind,
-};
+use notify_debouncer_full::notify::{self, EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{
     DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache, new_debouncer,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::cargo::Workspace;
+use crate::dev::events::Reporter;
 
 /// How long the events of a file are gathered: an editor's save, a write then a rename, is one change.
 const DEBOUNCE: Duration = Duration::from_millis(200);
+
+/// What to do when inotify has no watch left, which a big `node_modules` in a watched package uses up.
+const LIMIT: &str = "inotify has no watch left: raise `fs.inotify.max_user_watches`, or keep the web side out of a \
+                     package at the workspace's root";
 
 /// The packages of the workspace and how they depend on each other, by their index in `Workspace::packages`.
 #[derive(Debug, Clone)]
@@ -31,6 +33,9 @@ pub(crate) struct Graph {
     dirs: Vec<PathBuf>,
     /// The packages of the workspace each one is built with, directly.
     dependencies: Vec<Vec<usize>>,
+    /// The path dependencies outside the workspace's packages, by their canonical directory, with the package that
+    /// depends on them.
+    external: Vec<(PathBuf, usize)>,
 }
 
 /// What the watcher sends: the packages whose files changed, or its error.
@@ -42,20 +47,7 @@ pub(crate) enum Watched {
 
 /// The watcher, which watches until it is dropped.
 pub(crate) struct Watcher {
-    messages: Sender<Message>,
-}
-
-/// What the thread of the watcher receives: the events of the debouncer, or the end.
-enum Message {
-    Events(DebounceEventResult),
-    Stop,
-}
-
-impl Drop for Watcher {
-    fn drop(&mut self) {
-        // A thread that ended, on an error of its own, has nothing left to stop.
-        let _ = self.messages.send(Message::Stop);
-    }
+    _debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
 }
 
 impl Graph {
@@ -71,25 +63,29 @@ impl Graph {
             .iter()
             .map(|package| canonical(package.dir()))
             .collect();
-        let dependencies = workspace
-            .packages
-            .iter()
-            .map(|package| {
-                package
-                    .path_dependencies()
-                    .filter_map(|path| {
-                        let path = canonical(path);
+        let mut dependencies = Vec::new();
+        let mut external = Vec::new();
 
-                        dirs.iter().position(|dir| *dir == path)
-                    })
-                    .collect()
-            })
-            .collect();
+        for (index, package) in workspace.packages.iter().enumerate() {
+            let mut members = Vec::new();
+
+            for path in package.path_dependencies() {
+                let path = canonical(path);
+
+                match dirs.iter().position(|dir| *dir == path) {
+                    Some(member) => members.push(member),
+                    None => external.push((path, index)),
+                }
+            }
+
+            dependencies.push(members);
+        }
 
         Self {
             names,
             dirs,
             dependencies,
+            external,
         }
     }
 
@@ -147,6 +143,8 @@ struct Rule {
     web: Option<PathBuf>,
     /// The documents, canonical, which `cargo quoll dev` writes.
     outputs: Vec<PathBuf>,
+    /// The workspace's `Cargo.toml` and `Cargo.lock`, canonical, whose change counts for every package.
+    manifests: Vec<PathBuf>,
 }
 
 impl Rule {
@@ -162,20 +160,7 @@ impl Rule {
             return None;
         }
 
-        let mut components = relative.components();
-
-        if components
-            .next()
-            .is_some_and(|first| first.as_os_str() == "target")
-        {
-            return None;
-        }
-
-        if relative.components().any(hidden_or_modules) {
-            return None;
-        }
-
-        if path.starts_with(&self.target) || self.outputs.iter().any(|output| output == path) {
+        if !self.counts(path, relative) {
             return None;
         }
 
@@ -189,32 +174,96 @@ impl Rule {
         Some(package)
     }
 
-    /// The directories of `dir`'s tree that count for `package`, `dir` first, which the rule leaves in. Another
-    /// package's directory is left out: it is watched on its own when it counts. A directory that went away meanwhile
-    /// is skipped.
-    fn tree(&self, dir: &Path, package: usize) -> Vec<PathBuf> {
-        let mut found = Vec::new();
-        let mut next = vec![dir.to_path_buf()];
+    /// The watched packages a change of the canonical `path` counts for: the package it is in, the packages that
+    /// depend on the path dependency it is in, or all of them for the workspace's `Cargo.toml` and `Cargo.lock`.
+    fn packages(&self, path: &Path) -> BTreeSet<usize> {
+        if self.manifests.iter().any(|manifest| manifest == path) {
+            return self.watched.clone();
+        }
 
-        while let Some(dir) = next.pop() {
-            let Ok(entries) = fs::read_dir(&dir) else {
+        let mut packages: BTreeSet<_> = self.package(path).into_iter().collect();
+
+        for (dir, dependent) in &self.graph.external {
+            let Ok(relative) = path.strip_prefix(dir) else {
                 continue;
             };
 
-            for entry in entries.flatten() {
-                // A link is not followed: its target is watched where it lies, when it counts.
-                let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
-                let path = entry.path();
-
-                if is_dir && self.package(&path) == Some(package) {
-                    next.push(path);
-                }
+            if self.watched.contains(dependent) && self.counts(path, relative) {
+                packages.insert(*dependent);
             }
-
-            found.push(dir);
         }
 
-        found
+        packages
+    }
+
+    /// Whether `path`, `relative` from the directory of its package, is left in: not in its own `target/`, in nothing
+    /// hidden nor `node_modules`, not in the target directory, and no document.
+    fn counts(&self, path: &Path, relative: &Path) -> bool {
+        let first = relative.components().next();
+
+        if first.is_some_and(|first| first.as_os_str() == "target")
+            || relative.components().any(hidden_or_modules)
+        {
+            return false;
+        }
+
+        !path.starts_with(&self.target) && !self.outputs.iter().any(|output| output == path)
+    }
+
+    /// The packages `events` change: every watched one when the watcher missed some, and asks for a rescan.
+    fn changed(&self, events: &[DebouncedEvent]) -> BTreeSet<usize> {
+        let mut changed = BTreeSet::new();
+
+        for event in events {
+            if event.need_rescan() {
+                return self.watched.clone();
+            }
+
+            if !changes(&event.kind) {
+                continue;
+            }
+
+            for path in &event.paths {
+                changed.extend(self.packages(&canonical(path)));
+            }
+        }
+
+        changed
+    }
+
+    /// The directories to watch, each with its tree but the workspace's root, of which the manifests alone count. A
+    /// directory inside another is watched with it.
+    fn dirs(&self, root: &Path) -> Vec<(PathBuf, RecursiveMode)> {
+        let trees: Vec<&PathBuf> = self
+            .watched
+            .iter()
+            .map(|&package| &self.graph.dirs[package])
+            .chain(
+                self.graph
+                    .external
+                    .iter()
+                    .filter(|(_, dependent)| self.watched.contains(dependent))
+                    .map(|(dir, _)| dir),
+            )
+            .collect();
+        let mut dirs: Vec<_> = trees
+            .iter()
+            .filter(|dir| {
+                !trees
+                    .iter()
+                    .any(|other| other != *dir && dir.starts_with(other))
+            })
+            .map(|dir| ((*dir).clone(), RecursiveMode::Recursive))
+            .collect();
+
+        dirs.sort();
+        dirs.dedup();
+
+        if !trees.iter().any(|dir| root.starts_with(dir)) {
+            dirs.push((root.to_path_buf(), RecursiveMode::NonRecursive));
+        }
+
+        dirs
     }
 }
 
@@ -239,25 +288,19 @@ fn changes(kind: &EventKind) -> bool {
     }
 }
 
-/// How the directories are watched. inotify watches a directory at a time, with a limit on how many: each directory
-/// the rule leaves in is watched alone, and those made or removed later are added or dropped. The other watchers,
-/// FSEvents and Windows', watch a tree for the price of one, see a new directory by themselves, and restart their
-/// stream at each directory added: a package is watched whole, the rule filtering its events.
-fn one_by_one() -> bool {
-    RecommendedWatcher::kind() == WatcherKind::Inotify
-}
-
-/// Watches the directories of `packages` and of those they are built with, and sends the packages whose files
-/// change. It reads the file system: it is called before the runtime starts. It returns the watcher and how many
-/// packages it watches.
+/// Watches the directories of `packages`, of those they are built with and of their path dependencies, and sends
+/// the packages whose files change. It reads the file system: it is called before the runtime starts. It returns the
+/// watcher and how many packages it watches.
 pub(crate) fn start(
     workspace: &Workspace,
     graph: Graph,
     packages: impl IntoIterator<Item = usize>,
     sender: UnboundedSender<Watched>,
+    reporter: &Reporter,
 ) -> Result<(Watcher, usize)> {
     let watched = graph.closure(packages);
     let config = &workspace.config;
+    let root = canonical(&workspace.root);
     let rule = Rule {
         watched,
         target: canonical(&workspace.target_directory),
@@ -270,160 +313,62 @@ pub(crate) fn start(
             .iter()
             .map(|api| canonical(&workspace.root.join(&api.output)))
             .collect(),
+        manifests: vec![root.join("Cargo.toml"), root.join("Cargo.lock")],
         graph,
     };
-    let (messages, received) = mpsc::channel();
-    let events = messages.clone();
+    let dirs = rule.dirs(&root);
+    let count = rule.watched.len();
+
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
-        // The thread ended when no one receives, and the watcher with it.
-        let _ = events.send(Message::Events(result));
-    })
-    .context("cannot watch the workspace")?;
-    let mut dirs = BTreeSet::new();
+        let watched = match result {
+            Ok(events) => {
+                let changed = rule.changed(&events);
 
-    for &package in &rule.watched {
-        let root = rule.graph.dirs[package].clone();
+                if changed.is_empty() {
+                    return;
+                }
 
-        let watching = if one_by_one() {
-            add(&mut debouncer, &rule.tree(&root, package), &mut dirs)
-        } else {
-            debouncer.watch(&root, RecursiveMode::Recursive)
+                Watched::Changed(changed)
+            }
+            Err(errors) => Watched::Error(errors.iter().map(said).collect::<Vec<_>>().join(", ")),
         };
 
-        watching.with_context(|| format!("cannot watch {}", root.display()))?;
-    }
+        // `cargo quoll dev` is stopping when no one receives.
+        let _ = sender.send(watched);
+    })
+    .context("cannot watch the workspace")?;
 
-    let count = rule.watched.len();
-    let mut thread = Thread {
-        debouncer,
-        rule,
-        dirs,
-        sender,
-    };
-
-    thread::Builder::new()
-        .name("cargo-quoll-watch".into())
-        .spawn(move || thread.run(&received))
-        .context("cannot start the thread of the watcher")?;
-
-    Ok((Watcher { messages }, count))
-}
-
-/// The thread of the watcher: it adds and drops the watches of directories, then sends the packages that changed,
-/// so that a round starts once the directories it may read are watched.
-struct Thread {
-    debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
-    rule: Rule,
-    /// The directories watched one by one.
-    dirs: BTreeSet<PathBuf>,
-    sender: UnboundedSender<Watched>,
-}
-
-impl Thread {
-    fn run(&mut self, received: &Receiver<Message>) {
-        while let Ok(Message::Events(result)) = received.recv() {
-            let watched = match result {
-                Ok(events) => self.changed(&events),
-                Err(errors) => Some(Watched::Error(
-                    errors
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                )),
-            };
-
-            if let Some(watched) = watched
-                && self.sender.send(watched).is_err()
-            {
-                return;
+    for (dir, mode) in dirs {
+        match debouncer.watch(&dir, mode) {
+            Ok(()) => {}
+            // What is watched still is: the rest of the files are not seen, which the warning says.
+            Err(error) if matches!(error.kind, notify::ErrorKind::MaxFilesWatch) => {
+                reporter.status(
+                    "Warning",
+                    format!("cannot watch all of {}: {LIMIT}", dir.display()),
+                );
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("cannot watch {}", dir.display()));
             }
         }
     }
 
-    /// The packages `events` change, once the directories they made or removed are watched or dropped.
-    fn changed(&mut self, events: &[DebouncedEvent]) -> Option<Watched> {
-        let mut changed = BTreeSet::new();
-        let mut errors = Vec::new();
-
-        for event in events {
-            for path in &event.paths {
-                let path = canonical(path);
-
-                if one_by_one()
-                    && let Err(error) = self.follow(&path)
-                {
-                    errors.push(format!("cannot watch {}: {error}", path.display()));
-                }
-
-                if changes(&event.kind)
-                    && let Some(package) = self.rule.package(&path)
-                {
-                    changed.insert(package);
-                }
-            }
-        }
-
-        if !errors.is_empty() {
-            let _ = self.sender.send(Watched::Error(errors.join(", ")));
-        }
-
-        (!changed.is_empty()).then_some(Watched::Changed(changed))
-    }
-
-    /// Watches the tree of a directory made, or moved into a package, and drops the watches of one removed, or moved
-    /// out: whatever the event says, the file system is what is followed.
-    fn follow(&mut self, path: &Path) -> notify_debouncer_full::notify::Result<()> {
-        if path.is_dir() {
-            if self.dirs.contains(path) {
-                return Ok(());
-            }
-
-            let Some(package) = self.rule.package(path) else {
-                return Ok(());
-            };
-
-            return add(
-                &mut self.debouncer,
-                &self.rule.tree(path, package),
-                &mut self.dirs,
-            );
-        }
-
-        if path.exists() {
-            return Ok(());
-        }
-
-        let gone: Vec<_> = self
-            .dirs
-            .iter()
-            .filter(|dir| dir.starts_with(path))
-            .cloned()
-            .collect();
-
-        for dir in gone {
-            // inotify drops the watch of a directory removed itself: there may be none left to drop.
-            let _ = self.debouncer.unwatch(&dir);
-            self.dirs.remove(&dir);
-        }
-
-        Ok(())
-    }
+    Ok((
+        Watcher {
+            _debouncer: debouncer,
+        },
+        count,
+    ))
 }
 
-/// Watches each of `dirs` alone.
-fn add(
-    debouncer: &mut Debouncer<RecommendedWatcher, RecommendedCache>,
-    dirs: &[PathBuf],
-    watched: &mut BTreeSet<PathBuf>,
-) -> notify_debouncer_full::notify::Result<()> {
-    for dir in dirs {
-        if watched.insert(dir.clone()) {
-            debouncer.watch(dir, RecursiveMode::NonRecursive)?;
-        }
+/// An error of the watcher, which names inotify's limit when it is the one reached.
+fn said(error: &notify::Error) -> String {
+    if matches!(error.kind, notify::ErrorKind::MaxFilesWatch) {
+        return LIMIT.to_owned();
     }
 
-    Ok(())
+    error.to_string()
 }
 
 /// The canonical form of `path`, as a watcher gives it on macOS, `/private/var` for `/var`. A path that does not exist
@@ -472,6 +417,7 @@ mod tests {
             .map(PathBuf::from)
             .collect(),
             dependencies: vec![vec![], vec![0], vec![1], vec![], vec![], vec![]],
+            external: vec![(PathBuf::from("/shared/auth"), 1)],
         }
     }
 
@@ -482,6 +428,10 @@ mod tests {
             target: PathBuf::from("/ws/target"),
             web: Some(PathBuf::from(web)),
             outputs: vec![PathBuf::from("/ws/api/openapi.json")],
+            manifests: vec![
+                PathBuf::from("/ws/Cargo.toml"),
+                PathBuf::from("/ws/Cargo.lock"),
+            ],
         }
     }
 
@@ -613,47 +563,81 @@ mod tests {
     }
 
     #[test]
-    fn the_tree_of_a_package_holds_what_the_rule_leaves_in() {
-        let dir = tempfile::tempdir().expect("a temporary directory");
-        let root = canonical(dir.path());
+    fn a_path_dependency_outside_the_workspace_counts_for_its_dependent() {
+        let rule = rule("/ws/web");
 
-        for path in [
-            "server/src/target",
-            "server/src/bin",
-            "server/target/debug",
-            "server/assets/node_modules/x",
-            "server/.git/objects",
-            "server/inner/src",
-        ] {
-            fs::create_dir_all(root.join(path)).expect("the directory is made");
-        }
+        assert_eq!(
+            rule.packages(Path::new("/shared/auth/src/lib.rs")),
+            BTreeSet::from([1])
+        );
+        assert_eq!(
+            rule.packages(Path::new("/shared/auth/target/debug/x")),
+            BTreeSet::new()
+        );
+        assert_eq!(
+            rule.packages(Path::new("/shared/other/src/lib.rs")),
+            BTreeSet::new()
+        );
+    }
 
-        let rule = Rule {
-            graph: Graph {
-                names: vec!["server".into(), "inner".into()],
-                dirs: vec![root.join("server"), root.join("server/inner")],
-                dependencies: vec![vec![], vec![]],
-            },
-            watched: BTreeSet::from([0, 1]),
-            target: root.join("target"),
-            web: None,
-            outputs: vec![],
-        };
+    #[test]
+    fn the_workspace_s_manifests_count_for_every_package() {
+        let rule = rule("/ws/web");
 
-        let mut tree = rule.tree(&root.join("server"), 0);
-        tree.sort();
+        assert_eq!(rule.packages(Path::new("/ws/Cargo.lock")), rule.watched);
+        assert_eq!(rule.packages(Path::new("/ws/Cargo.toml")), rule.watched);
+    }
 
-        let expected: Vec<_> = [
-            "server",
-            "server/assets",
-            "server/src",
-            "server/src/bin",
-            "server/src/target",
-        ]
-        .iter()
-        .map(|path| root.join(path))
-        .collect();
-        assert_eq!(tree, expected);
+    #[test]
+    fn a_rescan_counts_for_every_package() {
+        use notify_debouncer_full::notify::event::Flag;
+        use std::time::Instant;
+
+        let rule = rule("/ws/web");
+        let event = |event: notify::Event| DebouncedEvent::new(event, Instant::now());
+
+        let read = event(
+            notify::Event::new(EventKind::Access(AccessKind::Open(AccessMode::Read)))
+                .add_path(PathBuf::from("/ws/api/src/lib.rs")),
+        );
+        assert_eq!(rule.changed(std::slice::from_ref(&read)), BTreeSet::new());
+
+        let rescan = event(notify::Event::new(EventKind::Other).set_flag(Flag::Rescan));
+        assert_eq!(rule.changed(&[read, rescan]), rule.watched);
+    }
+
+    #[test]
+    fn a_directory_inside_another_is_watched_with_it() {
+        let rule = rule("/ws/web");
+        let dirs = rule.dirs(Path::new("/ws"));
+
+        assert_eq!(
+            dirs.iter()
+                .map(|(dir, _)| dir.as_path())
+                .collect::<Vec<_>>(),
+            [Path::new("/shared/auth"), Path::new("/ws")],
+            "the root package holds the others"
+        );
+
+        let mut rule = rule;
+
+        rule.watched = BTreeSet::from([1, 2]);
+
+        let dirs = rule.dirs(Path::new("/ws"));
+        let watched: Vec<_> = dirs
+            .iter()
+            .map(|(dir, mode)| (dir.as_path(), *mode == RecursiveMode::Recursive))
+            .collect();
+
+        assert_eq!(
+            watched,
+            [
+                (Path::new("/shared/auth"), true),
+                (Path::new("/ws/api"), true),
+                (Path::new("/ws/server"), true),
+                (Path::new("/ws"), false),
+            ]
+        );
     }
 
     #[cfg(unix)]

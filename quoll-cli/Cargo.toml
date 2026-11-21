@@ -35,9 +35,9 @@ which = "8"
 # `cargo quoll dev`: its children, its signals, the connection that says a server is ready.
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
 
-# The signal that asks a child to stop.
+# The signals that ask a child's group to stop, and tell when its last process is gone.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+nix = { version = "0.31", default-features = false, features = ["signal"] }
 
 # The process group of a child, which a Ctrl-C in the console does not reach: `cargo quoll dev` stops it.
 [target.'cfg(windows)'.dependencies]

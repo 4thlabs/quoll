@@ -1762,7 +1762,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "libc",
+ "nix",
  "notify-debouncer-full",
  "process-wrap",
  "serde",
