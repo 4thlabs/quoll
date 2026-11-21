@@ -62,11 +62,12 @@ impl Authenticate<Bearer> for App {
 }
 
 impl NotesServer for App {
-    async fn get(&self, user: &User, id: i64) -> Result<Note> {
+    async fn get(&self, user: &User, id: i64) -> Result<Response<Note>> {
         self.store
             .note(user.id, id)
             .await
             .map_err(Error::internal)?
+            .map(Response::new)
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
@@ -116,7 +117,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```rust,no_run
 use std::sync::Mutex;
 
-use quoll::rest::{self, Created, Error, Result};
+use quoll::rest::{self, Created, Error, Response, Result};
 use quoll::{client, server};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -149,25 +150,27 @@ struct App {
 }
 
 impl NotesServer for App {
-    async fn get(&self, id: i64) -> Result<Note> {
+    async fn get(&self, id: i64) -> Result<Response<Note>> {
         let notes = self.notes.lock().expect("no handler panics while holding the lock");
 
         notes
             .iter()
             .find(|note| note.id == id)
             .cloned()
+            .map(Response::new)
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
-    async fn create(&self, note: NewNote) -> Result<Created<Note>> {
+    async fn create(&self, note: NewNote) -> Result<Response<Note>> {
         let mut notes = self.notes.lock().expect("no handler panics while holding the lock");
         let note = Note {
             id: notes.len() as i64 + 1,
             title: note.title,
         };
+        let location = format!("/api/notes/{}", note.id);
 
         notes.push(note.clone());
-        Ok(Created::at(format!("/api/notes/{}", note.id), note))
+        Ok(Response::new(note).header("location", location))
     }
 }
 

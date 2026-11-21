@@ -10,7 +10,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use quoll::rest::{self, Created, Error, Result};
+use http::header::LOCATION;
+use quoll::rest::{self, Created, Error, Response, Result};
 use quoll::server;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -50,17 +51,18 @@ struct App {
 }
 
 impl NotesServer for App {
-    async fn get(&self, id: i64) -> Result<Note> {
+    async fn get(&self, id: i64) -> Result<Response<Note>> {
         let store = self.store.lock().expect("no handler panics while holding the lock");
 
         store
             .notes
             .get(&id)
             .cloned()
+            .map(Response::new)
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
-    async fn create(&self, note: NewNote) -> Result<Created<Note>> {
+    async fn create(&self, note: NewNote) -> Result<Response<Note>> {
         let mut store = self.store.lock().expect("no handler panics while holding the lock");
 
         store.last_id += 1;
@@ -69,16 +71,17 @@ impl NotesServer for App {
             id: store.last_id,
             title: note.title,
         };
+        let location = format!("/api/notes/{}", note.id);
 
         store.notes.insert(note.id, note.clone());
-        Ok(Created::at(format!("/api/notes/{}", note.id), note))
+        Ok(Response::new(note).header(LOCATION, location))
     }
 
-    async fn remove(&self, id: i64) -> Result<()> {
+    async fn remove(&self, id: i64) -> Result<Response<()>> {
         let mut store = self.store.lock().expect("no handler panics while holding the lock");
 
         store.notes.remove(&id);
-        Ok(())
+        Ok(Response::new(()))
     }
 }
 
@@ -103,7 +106,10 @@ async fn main() -> std::io::Result<()> {
 ## Services
 
 - A group `Notes` gives the trait `NotesServer`, with a handler per route. An implementation writes `async fn`.
-- A handler takes the route's arguments in the contract's order, and returns a `rest::Result` of the route's result.
+- A handler takes the route's arguments in the contract's order, and returns a `rest::Result` of a `rest::Response` of
+  the route's result, the `T` of a `Created<T>` or an `Accepted<T>`, whose status the contract gives:
+  `Ok(Response::new(note))`, with the headers it sends, `.header(LOCATION, location)`, as [Responses](#responses)
+  says.
 - A handler of a route that takes a credential receives the caller after `&self`: see
   [Authentication](authentication.md).
 - One type may implement the traits of several groups.
@@ -114,7 +120,7 @@ async fn main() -> std::io::Result<()> {
 compile, nor does a service that does not implement its group's trait:
 
 ```rust
-use quoll::rest::{self, Result};
+use quoll::rest::{self, Response, Result};
 
 rest::api! {
     pub api Api = "/api";
@@ -133,14 +139,14 @@ rest::api! {
 struct App;
 
 impl NotesServer for App {
-    async fn list(&self) -> Result<Vec<String>> {
-        Ok(vec!["Milk".into()])
+    async fn list(&self) -> Result<Response<Vec<String>>> {
+        Ok(Response::new(vec!["Milk".into()]))
     }
 }
 
 impl AdminServer for App {
-    async fn stats(&self) -> Result<u64> {
-        Ok(1)
+    async fn stats(&self) -> Result<Response<u64>> {
+        Ok(Response::new(1))
     }
 }
 
@@ -148,6 +154,73 @@ let router = Api::router(ApiServices {
     notes: App,
     admin: App,
 });
+```
+
+## Responses
+
+A handler returns a `rest::Response` of the route's value: `Note` for `-> Note`, `-> Created<Note>` and
+`-> Accepted<Note>`, `()` for a route with no result, the stream for a stream.
+
+- `Response::new(value)` answers the status the contract says: 200, 201 for `Created<T>`, 202 for `Accepted<T>`, 204
+  for no result.
+- `.header(name, value)` adds a header, after those of its name: an `ETag`, a `Location`, a `Cache-Control`. A
+  handler's header takes the place of one quoll puts of its name, as a stream's `Cache-Control`.
+- `.with_status(Status::...)` answers another success or a redirection in place of the contract's: a `PUT` that
+  answers 201 when it creates and 200 when it replaces, a 304 Not Modified, a 206. `rest::Status` holds a `2xx` or a
+  `3xx` alone, so an error's status does not compile there: an error is an `Err(rest::Error)`, as
+  [Errors](errors.md) says.
+- A 204, a 205 or a 304 is sent without its body, which HTTP gives them none: the value of the `Response` is not sent.
+- A name or a value that is not a header's, or a `Content-Type`, a `Content-Length` or a `Transfer-Encoding`, which
+  quoll writes from the route's result, answers 500, logged without the value.
+
+The OpenAPI document describes the contract's status and none of these headers.
+
+```rust
+use http::header::{ETAG, LOCATION};
+use quoll::rest::{self, Created, Response, Result, Status};
+
+rest::api! {
+    pub api Api = "/api";
+
+    pub group Notes {
+        GET  "/notes/{id}" => get(id: i64, header("If-None-Match") seen: Option<String>) -> String;
+        PUT  "/notes/{id}" => put(id: i64, title: String) -> String;
+        POST "/notes"      => create(title: String) -> Created<i64>;
+    }
+}
+
+#[derive(Debug, Default)]
+struct App;
+
+impl NotesServer for App {
+    async fn get(&self, id: i64, seen: Option<String>) -> Result<Response<String>> {
+        let tag = format!("\"{id}\"");
+        let response = Response::new("Milk".to_owned()).header(ETAG, tag.as_str());
+
+        if seen.as_deref() == Some(tag.as_str()) {
+            return Ok(response.with_status(Status::NOT_MODIFIED));
+        }
+
+        Ok(response)
+    }
+
+    async fn put(&self, id: i64, title: String) -> Result<Response<String>> {
+        let response = Response::new(title);
+
+        if id > 100 {
+            return Ok(response.with_status(Status::CREATED));
+        }
+
+        Ok(response)
+    }
+
+    async fn create(&self, _title: String) -> Result<Response<i64>> {
+        let id = 7;
+
+        Ok(Response::new(id).header(LOCATION, format!("/api/notes/{id}")))
+    }
+}
+# let _ = Api::router(ApiServices { notes: App });
 ```
 
 ## Layers

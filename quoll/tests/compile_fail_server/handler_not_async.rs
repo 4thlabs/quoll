@@ -1,4 +1,4 @@
-use quoll::rest::{self, Result};
+use quoll::rest::{self, Response, Result};
 
 rest::api! {
     pub api Api = "/api";
@@ -12,8 +12,8 @@ struct App;
 
 // A handler is an `async fn`, or a `fn` returning a future.
 impl NotesServer for App {
-    fn get(&self, id: i64) -> Result<String> {
-        Ok(id.to_string())
+    fn get(&self, id: i64) -> Result<Response<String>> {
+        Ok(Response::new(id.to_string()))
     }
 }
 

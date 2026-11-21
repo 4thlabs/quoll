@@ -24,7 +24,7 @@ help: the trait `_serde::Serialize` is not implemented for `Note`
 note: required by a bound in `quoll::__private::server::ok`
   --> src/__private/server.rs
    |
-   | pub fn ok<T: Serialize>(result: Result<T>) -> Result<Response> {
+   | pub fn ok<T: Serialize>(result: Result<rest::Response<T>>) -> Result<Response> {
    |              ^^^^^^^^^ required by this bound in `ok`
 
 error[E0277]: the trait bound `Note: serde::Serialize` is not satisfied
@@ -54,5 +54,5 @@ help: the trait `_serde::Serialize` is not implemented for `Note`
 note: required by a bound in `quoll::__private::server::events`
   --> src/__private/server/stream.rs
    |
-   | pub fn events<E: IsEvents + Written>(result: Result<E>) -> Result<Response> {
+   | pub fn events<E: IsEvents + Written>(result: Result<rest::Response<E>>) -> Result<Response> {
    |                             ^^^^^^^ required by this bound in `events`

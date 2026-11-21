@@ -1,51 +1,33 @@
 //! The result of a route that accepts work it has not done yet.
 
-/// What a route answers when it accepts work to do later: a 202, with `T` in JSON, which says what was accepted, as a
-/// job and where to follow it.
+use std::fmt;
+use std::marker::PhantomData;
+
+/// What a route answers when it accepts work to do later, as the contract writes it: a 202, with `T` in JSON, which
+/// says what was accepted, as a job and where to follow it.
+///
+/// It is only written in the contract, `-> Accepted<Export>`: the handler returns a [`Response<Export>`], as every
+/// handler does, to which quoll gives the 202. The client returns the `T`.
 ///
 /// ```
-/// use quoll::rest::Accepted;
+/// use quoll::rest::{self, Accepted};
 ///
-/// struct Export {
-///     job: u64,
+/// rest::api! {
+///     pub api Api = "/api";
+///
+///     pub group Exports {
+///         POST "/exports" => export(name: String) -> Accepted<u64>;
+///     }
 /// }
-///
-/// let accepted = Accepted::new(Export { job: 7 });
-/// # let _ = accepted;
 /// ```
 ///
-/// On the client, the route returns the `T`: the 202 is only the server's answer.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// [`Response<Export>`]: crate::rest::Response
 pub struct Accepted<T> {
-    /// What was accepted, the body.
-    pub(crate) value: T,
+    _value: PhantomData<fn() -> T>,
 }
 
-impl<T> Accepted<T> {
-    /// A 202 with `value` as its body.
-    pub fn new(value: T) -> Self {
-        Self { value }
-    }
-
-    /// What was accepted, the body: what a test of a handler checks.
-    ///
-    /// ```
-    /// use quoll::rest::Accepted;
-    ///
-    /// assert_eq!(*Accepted::new(7).value(), 7);
-    /// ```
-    pub fn value(&self) -> &T {
-        &self.value
-    }
-
-    /// What was accepted, the body.
-    ///
-    /// ```
-    /// use quoll::rest::Accepted;
-    ///
-    /// assert_eq!(Accepted::new(7).into_inner(), 7);
-    /// ```
-    pub fn into_inner(self) -> T {
-        self.value
+impl<T> fmt::Debug for Accepted<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Accepted")
     }
 }

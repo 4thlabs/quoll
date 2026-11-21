@@ -1,76 +1,39 @@
 //! The result of a route that creates what it returns.
 
-/// What a route answers when it creates `T`: a 201, with `T` in JSON and, when given, a `Location` header.
+use std::fmt;
+use std::marker::PhantomData;
+
+/// What a route answers when it creates a `T`, as the contract writes it: a 201, with `T` in JSON.
+///
+/// It is only written in the contract, `-> Created<Note>`: the handler returns a [`Response<Note>`], as every
+/// handler does, to which quoll gives the 201, and with a `Location` when it says where the value is read. The client
+/// returns the `T`.
 ///
 /// ```
-/// use quoll::rest::Created;
+/// use http::header::LOCATION;
+/// use quoll::rest::{self, Created, Response};
 ///
-/// struct Note {
-///     id: i64,
+/// rest::api! {
+///     pub api Api = "/api";
+///
+///     pub group Notes {
+///         POST "/notes" => create(title: String) -> Created<i64>;
+///     }
 /// }
 ///
-/// let note = Note { id: 3 };
-/// let created = Created::at(format!("/api/notes/{}", note.id), note);
-/// # let _ = created;
+/// fn created(id: i64) -> Response<i64> {
+///     Response::new(id).header(LOCATION, format!("/api/notes/{id}"))
+/// }
+/// # let _ = created(3);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// [`Response<Note>`]: crate::rest::Response
 pub struct Created<T> {
-    /// Where the created value is read from, sent as `Location`.
-    pub(crate) location: Option<String>,
-    /// The created value, the body.
-    pub(crate) value: T,
+    _value: PhantomData<fn() -> T>,
 }
 
-impl<T> Created<T> {
-    /// A 201 with `value` as its body and no `Location`.
-    pub fn new(value: T) -> Self {
-        Self {
-            location: None,
-            value,
-        }
-    }
-
-    /// A 201 with `value` as its body and `location`, where it is read from, as its `Location`.
-    pub fn at(location: impl Into<String>, value: T) -> Self {
-        Self {
-            location: Some(location.into()),
-            value,
-        }
-    }
-
-    /// Where the created value is read from, sent as `Location`, if it was given: what a test of a handler checks.
-    ///
-    /// ```
-    /// use quoll::rest::Created;
-    ///
-    /// let created = Created::at("/api/notes/3", 3);
-    ///
-    /// assert_eq!(created.location(), Some("/api/notes/3"));
-    /// assert_eq!(Created::new(3).location(), None);
-    /// ```
-    pub fn location(&self) -> Option<&str> {
-        self.location.as_deref()
-    }
-
-    /// The created value, the body.
-    ///
-    /// ```
-    /// use quoll::rest::Created;
-    ///
-    /// assert_eq!(*Created::new(3).value(), 3);
-    /// ```
-    pub fn value(&self) -> &T {
-        &self.value
-    }
-
-    /// The created value, the body, leaving the location.
-    ///
-    /// ```
-    /// use quoll::rest::Created;
-    ///
-    /// assert_eq!(Created::at("/api/notes/3", 3).into_inner(), 3);
-    /// ```
-    pub fn into_inner(self) -> T {
-        self.value
+impl<T> fmt::Debug for Created<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Created")
     }
 }

@@ -8,7 +8,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use http::Extensions;
-use quoll::rest::{self, Created, Error, Result, Route};
+use http::header::LOCATION;
+use quoll::rest::{self, Created, Error, Response, Result, Route};
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder, Next};
 use schemars::JsonSchema;
@@ -84,15 +85,16 @@ impl App {
 }
 
 impl NotesServer for App {
-    async fn get(&self, id: i64) -> Result<Note> {
+    async fn get(&self, id: i64) -> Result<Response<Note>> {
         self.notes()
             .iter()
             .find(|note| note.id == id)
             .cloned()
+            .map(Response::new)
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
-    async fn create(&self, note: NewNote) -> Result<Created<Note>> {
+    async fn create(&self, note: NewNote) -> Result<Response<Note>> {
         let mut notes = self.notes();
         let note = Note {
             id: i64::try_from(notes.len()).expect("few notes") + 1,
@@ -100,10 +102,12 @@ impl NotesServer for App {
         };
         notes.push(note.clone());
 
-        Ok(Created::at(format!("/api/notes/{}", note.id), note))
+        let location = format!("/api/notes/{}", note.id);
+
+        Ok(Response::new(note).header(LOCATION, location))
     }
 
-    async fn update(&self, id: i64, note: NewNote) -> Result<Note> {
+    async fn update(&self, id: i64, note: NewNote) -> Result<Response<Note>> {
         let mut notes = self.notes();
         let found = notes
             .iter_mut()
@@ -111,10 +115,10 @@ impl NotesServer for App {
             .ok_or_else(|| Error::not_found("no such note"))?;
         found.title = note.title;
 
-        Ok(found.clone())
+        Ok(Response::new(found.clone()))
     }
 
-    async fn remove(&self, id: i64) -> Result<()> {
+    async fn remove(&self, id: i64) -> Result<Response<()>> {
         let mut notes = self.notes();
         let before = notes.len();
         notes.retain(|note| note.id != id);
@@ -122,7 +126,7 @@ impl NotesServer for App {
         if notes.len() == before {
             return Err(Error::not_found("no such note"));
         }
-        Ok(())
+        Ok(Response::new(()))
     }
 }
 
@@ -134,27 +138,27 @@ impl SearchServer for Searcher {
         contains: Option<String>,
         page: Option<u32>,
         tags: Vec<String>,
-    ) -> Result<Found> {
-        Ok(Found {
+    ) -> Result<Response<Found>> {
+        Ok(Response::new(Found {
             contains,
             page,
             tags,
-        })
+        }))
     }
 }
 
 struct Echoer;
 
 impl EchoServer for Echoer {
-    async fn echo(&self, text: String, shelf: Shelf) -> Result<String> {
-        Ok(format!("{shelf:?} {text}"))
+    async fn echo(&self, text: String, shelf: Shelf) -> Result<Response<String>> {
+        Ok(Response::new(format!("{shelf:?} {text}")))
     }
 }
 
 struct Failing;
 
 impl FailuresServer for Failing {
-    async fn fail(&self, kind: String) -> Result<()> {
+    async fn fail(&self, kind: String) -> Result<Response<()>> {
         match kind.as_str() {
             "conflict" => Err(Error::new(StatusCode::CONFLICT, "already there")),
             _ => Err(Error::internal("the database password is hunter2")),
@@ -169,12 +173,16 @@ struct Proxying {
 }
 
 impl ProxyServer for Proxying {
-    async fn note(&self, id: i64) -> Result<Note> {
-        self.api.notes().get(id).await
+    async fn note(&self, id: i64) -> Result<Response<Note>> {
+        self.api.notes().get(id).await.map(Response::new)
     }
 
-    async fn dead(&self) -> Result<()> {
-        self.dead.failures().fail("conflict".into()).await
+    async fn dead(&self) -> Result<Response<()>> {
+        self.dead
+            .failures()
+            .fail("conflict".into())
+            .await
+            .map(Response::new)
     }
 }
 

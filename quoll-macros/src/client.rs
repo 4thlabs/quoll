@@ -2,8 +2,8 @@
 //! builds it, and `ApiClient`, `Api::client` and `Api::client_with`, which give each group's client by its descriptor.
 //!
 //! All of it goes through `::quoll::__private::client!`, which writes it out only when `quoll` has the feature
-//! `client`. Each method writes the route's path, query and body through a helper of `quoll`, which sends the request
-//! and reads its answer.
+//! `client`. Each method writes the route's path, query and body through a helper of `quoll`, and returns the call,
+//! which sends the request and reads its answer once it is awaited.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
@@ -82,8 +82,8 @@ fn group_trait(cx: &Cx) -> TokenStream {
     }
 }
 
-/// `fn get(&self, id: i64) -> impl Future<Output = Result<Note>> + Send`: a `Created<T>` or an `Accepted<T>` gives
-/// its `T`, as the 201 or the 202 is only the server's answer.
+/// `fn get(&self, id: i64) -> impl rest::Call<Note>`: a `Created<T>` or an `Accepted<T>` gives its `T`, as the 201
+/// or the 202 is only the server's answer.
 fn signature(route: &Route) -> TokenStream {
     let name = &route.name;
     let args = route
@@ -100,8 +100,7 @@ fn signature(route: &Route) -> TokenStream {
     };
 
     quote_spanned! {route.name.span()=>
-        fn #name(&self, #(#args),*)
-            -> impl ::core::future::Future<Output = ::quoll::rest::Result<#output>> + ::core::marker::Send
+        fn #name(&self, #(#args),*) -> impl ::quoll::rest::Call<#output>
     }
 }
 
@@ -192,34 +191,39 @@ fn method(index: usize, route: &Route) -> TokenStream {
 
         quote! { .accept(::quoll::__private::client::#media_type) }
     });
-    let answer = match route.reply.as_deref() {
-        None => quote_spanned! {route.span=> .none().await },
+    let answer = Ident::new("answer", Span::mixed_site());
+    let read = match route.reply.as_deref() {
+        None => quote_spanned! {route.span=> #answer.none() },
         Some(returned) => {
             let value = &returned.value;
             // Spanned on the type, as a type that is not `Deserialize` is the mistake an error names then.
             let read = Ident::new(returned.kind().read, value.span());
 
-            quote_spanned! {value.span()=> .#read::<#value>().await }
+            quote_spanned! {value.span()=> #answer.#read::<#value>() }
         }
     };
+    let request = Ident::new("request", Span::mixed_site());
 
     quote! {
         #signature {
             #query_type
 
-            async move {
-                ::quoll::__private::client::Call::new(&self.client, &self.routes[#index])
-                    .path(self.prefix)
-                    #(#path_calls)*
-                    #query_call
-                    #query_struct
-                    #(#headers)*
-                    #body
-                    #accept
-                    .send()
-                    .await?
-                    #answer
-            }
+            let #request = ::quoll::__private::client::Request::write(
+                &self.client,
+                &self.routes[#index],
+                move |#request| ::core::result::Result::Ok(
+                    #request
+                        .path(self.prefix)
+                        #(#path_calls)*
+                        #query_call
+                        #query_struct
+                        #(#headers)*
+                        #body
+                        #accept
+                ),
+            );
+
+            ::quoll::__private::client::Pending::new(#request, |#answer| #read)
         }
     }
 }

@@ -14,7 +14,7 @@ use axum::extract::{FromRequest, FromRequestParts, Path};
 use axum::response::{IntoResponse, Response};
 use axum::routing::on;
 use http::request::Parts;
-use http::{HeaderMap, HeaderValue, StatusCode, header};
+use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -24,7 +24,7 @@ use crate::__private::content_type::{
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
 use crate::__private::read::{Deserialized, Read};
 use crate::rest::error::Repr;
-use crate::rest::{Authenticate, Error, Result, Route, Scheme, Scoped};
+use crate::rest::{self, Authenticate, Error, Result, Route, Scheme, Scoped};
 use crate::server::{body_limit, trace};
 
 mod stream;
@@ -531,75 +531,73 @@ fn rejected(status: StatusCode, text: String) -> Error {
     Error::internal(text)
 }
 
-/// A 200 with the JSON of what the handler returned.
+/// A 200 with the JSON of what the handler returned, and its headers.
 ///
 /// # Errors
 ///
-/// The handler's error, or a 500 when its value cannot be written as JSON.
-pub fn ok<T: Serialize>(result: Result<T>) -> Result<Response> {
-    json(StatusCode::OK, &result?)
+/// The handler's error, or a 500 when its value cannot be written as JSON or a header it gave cannot be sent.
+pub fn ok<T: Serialize>(result: Result<rest::Response<T>>) -> Result<Response> {
+    let (given, value) = parts(result)?;
+
+    with_headers(json(StatusCode::OK, &value)?, given)
 }
 
-/// A 201 with the JSON of what the handler created, and its `Location` when it has one.
+/// A 201 with the JSON of what the handler created, and its headers, a `Location` among them when it says where the
+/// value is read.
 ///
 /// # Errors
 ///
-/// The handler's error, or a 500 when its value cannot be written as JSON or its location is not a header's value.
-pub fn created<C>(result: Result<C>) -> Result<Response>
+/// The handler's error, or a 500 when its value cannot be written as JSON or a header it gave cannot be sent.
+pub fn created<C>(result: Result<rest::Response<C::Value>>) -> Result<Response>
 where
     C: IsCreated,
     C::Value: Serialize,
 {
-    let (location, value) = result?.into_parts();
-    let mut response = json(StatusCode::CREATED, &value)?;
+    let (given, value) = parts(result)?;
 
-    if let Some(location) = location {
-        let location = HeaderValue::try_from(location).map_err(|error| {
-            Error::internal(format!(
-                "the location of a `Created` is not a header's value: {error}"
-            ))
-        })?;
-        response.headers_mut().insert(header::LOCATION, location);
-    }
-
-    Ok(response)
+    with_headers(json(StatusCode::CREATED, &value)?, given)
 }
 
-/// A 202 with the JSON of what the handler accepted.
+/// A 202 with the JSON of what the handler accepted, and its headers.
 ///
 /// # Errors
 ///
-/// The handler's error, or a 500 when its value cannot be written as JSON.
-pub fn accepted<A>(result: Result<A>) -> Result<Response>
+/// The handler's error, or a 500 when its value cannot be written as JSON or a header it gave cannot be sent.
+pub fn accepted<A>(result: Result<rest::Response<A::Value>>) -> Result<Response>
 where
     A: IsAccepted,
     A::Value: Serialize,
 {
-    json(StatusCode::ACCEPTED, &result?.into_value())
+    let (given, value) = parts(result)?;
+
+    with_headers(json(StatusCode::ACCEPTED, &value)?, given)
 }
 
-/// A 200 with the text the handler returned, `text/plain; charset=utf-8`.
+/// A 200 with the text the handler returned, `text/plain; charset=utf-8`, and its headers.
 ///
 /// # Errors
 ///
-/// The handler's error.
-pub fn ok_text<T: IsText>(result: Result<T>) -> Result<Response> {
+/// The handler's error, or a 500 when a header it gave cannot be sent.
+pub fn ok_text<T: IsText>(result: Result<rest::Response<T>>) -> Result<Response> {
+    let (given, text) = parts(result)?;
     let content_type = HeaderValue::from_static(TEXT_UTF8);
 
-    Ok(answer_body(
-        content_type,
-        result?.into_string().into_bytes(),
-    ))
+    with_headers(
+        answer_body(content_type, text.into_string().into_bytes()),
+        given,
+    )
 }
 
 /// A 200 with the bytes the handler returned, of their content type, and `X-Content-Type-Options: nosniff`: a browser
-/// reads them only as that type says, so that bytes typed `application/octet-stream` are never run as a page.
+/// reads them only as that type says, so that bytes typed `application/octet-stream` are never run as a page. Then
+/// the handler's headers.
 ///
 /// # Errors
 ///
-/// The handler's error, or a 500 when their content type is not a media type.
-pub fn ok_bytes<B: IsBytes>(result: Result<B>) -> Result<Response> {
-    let (bytes, content_type) = result?.into_parts();
+/// The handler's error, or a 500 when their content type is not a media type or a header it gave cannot be sent.
+pub fn ok_bytes<B: IsBytes>(result: Result<rest::Response<B>>) -> Result<Response> {
+    let (given, bytes) = parts(result)?;
+    let (bytes, content_type) = bytes.into_parts();
     let content_type = media_type_value(content_type).map_err(|content_type| {
         Error::internal(format!(
             "the content type of a `Bytes`, {content_type:?}, is not a media type"
@@ -612,18 +610,115 @@ pub fn ok_bytes<B: IsBytes>(result: Result<B>) -> Result<Response> {
         HeaderValue::from_static("nosniff"),
     );
 
-    Ok(response)
+    with_headers(response, given)
 }
 
-/// A 204, with no body.
+/// A 204, with no body, and the handler's headers.
 ///
 /// # Errors
 ///
-/// The handler's error.
-pub fn no_content(result: Result<()>) -> Result<Response> {
-    result?;
+/// The handler's error, or a 500 when a header it gave cannot be sent.
+pub fn no_content(result: Result<rest::Response<()>>) -> Result<Response> {
+    let (given, ()) = parts(result)?;
 
-    Ok(StatusCode::NO_CONTENT.into_response())
+    with_headers(StatusCode::NO_CONTENT.into_response(), given)
+}
+
+/// The headers and the body of what a handler returned.
+///
+/// # Errors
+///
+/// The handler's error, or a 500 when a header it gave was not one, which says which without its value.
+pub(crate) fn parts<T>(result: Result<rest::Response<T>>) -> Result<(Given, T)> {
+    let response = result?;
+
+    if let Some(invalid) = response.invalid() {
+        return Err(Error::internal(format!(
+            "{invalid}: a handler's response holds a header that cannot be sent"
+        )));
+    }
+
+    let (status, headers, body) = response.into_answer();
+
+    Ok((Given { status, headers }, body))
+}
+
+/// What a handler gave its response beside its body: a status in place of the contract's, and headers.
+#[derive(Debug)]
+pub(crate) struct Given {
+    status: Option<StatusCode>,
+    headers: HeaderMap,
+}
+
+/// The headers quoll writes from a route's result, which a handler does not give.
+const WRITTEN: [HeaderName; 3] = [
+    header::CONTENT_TYPE,
+    header::CONTENT_LENGTH,
+    header::TRANSFER_ENCODING,
+];
+
+/// `response` with what a handler gave: its status, in place of the contract's, and its headers, each name in place
+/// of what quoll put of that name, as a stream's `Cache-Control`, but the `X-Content-Type-Options: nosniff` of bytes,
+/// which keeps a browser from running them as a page. A 204, a 205 or a 304 is answered with no body, and none of the
+/// headers that describe one.
+///
+/// # Errors
+///
+/// A 500 for a header that quoll writes from the route's result: `Content-Type`, `Content-Length` or
+/// `Transfer-Encoding`.
+pub(crate) fn with_headers(mut response: Response, given: Given) -> Result<Response> {
+    let Given { status, headers } = given;
+    let nosniff = response
+        .headers()
+        .get(header::X_CONTENT_TYPE_OPTIONS)
+        .cloned();
+
+    if let Some(written) = WRITTEN.iter().find(|name| headers.contains_key(*name)) {
+        return Err(Error::internal(format!(
+            "a handler's response gives the header `{written}`, which quoll writes from the route's result"
+        )));
+    }
+
+    let mut current: Option<HeaderName> = None;
+
+    for (name, value) in headers {
+        // A name comes with the first of its values alone: the next ones have none.
+        match name {
+            Some(name) => {
+                response.headers_mut().insert(&name, value);
+                current = Some(name);
+            }
+            None => {
+                if let Some(name) = &current {
+                    response.headers_mut().append(name, value);
+                }
+            }
+        }
+    }
+
+    if let Some(nosniff) = nosniff {
+        response
+            .headers_mut()
+            .insert(header::X_CONTENT_TYPE_OPTIONS, nosniff);
+    }
+
+    let Some(status) = status else {
+        return Ok(response);
+    };
+
+    *response.status_mut() = status;
+
+    if matches!(
+        status,
+        StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT | StatusCode::NOT_MODIFIED
+    ) {
+        for written in &WRITTEN {
+            response.headers_mut().remove(written);
+        }
+        *response.body_mut() = Body::empty();
+    }
+
+    Ok(response)
 }
 
 fn json<T: Serialize>(status: StatusCode, value: &T) -> Result<Response> {

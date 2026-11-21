@@ -13,7 +13,7 @@ use crate::rest::{Accepted, ByteStream, Bytes, Created, Events, Form, JsonLines,
 
 pub use crate::rest::stream::Items;
 
-/// The crate's [`Created`]: its location and its value, which the server answers.
+/// The crate's [`Created`], whose `T` the server answers with a 201.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `Created`, which a result named `Created` is read as",
     label = "not `quoll::rest::Created`",
@@ -22,20 +22,13 @@ pub use crate::rest::stream::Items;
 pub trait IsCreated: Sized {
     /// The `T` of `Created<T>`, the body.
     type Value;
-
-    /// The location, sent as `Location` when there is one, and the value.
-    fn into_parts(self) -> (Option<String>, Self::Value);
 }
 
 impl<T> IsCreated for Created<T> {
     type Value = T;
-
-    fn into_parts(self) -> (Option<String>, T) {
-        (self.location, self.value)
-    }
 }
 
-/// The crate's [`Accepted`]: its value, which the server answers.
+/// The crate's [`Accepted`], whose `T` the server answers with a 202.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `Accepted`, which a result named `Accepted` is read as",
     label = "not `quoll::rest::Accepted`",
@@ -44,17 +37,10 @@ impl<T> IsCreated for Created<T> {
 pub trait IsAccepted: Sized {
     /// The `T` of `Accepted<T>`, the body.
     type Value;
-
-    /// The value, the body.
-    fn into_value(self) -> Self::Value;
 }
 
 impl<T> IsAccepted for Accepted<T> {
     type Value = T;
-
-    fn into_value(self) -> T {
-        self.value
-    }
 }
 
 /// The crate's [`Form`], whose `T` is read and written as a form.

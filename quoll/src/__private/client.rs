@@ -5,7 +5,10 @@
 use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
+use std::future::{Future, IntoFuture};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
@@ -20,7 +23,8 @@ use crate::__private::content_type::{
 };
 use crate::__private::known::{IsByteStream, IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
 use crate::__private::read::{Deserialized, Read};
-use crate::rest::{Error, Problem, Result, Route};
+use crate::client::CallTimeout;
+use crate::rest::{self, Error, Problem, Result, Route};
 
 mod redact;
 mod stream;
@@ -138,15 +142,17 @@ impl fmt::Debug for Client {
     }
 }
 
-/// One call of a route: its path, its query, its headers and its body, written from the route's arguments, then sent.
+/// The request of one call of a route: its path, its query, its headers and its body, written from the route's
+/// arguments, then sent.
 #[derive(Debug)]
-pub struct Call<'a> {
+pub struct Request<'a> {
     client: &'a Client,
     route: &'static Route,
     path: String,
     query: Option<String>,
     headers: HeaderMap,
     body: Option<Body>,
+    timeout: Option<Duration>,
 }
 
 /// A body, with its content type.
@@ -156,8 +162,8 @@ struct Body {
     bytes: Vec<u8>,
 }
 
-impl<'a> Call<'a> {
-    /// Starts a call of `route` through `client`.
+impl<'a> Request<'a> {
+    /// Starts a request of `route` through `client`.
     pub fn new(client: &'a Client, route: &'static Route) -> Self {
         Self {
             client,
@@ -166,7 +172,20 @@ impl<'a> Call<'a> {
             query: None,
             headers: HeaderMap::new(),
             body: None,
+            timeout: None,
         }
+    }
+
+    /// The request of `route` through `client`, as `write` writes it from the route's arguments.
+    ///
+    /// # Errors
+    ///
+    /// The error of `write`: an argument it cannot write.
+    pub fn write<F>(client: &'a Client, route: &'static Route, write: F) -> Result<Self>
+    where
+        F: FnOnce(Self) -> Result<Self>,
+    {
+        write(Self::new(client, route))
     }
 
     /// Adds `text` to the path as it is: the api's prefix, `/api`, and what the contract writes between its parameters,
@@ -384,7 +403,30 @@ impl<'a> Call<'a> {
     ///
     /// The answer with its status, its problem and the first 64 KiB of its body, when its status is not a success;
     /// an error with no status when the request got no response or the body of an error could not be read.
-    pub async fn send(self) -> Result<Answer> {
+    async fn send(self) -> Result<Answer> {
+        let route = self.route;
+        let response = self.dispatch().await?;
+
+        if response.status().is_success() {
+            return Ok(Answer { response, route });
+        }
+
+        Err(answered_error(response, route).await?)
+    }
+
+    /// Sends the request, with the route in its extensions, and its deadline when the call has one, and gives the
+    /// answer whatever its status.
+    ///
+    /// The deadline of a call is the request's own, which [`client::retry`](crate::client::retry) and
+    /// [`client::redirects`](crate::client::redirects) copy, and the one [`client::timeout`](crate::client::timeout)
+    /// takes in place of its own. On a stream, it bounds the head of the answer alone: `client::timeout`, which
+    /// [`client::builder`](crate::client::builder) always puts, keeps it for each attempt; a chain without it, built
+    /// otherwise or with no middleware, has it kept here, for the whole call.
+    ///
+    /// # Errors
+    ///
+    /// An error with no status when the request got no response.
+    async fn dispatch(self) -> Result<reqwest::Response> {
         let Self {
             client,
             route,
@@ -392,6 +434,7 @@ impl<'a> Call<'a> {
             query,
             headers,
             body,
+            timeout,
         } = self;
         let Inner { http, base, origin } = &*client.0;
         let mut url = base.clone();
@@ -415,26 +458,116 @@ impl<'a> Call<'a> {
                 .body(bytes);
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|error| no_answer(route, "got no response", error))?;
-        let status = response.status();
-        if status.is_success() {
-            return Ok(Answer { response, route });
-        }
-
-        let is_problem = is_problem(response.headers());
-        let body = read_up_to_limit(response)
-            .await
-            .map_err(|error| no_answer(route, "got an error whose body cannot be read", error))?;
-        let problem = if is_problem {
-            read_problem(&body)
-        } else {
-            None
+        let Some(duration) = timeout else {
+            return request
+                .send()
+                .await
+                .map_err(|error| no_answer(route, "got no response", error));
         };
 
-        Err(Error::upstream(status, problem, body))
+        let deadline = CallTimeout::new(duration);
+
+        request = request.with_extension(deadline.clone());
+
+        if !route.streams {
+            request = request.timeout(duration);
+        }
+
+        let sent = request.send();
+        let answer = if route.streams {
+            deadline.kept_or_bounding(sent).await
+        } else {
+            sent.await
+        };
+
+        answer.map_err(|error| no_answer(route, "got no response", error))
+    }
+}
+
+/// The error of an answer with an error status, or a redirection: its status, its problem and the first 64 KiB of its
+/// body.
+///
+/// # Errors
+///
+/// An error with no status when the body cannot be read.
+async fn answered_error(response: reqwest::Response, route: &Route) -> Result<Error> {
+    let status = response.status();
+    let is_problem = is_problem(response.headers());
+    let body = read_up_to_limit(response)
+        .await
+        .map_err(|error| no_answer(route, "got an error whose body cannot be read", error))?;
+    let problem = if is_problem {
+        read_problem(&body)
+    } else {
+        None
+    };
+
+    Ok(Error::upstream(status, problem, body))
+}
+
+/// A call of a route, described and not sent yet: the request the route's arguments write, or why they could not,
+/// and how its answer is read. It is what each method of a group's client returns, a [`rest::Call`].
+pub struct Pending<'a, T> {
+    request: Result<Request<'a>>,
+    read: fn(Answer) -> Read<T>,
+}
+
+impl<'a, T> Pending<'a, T> {
+    /// The call that sends `request`, once written, and reads its answer with `read`.
+    pub fn new(request: Result<Request<'a>>, read: fn(Answer) -> Read<T>) -> Self {
+        Self { request, read }
+    }
+
+    /// Sends the call, and reads its answer as the route's result when its status is a success.
+    async fn send(self) -> Result<T> {
+        let answer = self.request?.send().await?;
+
+        (self.read)(answer).await
+    }
+}
+
+impl<T> fmt::Debug for Pending<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Pending")
+            .field("request", &self.request)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a, T: Send + 'static> IntoFuture for Pending<'a, T> {
+    type Output = Result<T>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.send())
+    }
+}
+
+impl<T: Send + 'static> rest::Call<T> for Pending<'_, T> {
+    async fn response(self) -> Result<rest::Response<Result<T>>> {
+        let Self { request, read } = self;
+        let request = request?;
+        let route = request.route;
+        let response = request.dispatch().await?;
+        let status = response.status();
+        let version = response.version();
+        let headers = response.headers().clone();
+
+        let body = if status.is_success() {
+            Ok(read(Answer { response, route }).await?)
+        } else {
+            Err(answered_error(response, route).await?)
+        };
+
+        Ok(rest::Response::from_parts(status, version, headers, body))
+    }
+
+    fn timeout(mut self, duration: Duration) -> Self {
+        if let Ok(request) = &mut self.request {
+            request.timeout = Some(duration);
+        }
+
+        self
     }
 }
 
@@ -675,11 +808,13 @@ impl Answer {
     /// # Errors
     ///
     /// None: a success status is all such a route answers.
-    pub async fn none(self) -> Result<()> {
-        // A body past the limit, or one that fails, only costs the connection: the call itself has succeeded.
-        let _ = read_up_to_limit(self.response).await;
+    pub fn none(self) -> Read<()> {
+        Read::new(async move {
+            // A body past the limit, or one that fails, only costs the connection: the call itself has succeeded.
+            let _ = read_up_to_limit(self.response).await;
 
-        Ok(())
+            Ok(())
+        })
     }
 }
 
@@ -770,7 +905,7 @@ mod tests {
     fn segment<T: Serialize + ?Sized>(value: &T) -> Result<String> {
         let client = client("http://localhost").expect("a valid url");
 
-        Call::new(&client, &ROUTE)
+        Request::new(&client, &ROUTE)
             .segment("id", value)
             .map(|call| call.path)
     }
@@ -851,7 +986,7 @@ mod tests {
         }
         let client = client("http://localhost").expect("a valid url");
         let query = |query: &Query| {
-            Call::new(&client, &ROUTE)
+            Request::new(&client, &ROUTE)
                 .query(query)
                 .expect("a query")
                 .query

@@ -1,8 +1,8 @@
 error[E0277]: `App` does not implement `Authenticate<Bearer>`, which a group it serves takes
   --> tests/compile_fail_server/service_without_authenticate.rs:15:53
    |
-15 |     async fn get(&self, _user: &String, id: i64) -> Result<String> {
-   |                                                     ^^^^^^^^^^^^^^ this service authenticates no `Bearer` credential
+15 |     async fn get(&self, _user: &String, id: i64) -> Result<Response<String>> {
+   |                                                     ^^^^^^^^^^^^^^^^^^^^^^^^ this service authenticates no `Bearer` credential
    |
 help: the trait `Authenticate<Bearer>` is not implemented for `App`
   --> tests/compile_fail_server/service_without_authenticate.rs:12:1

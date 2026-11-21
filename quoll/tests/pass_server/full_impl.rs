@@ -1,4 +1,5 @@
-use quoll::rest::{self, Created, Error, Result};
+use http::header::LOCATION;
+use quoll::rest::{self, Created, Error, Response, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -43,34 +44,38 @@ rest::api! {
 struct App;
 
 impl HealthServer for App {
-    async fn check(&self) -> Result<()> {
-        Ok(())
+    async fn check(&self) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 }
 
 impl NotesServer for App {
-    async fn list(&self, _contains: Option<String>, _page: Option<u32>) -> Result<Vec<Note>> {
-        Ok(Vec::new())
+    async fn list(
+        &self,
+        _contains: Option<String>,
+        _page: Option<u32>,
+    ) -> Result<Response<Vec<Note>>> {
+        Ok(Response::new(Vec::new()))
     }
 
-    async fn get(&self, _id: i64) -> Result<Note> {
+    async fn get(&self, _id: i64) -> Result<Response<Note>> {
         Err(Error::not_found("no such note"))
     }
 
-    async fn create(&self, note: NewNote) -> Result<Created<Note>> {
-        Ok(Created::at("/api/notes/1", Note { id: 1, title: note.title }))
+    async fn create(&self, note: NewNote) -> Result<Response<Note>> {
+        Ok(Response::new(Note { id: 1, title: note.title }).header(LOCATION, "/api/notes/1"))
     }
 
-    async fn update(&self, id: i64, note: NewNote) -> Result<Note> {
-        Ok(Note { id, title: note.title })
+    async fn update(&self, id: i64, note: NewNote) -> Result<Response<Note>> {
+        Ok(Response::new(Note { id, title: note.title }))
     }
 
-    async fn remove(&self, _id: i64) -> Result<()> {
-        Ok(())
+    async fn remove(&self, _id: i64) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 
-    async fn options(&self) -> Result<()> {
-        Ok(())
+    async fn options(&self) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 }
 
@@ -80,8 +85,13 @@ struct Admin {
 }
 
 impl AdminToolsServer for Admin {
-    async fn r#match(&self, service: String, query: Option<String>, request: String) -> Result<String> {
-        Ok(format!("{} {service} {query:?} {request}", self.name))
+    async fn r#match(
+        &self,
+        service: String,
+        query: Option<String>,
+        request: String,
+    ) -> Result<Response<String>> {
+        Ok(Response::new(format!("{} {service} {query:?} {request}", self.name)))
     }
 }
 

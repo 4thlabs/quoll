@@ -3,7 +3,7 @@
 
 #![cfg(all(feature = "server", feature = "client"))]
 
-use quoll::rest::{self, Bytes, Form, Result, Text};
+use quoll::rest::{self, Bytes, Form, Response, Result, Text};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_TYPE, HeaderValue};
 use schemars::JsonSchema;
@@ -102,57 +102,68 @@ rest::api! {
 struct App;
 
 impl SearchServer for App {
-    async fn search(&self, filter: NoteFilter) -> Result<NoteFilter> {
-        Ok(filter)
+    async fn search(&self, filter: NoteFilter) -> Result<Response<NoteFilter>> {
+        Ok(Response::new(filter))
     }
 
-    async fn paging(&self, paging: Paging) -> Result<Paging> {
-        Ok(paging)
+    async fn paging(&self, paging: Paging) -> Result<Response<Paging>> {
+        Ok(Response::new(paging))
     }
 }
 
 impl HeadersServer for App {
-    async fn read(&self, page: u32, last: Option<String>, shelf: Option<Shelf>) -> Result<Seen> {
-        Ok(Seen { page, last, shelf })
+    async fn read(
+        &self,
+        page: u32,
+        last: Option<String>,
+        shelf: Option<Shelf>,
+    ) -> Result<Response<Seen>> {
+        Ok(Response::new(Seen { page, last, shelf }))
     }
 }
 
 impl PointsServer for App {
-    async fn point(&self, point: Point) -> Result<String> {
+    async fn point(&self, point: Point) -> Result<Response<String>> {
         unreachable!("a struct is never read from the path: {point:?}")
     }
 }
 
 impl BodiesServer for App {
-    async fn token(&self, login: Form<Login>) -> Result<Login> {
+    async fn token(&self, login: Form<Login>) -> Result<Response<Login>> {
         // A `Form<T>` derefs to its `T`.
         assert!(!login.user.is_empty());
 
-        Ok(login.0)
+        Ok(Response::new(login.0))
     }
 
-    async fn login(&self, login: Login) -> Result<Login> {
-        Ok(login)
+    async fn login(&self, login: Login) -> Result<Response<Login>> {
+        Ok(Response::new(login))
     }
 
-    async fn text(&self, text: Text) -> Result<String> {
-        Ok(text.0)
+    async fn text(&self, text: Text) -> Result<Response<String>> {
+        Ok(Response::new(text.0))
     }
 
-    async fn bytes(&self, file: Bytes) -> Result<Upload> {
-        Ok(Upload {
+    async fn bytes(&self, file: Bytes) -> Result<Response<Upload>> {
+        Ok(Response::new(Upload {
             content_type: file.content_type().to_owned(),
             bytes: file.into_vec(),
-        })
+        }))
     }
 
-    async fn mixed(&self, text: Text, filter: NoteFilter, tag: String, id: i64) -> Result<Mixed> {
-        Ok(Mixed {
+    async fn mixed(
+        &self,
+        text: Text,
+        filter: NoteFilter,
+        tag: String,
+        id: i64,
+    ) -> Result<Response<Mixed>> {
+        Ok(Response::new(Mixed {
             id,
             tag,
             filter,
             text: text.to_string(),
-        })
+        }))
     }
 }
 

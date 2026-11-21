@@ -4,5 +4,5 @@ error[E0050]: method `get` has 2 parameters but the declaration in trait `NotesS
  8 |         GET "/notes/{id}" => get(id: i64) -> String;
    |                              ----------- trait requires 3 parameters
 ...
-25 |     async fn get(&self, id: i64) -> Result<String> {
+25 |     async fn get(&self, id: i64) -> Result<Response<String>> {
    |                  ^^^^^^^^^^^^^^ expected 3 parameters, found 2

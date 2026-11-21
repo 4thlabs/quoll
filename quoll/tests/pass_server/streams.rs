@@ -1,5 +1,5 @@
 use futures_util::stream;
-use quoll::rest::{self, ByteStream, Error, Events, JsonLines, Result};
+use quoll::rest::{self, ByteStream, Error, Events, JsonLines, Response, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -22,21 +22,21 @@ struct App;
 
 // A stream of values, or of results whose error ends it.
 impl FeedsServer for App {
-    async fn events(&self) -> Result<Events<Change>> {
-        Ok(Events::new(stream::iter([Change { id: 1 }])))
+    async fn events(&self) -> Result<Response<Events<Change>>> {
+        Ok(Response::new(Events::new(stream::iter([Change { id: 1 }]))))
     }
 
-    async fn export(&self, limit: Option<i64>) -> Result<JsonLines<Change>> {
+    async fn export(&self, limit: Option<i64>) -> Result<Response<JsonLines<Change>>> {
         let limit = limit.ok_or_else(|| Error::bad_request("a limit is needed"))?;
         let changes = (1..=limit).map(|id| Ok(Change { id }));
 
-        Ok(JsonLines::try_new(stream::iter(changes)))
+        Ok(Response::new(JsonLines::try_new(stream::iter(changes))))
     }
 
-    async fn logs(&self) -> Result<ByteStream> {
+    async fn logs(&self) -> Result<Response<ByteStream>> {
         let chunks = [Ok(b"a line\n".to_vec()), Err(Error::internal("the process died"))];
 
-        Ok(ByteStream::try_new(stream::iter(chunks)).with_content_type("text/plain"))
+        Ok(Response::new(ByteStream::try_new(stream::iter(chunks)).with_content_type("text/plain")))
     }
 }
 

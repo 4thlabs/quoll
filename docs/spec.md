@@ -69,6 +69,10 @@ Decided by the maintainer:
   - an `Events` answer opens with a comment, `: `, and ends cleanly when the server of `server::builder()` is told to stop;
   - what a `JsonLines` or a `ByteStream` says of a stop is open, [#70](https://github.com/4thlabs/quoll/issues/70);
   - each example is a workspace of its own, as an application's is, with the config of `cargo quoll` in its own `Cargo.toml`, the repository's root workspace holding the library's crates alone;
+  - `rest::Response<T>` is the answer of HTTP on both sides, its status, its version, its headers and its body, with nothing declared per route in the contract; the response headers are not in the OpenAPI document;
+  - every handler returns `rest::Result<Response<T>>`, as tonic's do, `Ok(Response::new(note))`, with its headers, `.header(ETAG, tag)`; `Created<T>` and `Accepted<T>` are only written in the contract, to say 201 or 202, a handler of either returning a `Response<T>`, and `Location` is a header as any other, `Created::at` gone;
+  - the status of a response is the contract's unless the handler gives another, a success or a redirection, with `.with_status(Status::CREATED)`, `rest::Status` holding a `2xx` or a `3xx` alone, so that an error's status is refused at compile time and goes through `Err(rest::Error)`; the document describes the contract's status alone;
+  - every route's method on the client returns a `rest::Call<T>`, the call described and not sent yet, an `IntoFuture`: `.await` gives `rest::Result<T>`, `.response()` the whole answer, `rest::Result<Response<rest::Result<T>>>`, its body the route's value on a success and the error of the answer otherwise, a 304 among them, with its status and its headers and no body; its `Err` is only no usable answer; `.timeout(duration)` gives the call a deadline of its own, in place of the client's `client::timeout`, with its meaning; any future of a `rest::Result<T>` is a `Call<T>` too, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or the status of its error, so that a fake returns an `async move` block;
   - `client::retry(times)` keeps its rule, and `.when(|attempt: &Attempt| -> Retry)` is one decision for every other case, a `429` and its `Retry-After`, a `POST` with an `Idempotency-Key`, a `500`: `Retry::No`, `Retry::Backoff` or `Retry::After(duration)`; the `Attempt` gives the contract's `Route`, the request, the answer's status and headers or the error, and its number, `transient()` the rule of `retry(times)` alone and `retry_after()` the answer's `Retry-After`, in seconds or as an HTTP date, capped by `.max_wait(..)`; the middleware is quoll's own on backon's backoff, which no public signature shows, and reqwest-retry leaves the dependencies.
 
 ## Stack and crates
@@ -149,7 +153,7 @@ An argument is matched to the string by its name, not its position. Each one is:
 |---|---|---|
 | nothing (no `->`) | 204 | no body |
 | `T` | 200 | JSON |
-| `Created<T>` | 201 | JSON, with an optional `Location` |
+| `Created<T>` | 201 | JSON |
 | `Accepted<T>` | 202 | JSON |
 | `Text` | 200 | `text/plain` |
 | `Bytes` | 200 | its content type, `application/octet-stream` by default |
@@ -157,7 +161,7 @@ An argument is matched to the string by its name, not its position. Each one is:
 | `JsonLines<T>` | 200 | one JSON value per line |
 | `ByteStream` | 200 | bytes as they come, of its content type, `application/octet-stream` by default |
 
-On the client, a `Created<T>` or `Accepted<T>` route returns the `T`. A `Bytes` result is read whatever its content type, which it keeps; with none, it is `application/octet-stream`. A `Text` result is read from `text/plain` in UTF-8 only. A `JsonLines<T>` result is read from `application/jsonl`, `application/x-ndjson`, `application/x-jsonlines` and `application/json`, which some APIs send their lines as, the Docker Engine API among them, asked for last, `application/json;q=0.5`; the server sends `application/jsonl`.
+The status is the one of this table, unless the handler gives its `Response` another, a success or a redirection (see The server). On the client, a `Created<T>` or `Accepted<T>` route returns the `T`. A `Bytes` result is read whatever its content type, which it keeps; with none, it is `application/octet-stream`. A `Text` result is read from `text/plain` in UTF-8 only. A `JsonLines<T>` result is read from `application/jsonl`, `application/x-ndjson`, `application/x-jsonlines` and `application/json`, which some APIs send their lines as, the Docker Engine API among them, asked for last, `application/json;q=0.5`; the server sends `application/jsonl`.
 
 `Events<T>` and `JsonLines<T>` are one type on both sides: the server builds one from a `Stream` of values, the client gets a `Stream` of `Result<T>`. A failure after the 200 ends an `Events` stream with an `event: problem`, whose data is the problem, which the client reads as that error; the client reads every event that has data, whatever its name. An `Events` answer opens with an empty comment, `: `, sent with its head before the handler's stream gives anything, so that a proxy that holds the head of an answer until its first bytes, as Vite's does, lets it through at once: the client sees the stream open before its first event, and skips the comment as it skips every comment. `JsonLines` and `ByteStream` have no comment to send: such a proxy holds their head until their first line or chunk. A server of `server::builder()` told to stop ends each `Events` stream in flight cleanly, after the event it is sending; a `JsonLines` or a `ByteStream` runs on until the grace has passed, then is cut, which the client reads as an error (see The server).
 
@@ -227,7 +231,7 @@ impl Authenticate<Bearer> for App {
 }
 
 impl NotesServer for App {
-    async fn get(&self, user: &User, id: i64) -> Result<Note> { ... }
+    async fn get(&self, user: &User, id: i64) -> Result<Response<Note>> { ... }
 }
 ```
 
@@ -289,9 +293,9 @@ Nothing is written to disk: the macro runs as rustc compiles the contract, and i
 
 | Item | For | What it is |
 |---|---|---|
-| `trait NotesServer` | server | one method per route, with the caller its authentication gives |
+| `trait NotesServer` | server | one method per route, with the caller its authentication gives, returning a `rest::Response` |
 | `struct __QuollGroupNotes` | both, and neither | hidden: the routes of the group, which the api that lists it reads |
-| `trait Notes` | client | one method per route, implemented by the client and by fakes in tests |
+| `trait Notes` | client | one method per route, returning a `rest::Call`, implemented by the client and by fakes in tests |
 | `struct ApiServices` | server | a field per group: its service |
 | `Api::router` | server | an `axum::Router` from an `ApiServices` |
 | `Api::client`, `Api::client_with` | client | `api.notes()` is a `NotesClient`, implementing `Notes` |
@@ -303,18 +307,21 @@ The generated code stays thin and calls the crate, compiled once. A client metho
 
 ```rust
 impl Notes for NotesClient {
-    fn get(&self, id: i64) -> impl Future<Output = rest::Result<Note>> + Send {
+    fn get(&self, id: i64) -> impl rest::Call<Note> {
         // The macro writes the call: the api's prefix, read at run time, as a group may be listed by two apis, the
-        // path with its segment, then the request sent and its JSON read, through `quoll::__private`.
+        // path with its segment, then the call that sends the request and reads its JSON once awaited, through
+        // `quoll::__private`.
     }
 }
 ```
 
-Each method becomes a function returning `impl Future + Send`, which axum needs; an implementation still writes `async fn`.
+A server trait's method returns `impl Future<Output = rest::Result<rest::Response<Note>>> + Send`, which axum needs; an implementation writes `async fn`. A client trait's returns `impl rest::Call<Note>`: a fake writes `fn get(&self, id: i64) -> impl rest::Call<Note>` and an `async move` block, as an `async fn` there compiles but makes rustc warn `refining_impl_trait`, which `-D warnings` refuses.
 
 ## The server
 
 - A service implements the server trait of its group; one type may implement several.
+- Every handler returns `rest::Result<Response<T>>`, `T` the route's value: `Note` for `-> Note`, `-> Created<Note>` and `-> Accepted<Note>`, `()` for a route with no result, the stream for a stream. `Ok(Response::new(note))` answers the contract's status, `.header(name, value)` adds a header, after those of its name, a `Location` as any other, and `.with_status(Status::..)` gives a success or a redirection in place of the contract's: a `PUT` that answers 201 when it creates and 200 when it replaces, a 304 Not Modified, a 206. `rest::Status` holds a `2xx` or a `3xx` alone, `TryFrom<StatusCode>` refusing the others with an `InvalidStatus`: an error's status is an `Err(rest::Error)`, which answers its problem. A 204, a 205 or a 304 is answered without its body, which the `Response` still holds, and without the headers that describe one.
+- A handler's header replaces one quoll puts of its name, a stream's `Cache-Control`; a name or a value that is not one, and a `Content-Type`, a `Content-Length` or a `Transfer-Encoding`, which quoll writes from the result, answer 500, logged without the value.
 - A service of a group with authentication also implements `Authenticate` for its schemes (see Authentication).
 - `ApiServices` has one field per group: a missing one does not compile.
 - A service is `Send + Sync + 'static`; the router holds it in an `Arc`. Its state is its own fields: there is no axum `State` to thread through.
@@ -329,6 +336,21 @@ Each method becomes a function returning `impl Future + Send`, which axum needs;
 - `Api::client(url)` makes a client with no middleware; `Api::client_with(http, url)` takes a `ClientWithMiddleware`.
 - `client::builder()` builds one with middleware: `.with(middleware)` for quoll's helpers and any `reqwest_middleware::Middleware` (see Middleware), `.http(|http| http.proxy(proxy))` configures reqwest's `ClientBuilder`, and `.build::<Api>(url)` gives the `ApiClient`, through `client::Contract`, which the macro implements on `Api`: its `Client` and its `client_with`. `.build_http()` gives the `ClientWithMiddleware`, for the clients of several contracts. Both return a `rest::Result`, an error when reqwest cannot build its client or the URL is not an api's.
 - `api.notes().get(3)`: a method per route, arguments in the contract's order. Rust has no named arguments: a route with many optional filters takes a query struct with `Default`.
+- Each method returns a `rest::Call<T>`, the call described and not sent yet, which `.await` sends: it gives `rest::Result<T>`, the value, or an error that goes up, an answer with an error status among them. Its methods give the call changed: `.timeout(duration)`, a deadline for this call alone, in place of the client's `client::timeout`, with its meaning, a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; a client of `client::builder()` or of `Api::client` keeps it per attempt whatever its helpers, a chain built otherwise without `client::timeout` for the whole call on a stream.
+- `.response()` sends it and gives the whole answer, `rest::Result<Response<rest::Result<T>>>`, as reqwest's `send()` gives an `Ok` whatever the status: its status, its version, its headers, a rate limit's or a `Retry-After`, and its body, read as the route's value on a success and as the error of the answer otherwise, which holds its status, its problem and its body. A 304 is an answer of its own status and headers with no body, and an error with `.await`. `response.into_value()` gives the value, or that error, to go up with `?`. The `Err` of `.response()` is only no usable answer: a connection, a timeout, an answer with a success status that is not the route's result.
+
+```rust
+let response = api.notes().get(3).timeout(Duration::from_secs(5)).response().await?;
+let remaining = response.headers().get("x-ratelimit-remaining").cloned();
+
+if response.status() == StatusCode::NOT_FOUND {
+    return Ok(None);
+}
+
+Ok(Some(response.into_value()?))
+```
+
+- Any future of a `rest::Result<T>` is a `Call<T>` too: a fake returns an `async move` block, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or an answer of its error's status, an error with none, which got no answer, as it is. Code generic over `impl Notes` calls either.
 - Each request carries a `rest::Route` in its extensions: the operation id, the group, the method, the path as written and the schemes it accepts. Middleware reads it.
 
 ## Middleware
@@ -349,7 +371,7 @@ The builders put quoll's own in the order they work in, whatever the order they 
 | `user_agent(name)` | `User-Agent`, on a request that has none |
 | `request_id()` | a new `X-Request-Id` per call, on a request that has none: added before `retry`, the attempts of a call share it |
 | `retry(times)` | backoff on a failure with no response, 502, 503 or 504; `GET`, `HEAD`, `PUT` and `DELETE` only; `.when(\|attempt\| ..)` decides otherwise, `Retry::No`, `Backoff` or `After(duration)`, from the `client::Attempt`: its `Route`, its request, the answer's status and headers or the error, its number, today's rule as `transient()` and the answer's `Retry-After` as `retry_after()`, capped by `.max_wait(..)` (backon's backoff) |
-| `timeout(duration)` | a deadline per attempt and per hop, to the end of the body; on a route whose result is a stream, for the head of its answer alone, which `retry` tries again |
+| `timeout(duration)` | a deadline per attempt and per hop, to the end of the body; on a route whose result is a stream, for the head of its answer alone, which `retry` tries again; a call's own `.timeout` replaces it |
 | `trace()` | a tracing span per call, named by the operation id (reqwest-tracing) |
 | `redirects(n)` | follows up to `n` redirects, one hop at a time through the middleware after it, on a reqwest client built with `redirect(Policy::none())` |
 
@@ -408,6 +430,7 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 ## Errors
 
 - `rest::Result<T>` is `Result<T, rest::Error>`, one error for the server and the client: its `status()`, the RFC 9457 problem when there is one, the raw body, and `body_as::<T>()` for a third-party API's own error shape.
+- On the client, the headers of an answer with an error status, a `Retry-After` or a rate limit, are read with `.response()`, whose body is then that error; `error.response()`, with a typed body, comes with the api's error type, [#86](https://github.com/4thlabs/quoll/issues/86).
 - The server answers a handler's error with its status and a problem in JSON: `Error::not_found(detail)`, `Error::bad_request(detail)`, `Error::unauthorized(detail)`, `Error::new(status, detail)`, and `Error::internal(err)` for a 500 that logs `err` without sending it.
 - An error a client received from another API answers 502 when a handler returns it, so that the other API's status is not passed on as ours.
 - On the client, a failure with no response (connection, timeout) is an `Error` without a status. Its sources, the errors of quoll's client and middlewares and those of reqwest and reqwest-middleware, show the URL of the call by its origin and its path, never its credentials nor its query, where a query scheme sends its key, and so does a reqwest error given to `Error::internal`; an error the application wraps itself is its own to redact, with `reqwest::Error::without_url`.
@@ -720,7 +743,7 @@ pub fn server() -> server::Builder {
 
 ```rust
 use notes_api::{AuthServer, Key, Login, TokenResponse};
-use quoll::rest::{Authenticate, Bearer, Error, Form, Result};
+use quoll::rest::{Authenticate, Bearer, Error, Form, Response, Result};
 
 use crate::App;
 
@@ -736,7 +759,7 @@ pub struct Operator {
 }
 
 impl AuthServer for App {
-    async fn token(&self, login: Form<Login>) -> Result<TokenResponse> {
+    async fn token(&self, login: Form<Login>) -> Result<Response<TokenResponse>> {
         let user = self
             .store
             .check_password(&login.user, &login.password)
@@ -744,9 +767,9 @@ impl AuthServer for App {
             .map_err(Error::internal)?
             .ok_or_else(|| Error::unauthorized("wrong user or password"))?;
 
-        Ok(TokenResponse {
+        Ok(Response::new(TokenResponse {
             access_token: self.sessions.open(user),
-        })
+        }))
     }
 }
 
@@ -774,13 +797,14 @@ impl Authenticate<Key> for App {
 `server/src/notes.rs`
 
 ```rust
+use axum::http::header::LOCATION;
 use notes_api::{CONTAINS_LIMIT, NewNote, Note, NoteEvent, NoteFilter, NotesServer};
-use quoll::rest::{Created, Error, Events, Result};
+use quoll::rest::{Error, Events, Response, Result};
 
 use crate::{App, User};
 
 impl NotesServer for App {
-    async fn search(&self, user: &User, filter: NoteFilter) -> Result<Vec<Note>> {
+    async fn search(&self, user: &User, filter: NoteFilter) -> Result<Response<Vec<Note>>> {
         // The document says 1000 at most: a caller who skips its check meets the same rule, and a search under the
         // store's lock stays short.
         if filter
@@ -793,39 +817,42 @@ impl NotesServer for App {
             )));
         }
 
-        Ok(self.store.notes(user.id, &filter))
+        Ok(Response::new(self.store.notes(user.id, &filter)))
     }
 
-    async fn get(&self, user: &User, id: i64) -> Result<Note> {
+    async fn get(&self, user: &User, id: i64) -> Result<Response<Note>> {
         self.store
             .note(user.id, id)
+            .map(Response::new)
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
-    async fn create(&self, user: &User, note: NewNote) -> Result<Created<Note>> {
+    async fn create(&self, user: &User, note: NewNote) -> Result<Response<Note>> {
         let note = self.store.add(user.id, note);
+        let location = format!("/api/notes/{}", note.id);
 
-        Ok(Created::at(format!("/api/notes/{}", note.id), note))
+        Ok(Response::new(note).header(LOCATION, location))
     }
 
-    async fn update(&self, user: &User, id: i64, note: NewNote) -> Result<Note> {
+    async fn update(&self, user: &User, id: i64, note: NewNote) -> Result<Response<Note>> {
         self.store
             .replace(user.id, id, note)
+            .map(Response::new)
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
-    async fn remove(&self, user: &User, id: i64) -> Result<()> {
+    async fn remove(&self, user: &User, id: i64) -> Result<Response<()>> {
         self.store.remove(user.id, id);
-        Ok(())
+        Ok(Response::new(()))
     }
 
-    async fn events(&self, user: &User, id: i64) -> Result<Events<NoteEvent>> {
+    async fn events(&self, user: &User, id: i64) -> Result<Response<Events<NoteEvent>>> {
         let changes = self
             .store
             .watch(user.id, id)
             .ok_or_else(|| Error::not_found("no such note"))?;
 
-        Ok(Events::new(changes))
+        Ok(Response::new(Events::new(changes)))
     }
 }
 ```
@@ -834,13 +861,13 @@ impl NotesServer for App {
 
 ```rust
 use notes_api::{AdminServer, Stats};
-use quoll::rest::Result;
+use quoll::rest::{Response, Result};
 
 use crate::{App, Operator};
 
 impl AdminServer for App {
-    async fn stats(&self, _operator: &Operator) -> Result<Stats> {
-        Ok(self.store.stats())
+    async fn stats(&self, _operator: &Operator) -> Result<Response<Stats>> {
+        Ok(Response::new(self.store.stats()))
     }
 }
 ```

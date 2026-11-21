@@ -1,18 +1,21 @@
 //! The helpers that change each request before it leaves: a closure of the application's, `User-Agent`,
 //! `X-Request-Id` and a deadline.
 
+use std::future::Future;
+use std::pin::pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use futures_util::future::{Either, select};
 use http::header::USER_AGENT;
 use http::{HeaderName, HeaderValue};
-use reqwest::Request;
+use reqwest::{Request, Response};
 use reqwest_middleware::Middleware;
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use super::{Failure, Rank, helper, own_route};
+use super::{Failure, Helper, Rank, helper, own_route};
 use crate::rest::Route;
 
 /// The header of [`request_id`].
@@ -137,6 +140,9 @@ pub fn request_id() -> impl Middleware {
 /// hop of `redirects`; it is an error with no status that `retry` tries again. A request that did not come from the
 /// client of a contract has a deadline, its body included.
 ///
+/// A call given a deadline of its own, with [`rest::Call::timeout`](crate::rest::Call::timeout), has it in place of
+/// `duration`.
+///
 /// ```no_run
 /// # use std::time::Duration;
 /// # use quoll::{client, rest};
@@ -147,7 +153,23 @@ pub fn request_id() -> impl Middleware {
 /// # Ok::<(), quoll::rest::Error>(())
 /// ```
 pub fn timeout(duration: Duration) -> impl Middleware {
+    deadline(Some(duration))
+}
+
+/// The deadline of the calls given one of their own alone, which [`Builder`](super::Builder) puts when it is given no
+/// [`timeout`]: a call's deadline is so kept for each attempt and each hop.
+pub(crate) fn calls_timeout() -> Helper {
+    deadline(None)
+}
+
+/// [`timeout`] with `default`, the deadline of a call that gives none of its own; with none, such a call has none.
+fn deadline(default: Option<Duration>) -> Helper {
     helper(Rank::Timeout, move |mut request, extensions, next| {
+        let call = extensions.get::<CallTimeout>().map(CallTimeout::keep);
+        let Some(duration) = call.or(default) else {
+            return next.run(request, extensions);
+        };
+
         if !extensions.get::<Route>().is_some_and(|route| route.streams) {
             *request.timeout_mut() = Some(duration);
 
@@ -170,6 +192,46 @@ pub fn timeout(duration: Duration) -> impl Middleware {
             answered
         })
     })
+}
+
+/// The deadline a call gives itself with [`rest::Call::timeout`](crate::rest::Call::timeout), in its request's
+/// extensions, which [`timeout`] takes in place of its own and marks kept. Its clones share the mark.
+#[derive(Debug, Clone)]
+pub(crate) struct CallTimeout {
+    duration: Duration,
+    kept: Arc<AtomicBool>,
+}
+
+impl CallTimeout {
+    pub(crate) fn new(duration: Duration) -> Self {
+        Self {
+            duration,
+            kept: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// The deadline, which [`timeout`] keeps from now on.
+    fn keep(&self) -> Duration {
+        self.kept.store(true, Ordering::Relaxed);
+        self.duration
+    }
+
+    /// The answer `sent` gives, the head of a stream's, unless the deadline passes before it, in a chain where no
+    /// [`timeout`] has kept it: a client whose middleware were not built by [`Builder`](super::Builder), bounded so
+    /// for the whole call rather than for each attempt.
+    pub(crate) async fn kept_or_bounding(
+        &self,
+        sent: impl Future<Output = reqwest_middleware::Result<Response>>,
+    ) -> reqwest_middleware::Result<Response> {
+        let sent = pin!(sent);
+        let passed = pin!(tokio::time::sleep(self.duration));
+
+        match select(sent, passed).await {
+            Either::Left((answered, _)) => answered,
+            Either::Right(((), sent)) if self.kept.load(Ordering::Relaxed) => sent.await,
+            Either::Right(_) => Err(reqwest_middleware::Error::middleware(HeadTimedOut)),
+        }
+    }
 }
 
 /// The deadline of the head of a stream's answer, which [`timeout`] puts in the request's extensions, and which
@@ -215,7 +277,7 @@ impl HeadDeadline {
 /// The head of a stream's answer that did not come by the deadline of [`timeout`], which [`retry`](super::retry)
 /// tries again.
 #[derive(Debug)]
-pub(super) struct HeadTimedOut;
+pub(crate) struct HeadTimedOut;
 
 impl std::fmt::Display for HeadTimedOut {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

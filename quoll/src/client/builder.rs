@@ -9,7 +9,7 @@ use reqwest::redirect::Policy;
 use reqwest_middleware::{ClientWithMiddleware, Middleware};
 use sync_wrapper::SyncWrapper;
 
-use super::{Helper, Rank, Retrying, redirects};
+use super::{Helper, Rank, Retrying, calls_timeout, redirects};
 use crate::order::arrange;
 use crate::rest::{Error, Result};
 
@@ -158,7 +158,7 @@ impl Builder {
     /// # Errors
     ///
     /// When reqwest cannot build its client, as when its TLS cannot be set up.
-    pub fn build_http(mut self) -> Result<ClientWithMiddleware> {
+    pub fn build_http(self) -> Result<ClientWithMiddleware> {
         let given = |wanted: Rank| {
             self.middleware
                 .iter()
@@ -166,10 +166,22 @@ impl Builder {
         };
         let follows = given(Rank::Redirects);
         let credentials = given(Rank::Credential);
+        let bounded = given(Rank::Timeout);
+
+        let ranked = self
+            .middleware
+            .into_iter()
+            .map(|(rank, middleware)| (rank, (rank, middleware)))
+            .collect();
+        let mut chain = arrange(ranked);
 
         if credentials && !follows {
-            self.middleware
-                .push((Some(Rank::Redirects), Arc::new(redirects(REDIRECTS))));
+            added(&mut chain, Rank::Redirects, Arc::new(redirects(REDIRECTS)));
+        }
+
+        // The deadline a call gives itself, kept for each attempt and each hop.
+        if !bounded {
+            added(&mut chain, Rank::Timeout, Arc::new(calls_timeout()));
         }
 
         let mut http = reqwest::Client::builder();
@@ -185,9 +197,9 @@ impl Builder {
         let http = http.build().map_err(|error| {
             Error::misuse("the http client cannot be built", Some(Box::new(error)))
         })?;
-        let built = arrange(self.middleware).into_iter().fold(
+        let built = chain.into_iter().fold(
             reqwest_middleware::ClientBuilder::new(http),
-            |built, middleware| built.with_arc(middleware),
+            |built, (_, middleware)| built.with_arc(middleware),
         );
 
         Ok(built.build())
@@ -195,6 +207,22 @@ impl Builder {
 }
 
 /// Shows how many middleware and settings it holds, which have no `Debug` of their own.
+/// A middleware in its place in the chain, with its rank when it is a helper of quoll's.
+type Placed = (Option<Rank>, Arc<dyn Middleware>);
+
+/// Puts `middleware`, a helper the builder adds of its own, of `rank`, into `chain`, arranged already: before the first
+/// helper ranked after it, else after the last helper, else at the end. Added before the chain is arranged, it would
+/// take a place of its own, and move the helpers given after a middleware of the application's before it.
+fn added(chain: &mut Vec<Placed>, rank: Rank, middleware: Arc<dyn Middleware>) {
+    let after = chain
+        .iter()
+        .position(|(placed, _)| placed.is_some_and(|placed| placed > rank));
+    let last = chain.iter().rposition(|(placed, _)| placed.is_some());
+    let at = after.or(last.map(|last| last + 1)).unwrap_or(chain.len());
+
+    chain.insert(at, (Some(rank), middleware));
+}
+
 impl fmt::Debug for Builder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Builder")

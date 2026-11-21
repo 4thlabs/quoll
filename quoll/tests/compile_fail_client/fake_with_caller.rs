@@ -1,4 +1,4 @@
-use quoll::rest::{self, Result};
+use quoll::rest::{self, Call};
 
 rest::api! {
     pub api Api = "/api";
@@ -14,8 +14,10 @@ struct Fake;
 
 // The client's trait has no caller: its middleware sends the credential.
 impl Notes for Fake {
-    async fn get(&self, _user: &User, id: i64) -> Result<String> {
-        Ok(id.to_string())
+    fn get(&self, _user: &User, id: i64) -> impl Call<String> {
+        async move {
+            Ok(id.to_string())
+        }
     }
 }
 

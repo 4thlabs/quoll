@@ -6,7 +6,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use quoll::rest::{Authenticate, Created, Error, Form, Result, Route};
+use http::header::LOCATION;
+use quoll::rest::{Authenticate, Error, Form, Response, Result, Route};
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use schemars::JsonSchema;
@@ -155,38 +156,39 @@ impl App {
 macro_rules! serve {
     ($auth:ident, $notes:ident, $health:ident, $key:path) => {
         impl $auth for App {
-            async fn token(&self, login: Form<Login>) -> Result<String> {
-                Ok(format!("token of {}", login.user))
+            async fn token(&self, login: Form<Login>) -> Result<Response<String>> {
+                Ok(Response::new(format!("token of {}", login.user)))
             }
         }
 
         impl $notes for App {
-            async fn get(&self, _operator: &String, id: i64) -> Result<Note> {
-                App::note(id)
+            async fn get(&self, _operator: &String, id: i64) -> Result<Response<Note>> {
+                App::note(id).map(Response::new)
             }
 
-            async fn create(&self, _operator: &String, note: NewNote) -> Result<Created<Note>> {
-                Ok(Created::at(
-                    "/api/notes/2",
-                    Note {
-                        id: 2,
-                        title: note.title,
-                    },
-                ))
+            async fn create(&self, _operator: &String, note: NewNote) -> Result<Response<Note>> {
+                let note = Note {
+                    id: 2,
+                    title: note.title,
+                };
+
+                Ok(Response::new(note).header(LOCATION, "/api/notes/2"))
             }
 
-            async fn search(&self, q: Option<String>) -> Result<Vec<Note>> {
-                Ok(q.map(|_| App::note(1)).transpose()?.into_iter().collect())
+            async fn search(&self, q: Option<String>) -> Result<Response<Vec<Note>>> {
+                let notes = q.map(|_| App::note(1)).transpose()?.into_iter().collect();
+
+                Ok(Response::new(notes))
             }
 
-            async fn remove(&self, _operator: &String, id: i64) -> Result<()> {
-                App::note(id).map(|_| ())
+            async fn remove(&self, _operator: &String, id: i64) -> Result<Response<()>> {
+                App::note(id).map(|_| Response::new(()))
             }
         }
 
         impl $health for App {
-            async fn root(&self) -> Result<String> {
-                Ok("up".into())
+            async fn root(&self) -> Result<Response<String>> {
+                Ok(Response::new("up".into()))
             }
         }
 

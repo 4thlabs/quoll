@@ -4,14 +4,16 @@
 #![cfg(all(feature = "server", feature = "client"))]
 
 use std::cell::Cell;
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::extract::Request;
 use axum::middleware::{Next, from_fn};
 use axum::response::IntoResponse;
-use quoll::rest::{self, Error, JsonLines, Result};
+use quoll::rest::{self, Error, JsonLines, Response, Result};
 use quoll::{client, server};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_TYPE, HeaderValue, LOCATION};
@@ -57,7 +59,7 @@ struct App {
 }
 
 impl CallsServer for App {
-    async fn flaky(&self, id: Option<String>) -> Result<String> {
+    async fn flaky(&self, id: Option<String>) -> Result<Response<String>> {
         let mut ids = self.ids.lock().expect("no test panics with the lock");
 
         ids.push(id.unwrap_or_default());
@@ -66,32 +68,34 @@ impl CallsServer for App {
             return Err(Error::new(StatusCode::SERVICE_UNAVAILABLE, "not yet"));
         }
 
-        Ok("served".into())
+        Ok(Response::new("served".into()))
     }
 
-    async fn slow(&self) -> Result<String> {
+    async fn slow(&self) -> Result<Response<String>> {
         std::future::pending().await
     }
 
-    async fn held(&self) -> Result<String> {
+    async fn held(&self) -> Result<Response<String>> {
         self.entered.notify_one();
         self.release.notified().await;
 
-        Ok("released".into())
+        Ok(Response::new("released".into()))
     }
 
-    async fn endless(&self) -> Result<JsonLines<u32>> {
-        Ok(JsonLines::new(futures_util::stream::pending()))
+    async fn endless(&self) -> Result<Response<JsonLines<u32>>> {
+        Ok(Response::new(JsonLines::new(
+            futures_util::stream::pending(),
+        )))
     }
 
-    async fn away(&self) -> Result<String> {
+    async fn away(&self) -> Result<Response<String>> {
         Err(Error::not_found(
             "the redirects are served by another router",
         ))
     }
 
-    async fn text(&self, _text: rest::Text) -> Result<()> {
-        Ok(())
+    async fn text(&self, _text: rest::Text) -> Result<Response<()>> {
+        Ok(Response::new(()))
     }
 }
 
@@ -216,6 +220,58 @@ async fn a_credential_given_before_redirects_is_not_sent_to_another_origin() -> 
         .build::<Api>(&url)?;
 
     assert_eq!(api.calls().away().await?, "clean");
+    Ok(())
+}
+
+/// A middleware of the application's that keeps, for each request it sees, whether it carries the signature of
+/// [`sign`].
+fn saw_signature(signed: Arc<Mutex<Vec<bool>>>) -> impl reqwest_middleware::Middleware {
+    middleware(move |request, extensions, next| {
+        signed
+            .lock()
+            .expect("no test panics with the lock")
+            .push(request.headers().contains_key("x-signature"));
+
+        next.run(request, extensions)
+    })
+}
+
+/// What a middleware's call returns.
+type Handled<'a> =
+    Pin<Box<dyn Future<Output = reqwest_middleware::Result<reqwest::Response>> + Send + 'a>>;
+
+/// Gives a closure the signature reqwest-middleware takes, for every lifetime of its request.
+fn middleware<F>(handle: F) -> F
+where
+    F: for<'a> Fn(
+            reqwest::Request,
+            &'a mut http::Extensions,
+            reqwest_middleware::Next<'a>,
+        ) -> Handled<'a>
+        + Send
+        + Sync
+        + 'static,
+{
+    handle
+}
+
+#[tokio::test]
+async fn a_middleware_given_after_a_credential_comes_after_it_with_what_the_builder_adds()
+-> Result<()> {
+    let url = quoll::test::spawn(router(&App::default())).await;
+    let signed = Arc::new(Mutex::new(Vec::new()));
+    // Given a credential and neither `redirects` nor `timeout`, the builder adds both of its own.
+    let api = client::builder()
+        .with(sign())
+        .with(saw_signature(Arc::clone(&signed)))
+        .build::<Api>(&url)?;
+
+    api.calls().text("milk".to_owned().into()).await?;
+
+    assert_eq!(
+        *signed.lock().expect("no test panics with the lock"),
+        [true]
+    );
     Ok(())
 }
 

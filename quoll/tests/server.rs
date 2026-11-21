@@ -4,7 +4,8 @@
 
 use std::sync::Mutex;
 
-use quoll::rest::{self, Created, Error, Result};
+use http::header::LOCATION;
+use quoll::rest::{self, Created, Error, Response, Result};
 use reqwest::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -89,29 +90,33 @@ impl App {
 }
 
 impl NotesServer for App {
-    async fn get(&self, id: i64) -> Result<Note> {
+    async fn get(&self, id: i64) -> Result<Response<Note>> {
         self.notes()
             .iter()
             .find(|note| note.id == id)
             .cloned()
+            .map(Response::new)
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
-    async fn title(&self, note: i64) -> Result<String> {
-        self.get(note).await.map(|note| note.title)
+    async fn title(&self, note: i64) -> Result<Response<String>> {
+        self.get(note)
+            .await
+            .map(|note| Response::new(note.into_body().title))
     }
 
-    async fn create(&self, note: NewNote) -> Result<Created<Note>> {
+    async fn create(&self, note: NewNote) -> Result<Response<Note>> {
         let note = self.add(note);
+        let location = format!("/api/notes/{}", note.id);
 
-        Ok(Created::at(format!("/api/notes/{}", note.id), note))
+        Ok(Response::new(note).header(LOCATION, location))
     }
 
-    async fn draft(&self, note: NewNote) -> Result<Created<Note>> {
-        Ok(Created::new(self.add(note)))
+    async fn draft(&self, note: NewNote) -> Result<Response<Note>> {
+        Ok(Response::new(self.add(note)))
     }
 
-    async fn update(&self, id: i64, note: NewNote) -> Result<Note> {
+    async fn update(&self, id: i64, note: NewNote) -> Result<Response<Note>> {
         let mut notes = self.notes();
         let found = notes
             .iter_mut()
@@ -119,10 +124,10 @@ impl NotesServer for App {
             .ok_or_else(|| Error::not_found("no such note"))?;
         found.title = note.title;
 
-        Ok(found.clone())
+        Ok(Response::new(found.clone()))
     }
 
-    async fn remove(&self, id: i64) -> Result<()> {
+    async fn remove(&self, id: i64) -> Result<Response<()>> {
         let mut notes = self.notes();
         let before = notes.len();
         notes.retain(|note| note.id != id);
@@ -130,7 +135,7 @@ impl NotesServer for App {
         if notes.len() == before {
             return Err(Error::not_found("no such note"));
         }
-        Ok(())
+        Ok(Response::new(()))
     }
 }
 
@@ -144,29 +149,29 @@ impl SearchServer for Searcher {
         shelf: Shelf,
         page: u32,
         tags: Vec<String>,
-    ) -> Result<Found> {
-        Ok(Found {
+    ) -> Result<Response<Found>> {
+        Ok(Response::new(Found {
             shelf,
             name,
             contains,
             page,
             tags,
-        })
+        }))
     }
 }
 
 struct Healthy;
 
 impl HealthServer for Healthy {
-    async fn root(&self) -> Result<String> {
-        Ok("up".into())
+    async fn root(&self) -> Result<Response<String>> {
+        Ok(Response::new("up".into()))
     }
 }
 
 struct Failing;
 
 impl FailuresServer for Failing {
-    async fn fail(&self, kind: String) -> Result<()> {
+    async fn fail(&self, kind: String) -> Result<Response<()>> {
         match kind.as_str() {
             "bad_request" => Err(Error::bad_request("the request is wrong")),
             "unauthorized" => Err(Error::unauthorized("who are you")),

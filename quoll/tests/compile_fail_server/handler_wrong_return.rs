@@ -1,4 +1,4 @@
-use quoll::rest::{self, Result};
+use quoll::rest::{self, Response, Result};
 
 rest::api! {
     pub api Api = "/api";
@@ -12,8 +12,8 @@ struct App;
 
 // The handler returns another type than the route's result.
 impl NotesServer for App {
-    async fn get(&self, id: i64) -> Result<i64> {
-        Ok(id)
+    async fn get(&self, id: i64) -> Result<Response<i64>> {
+        Ok(Response::new(id))
     }
 }
 

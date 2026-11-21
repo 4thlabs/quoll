@@ -9,7 +9,7 @@ takes a fake as well. A snapshot of the OpenAPI document catches a change to the
 test's tokio runtime: `#[tokio::test]` gives each test its own, which stops the server when the test returns.
 
 ```rust,test_harness
-use quoll::rest::{self, Error, Result};
+use quoll::rest::{self, Error, Response, Result};
 use quoll::{client, test};
 
 rest::api! {
@@ -23,9 +23,9 @@ rest::api! {
 struct App;
 
 impl NotesServer for App {
-    async fn get(&self, id: i64) -> Result<String> {
+    async fn get(&self, id: i64) -> Result<Response<String>> {
         match id {
-            1 => Ok("Milk".into()),
+            1 => Ok(Response::new("Milk".into())),
             _ => Err(Error::not_found("no such note")),
         }
     }
@@ -75,7 +75,7 @@ application that builds its server in a function serves the same in its tests:
 ```rust,test_harness
 use std::time::Duration;
 
-use quoll::rest::{self, Result};
+use quoll::rest::{self, Response, Result};
 use quoll::{client, server, test};
 
 rest::api! {
@@ -89,8 +89,8 @@ rest::api! {
 struct App;
 
 impl HealthServer for App {
-    async fn health(&self) -> Result<String> {
-        Ok("ok".into())
+    async fn health(&self) -> Result<Response<String>> {
+        Ok(Response::new("ok".into()))
     }
 }
 
@@ -121,7 +121,7 @@ a fake in its tests, with no server:
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use quoll::rest::{self, Created, Error, Result};
+use quoll::rest::{self, Call, Created, Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -163,25 +163,29 @@ struct Fake {
 }
 
 impl Notes for Fake {
-    async fn get(&self, id: i64) -> Result<Note> {
-        let notes = self.notes.lock().expect("no test panics while holding the lock");
+    fn get(&self, id: i64) -> impl Call<Note> {
+        async move {
+            let notes = self.notes.lock().expect("no test panics while holding the lock");
 
-        notes
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| Error::not_found("no such note"))
+            notes
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| Error::not_found("no such note"))
+        }
     }
 
-    async fn create(&self, note: NewNote) -> Result<Note> {
-        let mut notes = self.notes.lock().expect("no test panics while holding the lock");
-        let id = notes.len() as i64 + 1;
-        let note = Note {
-            id,
-            title: note.title,
-        };
+    fn create(&self, note: NewNote) -> impl Call<Note> {
+        async move {
+            let mut notes = self.notes.lock().expect("no test panics while holding the lock");
+            let id = notes.len() as i64 + 1;
+            let note = Note {
+                id,
+                title: note.title,
+            };
 
-        notes.insert(id, note.clone());
-        Ok(note)
+            notes.insert(id, note.clone());
+            Ok(note)
+        }
     }
 }
 
@@ -201,8 +205,8 @@ async fn a_copy_has_the_title_of_its_note() -> Result<()> {
 }
 ```
 
-A fake's methods have the client's signatures: no caller, and the `T` of a `Created<T>`. A route left out, or a
-method of the wrong signature, does not compile.
+A fake's methods have the client's signatures: no caller, the `T` of a `Created<T>`, and an `impl Call<T>`, which
+an `async move` block is. A route left out, or a method of the wrong signature, does not compile.
 
 ## The OpenAPI snapshot
 
