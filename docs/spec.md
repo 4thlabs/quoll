@@ -96,7 +96,7 @@ An argument is matched to the string by its name, not its position. Each one is:
 
 On the client, a `Created<T>` or `Accepted<T>` route returns the `T`. A `Bytes` result is read whatever its content type, which it keeps; with none, it is `application/octet-stream`. A `Text` result is read from `text/plain` in UTF-8 only. A `JsonLines<T>` result is read from `application/jsonl`, `application/x-ndjson`, `application/x-jsonlines` and `application/json`, which some APIs send their lines as, the Docker Engine API among them, asked for last, `application/json;q=0.5`; the server sends `application/jsonl`.
 
-`Events<T>` and `JsonLines<T>` are one type on both sides: the server builds one from a `Stream` of values, the client gets a `Stream` of `Result<T>`. A failure after the 200 ends an `Events` stream with an `event: problem`, whose data is the problem, which the client reads as that error; the client reads every event that has data, whatever its name.
+`Events<T>` and `JsonLines<T>` are one type on both sides: the server builds one from a `Stream` of values, the client gets a `Stream` of `Result<T>`. A failure after the 200 ends an `Events` stream with an `event: problem`, whose data is the problem, which the client reads as that error; the client reads every event that has data, whatever its name. An `Events` answer opens with an empty comment, `: `, sent with its head before the handler's stream gives anything, so that a proxy that holds the head of an answer until its first bytes, as Vite's does, lets it through at once: the client sees the stream open before its first event, and skips the comment as it skips every comment. `JsonLines` and `ByteStream` have no comment to send: such a proxy holds their head until their first line or chunk. A server of `server::builder()` told to stop ends each stream in flight cleanly, after the event, the line or the chunk it is sending (see The server).
 
 `ByteStream` is one type on both sides too, for bytes that are not JSON and come as they are made, a process's output or a live feed: the server builds one from a `Stream` of chunks, `Vec<u8>`, with `new` or `try_new`, of its content type, `with_content_type`, sent with `nosniff` as `Bytes` are; the client asks for `*/*`, reads an answer of any content type, which `content_type()` gives, and gets a `Stream` of `Result<Vec<u8>>`, the chunks as they come. It is a stream as the others are: `timeout` bounds its head alone, which `retry` tries again, `compression()` leaves it out, dropping the client's stream closes the connection, and a failure after the 200 cuts the body short, as JSON Lines have it.
 
@@ -255,7 +255,8 @@ Each method becomes a function returning `impl Future + Send`, which axum needs;
 - `ApiServices` has one field per group: a missing one does not compile.
 - A service is `Send + Sync + 'static`; the router holds it in an `Arc`. Its state is its own fields: there is no axum `State` to thread through.
 - `server::builder()` serves the router: `.with(layer)` for quoll's layers and any tower layer (see Middleware), `.serve("0.0.0.0:8080", router)` binds an address, a `&str` or a `String` whose host is looked up without blocking, or a `SocketAddr`, and serves, `.serve_on(listener, router)` serves a listener bound already, a `TcpListener` on port 0 or a `UnixListener`. Each returns an `std::io::Result<()>`, an error when the address cannot be bound or the signals cannot be listened to.
-- It serves until Ctrl-C, or `SIGTERM` on Unix, which `docker stop` and Kubernetes send, or the future given to `.shutdown(signal)`, `std::future::pending()` for never. Told to stop, it accepts no more connections and returns once the requests it serves have ended, or after its grace, 5 s, `.grace(duration)`, or at a second Ctrl-C or `SIGTERM`: a stream may never end. Then it logs at `WARN` that connections were left open, and returns `Ok` all the same: they end with the runtime, as `main` returns, and their handlers may run until then. Ctrl-C and `SIGTERM` stay tokio's once it has returned, their default action not given back.
+- It serves until Ctrl-C, or `SIGTERM` on Unix, which `docker stop` and Kubernetes send, or the future given to `.shutdown(signal)`, `std::future::pending()` for never. Told to stop, it accepts no more connections and returns once the requests it serves have ended, or after its grace, 5 s, `.grace(duration)`, or at a second Ctrl-C or `SIGTERM`. Then it logs at `WARN` that connections were left open, and returns `Ok` all the same: they end with the runtime, as `main` returns, and their handlers may run until then. Ctrl-C and `SIGTERM` stay tokio's once it has returned, their default action not given back.
+- Told to stop, it ends the streams in flight at once, before the grace runs: each `Events`, `JsonLines` and `ByteStream` answer ends after the event, the line or the chunk it is sending, as when the handler's stream ends, so that the client, and any proxy between, reads a clean end rather than a connection cut. An `Events` stream ends with nothing more, no `event: problem`: a stop is no failure, and the client reads it as it reads any end, which `EventSource` follows by connecting again. A stream that opens once the server is told to stop ends at once. The grace is left for the handlers still answering, and for a body that never ends of a route that is not a contract's. A router served otherwise, by `axum::serve` or `quoll::test::spawn`, leaves its streams to run until their connection closes.
 - `.into_router(router)` gives the router with its layers, for an application that serves it itself, or `quoll::test::spawn`.
 
 ## The client
@@ -408,7 +409,7 @@ build = ["npm", "run", "build"]       # run by `cargo quoll build`, after `gen`
 
 The JavaScript side follows conventions, with no plugin of quoll for now:
 
-- **The proxy** is the bundler's own, to the server's `url`: Vite's `server.proxy`, Next.js's `rewrites`. The page calls the api on its own origin, `/api/...`.
+- **The proxy** is the bundler's own, to the server's `url`: Vite's `server.proxy`, Next.js's `rewrites`, with no other configuration. The page calls the api on its own origin, `/api/...`. Vite's proxy holds the head of an answer until its first bytes, which the comment that opens an `Events` answer lets through at once; a `JsonLines` or a `ByteStream` is seen to open with its first line or chunk. A server restarted by `cargo quoll dev`, which sends it `SIGTERM`, ends its streams cleanly, which the proxy passes on: the page sees its stream end, and may follow it again once the new server is ready.
 - **The generator** keeps its own config, which reads the `output` the api writes, `input: "./openapi.json"` for orval, and `after` runs it. Any generator works, the one the project's command names.
 - **A reload** is the bundler's own: its watcher sees the TypeScript the generator rewrites. A cargo error shows in the terminal of `cargo quoll dev`, not in the bundler's overlay.
 
@@ -938,24 +939,7 @@ export default defineConfig({
   server: {
     proxy: {
       // The server's `url` in the workspace's Cargo.toml, `[[workspace.metadata.quoll.server]]`: the two change together.
-      "/api": {
-        target: "http://127.0.0.1:8080",
-        // Vite's proxy holds the head of a stream until its first event, and keeps the stream open once the server
-        // drops it, as it stops: the page would see it neither start nor end.
-        configure: (proxy) => {
-          proxy.on("proxyRes", (upstream, _request, response) => {
-            if (upstream.headers["content-type"]?.startsWith("text/event-stream")) {
-              queueMicrotask(() => response.flushHeaders()); // once the proxy has written the head
-            }
-
-            upstream.on("close", () => {
-              if (!upstream.complete) {
-                response.destroy();
-              }
-            });
-          });
-        },
-      },
+      "/api": "http://127.0.0.1:8080",
     },
   },
 });

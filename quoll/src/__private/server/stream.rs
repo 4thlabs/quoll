@@ -2,6 +2,7 @@
 //! bytes, each chunk sent as it comes.
 
 use std::error::Error as StdError;
+use std::future;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -11,6 +12,7 @@ use futures_core::Stream;
 use futures_util::{StreamExt, stream};
 use http::{HeaderName, HeaderValue, header};
 use serde::Serialize;
+use tokio::sync::watch;
 
 use super::problem_json;
 use crate::__private::content_type::{JSON_LINES, media_type_value};
@@ -46,9 +48,12 @@ impl<T: Serialize + 'static> Written for JsonLines<T> {
     }
 }
 
-/// A 200 with server-sent events, `text/event-stream`: each value of the handler's stream as the JSON `data` of an
-/// event, and a comment when 15 seconds pass with none. Nothing in between holds them back: axum's `Sse` sends
-/// `Cache-Control: no-cache`, and `X-Accel-Buffering: no` tells a proxy as much.
+/// A 200 with server-sent events, `text/event-stream`: an empty comment first, then each value of the handler's stream
+/// as the JSON `data` of an event, and a comment when 15 seconds pass with none. Nothing in between holds them back:
+/// axum's `Sse` sends `Cache-Control: no-cache`, and `X-Accel-Buffering: no` tells a proxy as much.
+///
+/// The comment goes out with the head, before the handler's stream is asked for a value: a proxy that holds the head of
+/// an answer until its first bytes, as Vite's does, sends it at once, and the client sees the stream open.
 ///
 /// An item that fails once the 200 is sent is logged, and ends the events with a last one, `event: problem`, whose
 /// `data` is the RFC 9457 problem the error would answer: the client reads it as that error. Every event before it
@@ -72,10 +77,13 @@ pub fn events<E: IsEvents + Written>(result: Result<E>) -> Result<Response> {
 
         Failed::Last(Event::default().event("problem").data(problem))
     });
+    let opening = stream::once(future::ready(Ok(Event::default().comment(""))));
     let keep_alive = KeepAlive::new().interval(KEEP_ALIVE);
 
-    Ok(unbuffered(
-        Sse::new(events).keep_alive(keep_alive).into_response(),
+    Ok(streamed(
+        Sse::new(opening.chain(events))
+            .keep_alive(keep_alive)
+            .into_response(),
     ))
 }
 
@@ -106,7 +114,7 @@ pub fn json_lines<L: IsJsonLines + Written>(result: Result<L>) -> Result<Respons
         (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
     ];
 
-    Ok(unbuffered(
+    Ok(streamed(
         (headers, Body::from_stream(lines)).into_response(),
     ))
 }
@@ -141,20 +149,49 @@ pub fn byte_stream<B: IsByteStream>(result: Result<B>) -> Result<Response> {
         (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
     ];
 
-    Ok(unbuffered(
+    Ok(streamed(
         (headers, Body::from_stream(chunks)).into_response(),
     ))
 }
 
-/// `response` with `X-Accel-Buffering: no`, which tells nginx, and the proxies that read it as nginx does, to send
-/// each piece of the stream as it comes rather than hold it in a buffer.
-fn unbuffered(mut response: Response) -> Response {
+/// `response`, the answer of a stream result, with `X-Accel-Buffering: no`, which tells nginx, and the proxies that
+/// read it as nginx does, to send each piece of the stream as it comes rather than hold it in a buffer; and marked as
+/// a stream's, which [`ended_on_stop`] ends when the server stops.
+fn streamed(mut response: Response) -> Response {
     response.headers_mut().insert(
         HeaderName::from_static("x-accel-buffering"),
         HeaderValue::from_static("no"),
     );
+    response.extensions_mut().insert(StreamBody);
 
     response
+}
+
+/// The mark of an answer whose body is a stream result's, which only quoll sets.
+#[derive(Debug, Clone, Copy)]
+struct StreamBody;
+
+/// `response` as the server sends it once `stopping` holds `true`, or once its sender is dropped: when it is the answer
+/// of a stream result, its body ends after the piece it is sending, an event, a line or a chunk, so that the client,
+/// and any proxy between, reads a clean end rather than a connection cut by the end of the grace. Any other answer is
+/// left as it is.
+///
+/// An `Events` ends with nothing more, as a stream that has no more values: a stop is no failure, and is no
+/// `event: problem`. A stream that opens once the server is told to stop ends at once.
+pub(crate) fn ended_on_stop(mut response: Response, stopping: &watch::Receiver<bool>) -> Response {
+    if response.extensions_mut().remove::<StreamBody>().is_none() {
+        return response;
+    }
+
+    let mut stopping = stopping.clone();
+    let stopped = async move {
+        // A sender dropped is a stop too: the server has returned.
+        let _ = stopping.wait_for(|stopping| *stopping).await;
+    };
+
+    // Each piece is one frame of the body, an event of axum's `Sse` or an item of the handler's stream, so the body
+    // ends between two of them.
+    response.map(|body| Body::from_stream(body.into_data_stream().take_until(stopped)))
 }
 
 /// What the server sends once an item has failed.

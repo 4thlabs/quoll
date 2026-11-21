@@ -34,6 +34,7 @@ rest::api! {
         GET "/missing/lines"        => missing_lines() -> JsonLines<Change>;
         GET "/held/events"          => held_events() -> Events<Change>;
         GET "/held/lines"           => held_lines() -> JsonLines<Change>;
+        GET "/silent/events"        => silent_events() -> Events<Change>;
     }
 }
 
@@ -132,6 +133,10 @@ impl FeedsServer for App {
     async fn held_lines(&self) -> Result<JsonLines<Change>> {
         Ok(JsonLines::new(held(&self.dropped, "lines")))
     }
+
+    async fn silent_events(&self) -> Result<Events<Change>> {
+        Ok(Events::new(stream::pending()))
+    }
 }
 
 /// The api served on a port, its URL, its client, and what says when a held stream is dropped.
@@ -180,12 +185,41 @@ async fn events_are_sent_as_their_json_data_and_read_back() {
     assert_eq!(headers["x-accel-buffering"], "no");
     assert_eq!(
         body,
-        "data: {\"id\":1,\"text\":\"line\\n1 é\"}\n\ndata: {\"id\":2,\"text\":\"line\\n2 é\"}\n\n"
+        ": \n\ndata: {\"id\":1,\"text\":\"line\\n1 é\"}\n\ndata: {\"id\":2,\"text\":\"line\\n2 é\"}\n\n"
     );
 
     let events = api.feeds().events(3).await.expect("events");
 
     assert_eq!(values(all(events).await), [change(1), change(2), change(3)]);
+}
+
+#[tokio::test]
+async fn events_open_with_a_comment_before_any_event() {
+    let (url, api, _) = served().await;
+
+    let mut answer = reqwest::get(format!("{url}/api/silent/events"))
+        .await
+        .expect("the server answers");
+
+    assert_eq!(answer.headers()[CONTENT_TYPE], "text/event-stream");
+
+    // The handler's stream gives nothing, ever: the comment alone is sent, at once.
+    let first = tokio::time::timeout(Duration::from_secs(10), answer.chunk())
+        .await
+        .expect("the comment comes before any event")
+        .expect("the body reads")
+        .expect("the body has a first piece");
+
+    assert_eq!(first.as_ref(), b": \n\n");
+
+    // The client skips it, as any comment.
+    let mut events = api.feeds().events(1).await.expect("events");
+
+    assert_eq!(
+        events.next().await.expect("an event").expect("a value"),
+        change(1)
+    );
+    assert!(events.next().await.is_none());
 }
 
 #[tokio::test]
@@ -208,10 +242,10 @@ async fn json_lines_are_sent_one_value_a_line_and_read_back() {
 }
 
 #[tokio::test]
-async fn an_empty_stream_sends_nothing_and_ends() {
+async fn an_empty_stream_sends_nothing_but_the_opening_comment_and_ends() {
     let (url, api, _) = served().await;
 
-    assert_eq!(raw(&format!("{url}/api/events?count=0")).await.2, "");
+    assert_eq!(raw(&format!("{url}/api/events?count=0")).await.2, ": \n\n");
     assert_eq!(raw(&format!("{url}/api/lines?count=0")).await.2, "");
 
     let events = api.feeds().events(0).await.expect("events");

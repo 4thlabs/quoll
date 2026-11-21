@@ -12,20 +12,22 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::Request;
-use axum::response::IntoResponse;
+use axum::middleware::map_response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::Route;
 use axum::serve::Listener;
 use futures_core::Stream;
 use futures_util::future::{Either, select};
 use futures_util::{StreamExt, stream};
 use sync_wrapper::SyncWrapper;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tower_layer::Layer;
 use tower_service::Service;
 
 use super::layer::{
     BodyLimitLayer, CompressionLayer, CorsLayer, RequestIdLayer, TimeoutLayer, TraceLayer,
 };
+use crate::__private::server::ended_on_stop;
 use crate::order::arrange;
 
 /// How long [`Builder::serve`] waits, once told to stop, for the requests it serves to end.
@@ -154,8 +156,11 @@ impl Builder {
         self
     }
 
-    /// Waits up to `grace`, once the server is told to stop, for the requests it serves to end, 5 s unless it is set:
-    /// a stream of `Events`, `JsonLines` or `ByteStream` may never end.
+    /// Waits up to `grace`, once the server is told to stop, for the requests it serves to end, 5 s unless it is set.
+    ///
+    /// The streams of `Events`, `JsonLines` and `ByteStream` end at once, after the piece each is sending, as
+    /// [`serve_on`](Self::serve_on) says: the grace is for the requests a handler is still answering, and for a body
+    /// that never ends of a route that is not a contract's.
     pub fn grace(mut self, grace: Duration) -> Self {
         self.grace = grace;
         self
@@ -187,6 +192,12 @@ impl Builder {
     /// second time, by a second Ctrl-C or `SIGTERM`, and logs it at `WARN`: the connections still open are left to the
     /// tokio runtime, and their handlers may still run after it has returned, until the runtime ends, as when `main`
     /// returns.
+    ///
+    /// The answers of the routes whose result is a stream, `Events`, `JsonLines` and `ByteStream`, end as soon as it is
+    /// told, after the event, the line or the chunk each is sending: the client, and any proxy between, reads a clean
+    /// end, as when the handler's stream ends, rather than a connection cut once the grace has passed. An `Events`
+    /// stream ends with nothing more, no `event: problem`: a stop is no failure. A router served otherwise, by
+    /// `axum::serve` or [`test::spawn`](crate::test::spawn), leaves its streams to run until their connection closes.
     ///
     /// Ctrl-C and `SIGTERM` are tokio's from the first call on, and stay so once it has returned: the process does not
     /// get their default action back, and a later Ctrl-C does not end it.
@@ -222,8 +233,17 @@ impl Builder {
             Some(signal) => Box::pin(stream::once(signal.into_inner()).chain(stream::pending())),
             None => terminated()?,
         };
+        let (stopping, told) = watch::channel(false);
 
-        run(listener, layered(layers, router), signals, grace).await
+        // Around the router, inside every other layer: they see the stream's body end as when its handler's stream
+        // ends.
+        let router = router.layer(map_response(move |response: Response| {
+            let response = ended_on_stop(response, &told);
+
+            async move { response }
+        }));
+
+        run(listener, layered(layers, router), signals, stopping, grace).await
     }
 }
 
@@ -270,11 +290,12 @@ mod sealed {
 }
 
 /// Serves `router` on `listener` until the first of `signals`, then for the requests it serves, up to `grace` or the
-/// next of `signals`.
+/// next of `signals`. At the first of `signals`, `stopping` is set to `true`, which ends the streams in flight.
 async fn run<L>(
     listener: L,
     router: Router,
     mut signals: Signals,
+    stopping: watch::Sender<bool>,
     grace: Duration,
 ) -> io::Result<()>
 where
@@ -296,6 +317,9 @@ where
 
     // The receiver lives in the server's future, which has not returned: the send cannot fail.
     let _ = stop.send(());
+
+    // Whether any stream is in flight or not.
+    stopping.send_replace(true);
 
     let deadline = pin!(tokio::time::sleep(grace));
 
@@ -441,7 +465,14 @@ mod tests {
                 .expect("a bound listener has an address")
         );
         let (signal, signals) = sent();
-        let serving = tokio::spawn(run(listener, router, signals, Duration::from_secs(3600)));
+        let (stopping, _) = watch::channel(false);
+        let serving = tokio::spawn(run(
+            listener,
+            router,
+            signals,
+            stopping,
+            Duration::from_secs(3600),
+        ));
         let answer = reqwest::get(url).await.expect("the server answers");
 
         signal.send(()).expect("the server listens");

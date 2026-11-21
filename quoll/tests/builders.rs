@@ -11,7 +11,7 @@ use std::time::Duration;
 use axum::extract::Request;
 use axum::middleware::{Next, from_fn};
 use axum::response::IntoResponse;
-use quoll::rest::{self, Error, Events, Result};
+use quoll::rest::{self, Error, Result};
 use quoll::{client, server};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_TYPE, HeaderValue, LOCATION};
@@ -32,7 +32,6 @@ rest::api! {
         GET "/flaky"   => flaky(header("X-Request-Id") id: Option<String>) -> String;
         GET "/slow"    => slow() -> String;
         GET "/held"    => held() -> String;
-        GET "/endless" => endless() -> Events<u32>;
         GET "/away"    => away() -> String;
         POST "/text"   => text(text: rest::Text);
     }
@@ -80,10 +79,6 @@ impl CallsServer for App {
         Ok("released".into())
     }
 
-    async fn endless(&self) -> Result<Events<u32>> {
-        Ok(Events::new(futures_util::stream::pending()))
-    }
-
     async fn away(&self) -> Result<String> {
         Err(Error::not_found(
             "the redirects are served by another router",
@@ -95,9 +90,13 @@ impl CallsServer for App {
     }
 }
 
-/// The api's router, before any layer.
+/// The api's router, before any layer, and `/endless`, a route of axum's that is not the api's, whose body never ends.
 fn router(app: &App) -> axum::Router {
-    Api::router(ApiServices { calls: app.clone() })
+    let endless = || async {
+        axum::body::Body::from_stream(futures_util::stream::pending::<std::io::Result<Vec<u8>>>())
+    };
+
+    Api::router(ApiServices { calls: app.clone() }).route("/endless", axum::routing::get(endless))
 }
 
 /// `builder` with a layer of the application's, which answers whether the request had an `X-Request-Id` when it saw
@@ -516,21 +515,24 @@ async fn a_server_told_to_stop_ends_the_requests_it_serves() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_server_told_to_stop_waits_no_longer_than_its_grace_for_a_stream() -> Result<()> {
+async fn a_server_told_to_stop_waits_no_longer_than_its_grace_for_a_body_that_never_ends() {
     let (log, _capture) = support::log::capture(false);
     let app = App::default();
     let (url, stop, serving) = served(server::builder().grace(DEADLINE), &app).await;
-    let events = Api::client(&url)?.calls().endless().await?;
+    let answer = reqwest::get(format!("{url}/endless"))
+        .await
+        .expect("the server answers");
 
     stop.send(()).expect("the server waits for its signal");
 
-    // The stream never ends: the server returns once its grace has passed, well before this bound.
+    // The body is not a stream result's, which the server would end: it returns once its grace has passed, well
+    // before this bound.
     tokio::time::timeout(Duration::from_secs(10), serving)
         .await
         .expect("the server returns after its grace")
         .expect("the server's task does not panic")
         .expect("the server stops with no error");
-    drop(events);
+    drop(answer);
 
     let lines = quoll_lines(&log);
     let warned: Vec<&String> = lines
@@ -541,7 +543,6 @@ async fn a_server_told_to_stop_waits_no_longer_than_its_grace_for_a_stream() -> 
     assert_eq!(warned.len(), 1, "{lines:#?}");
     assert!(warned[0].contains("the grace ran out"), "{lines:#?}");
     assert!(warned[0].contains("grace=100ms"), "{lines:#?}");
-    Ok(())
 }
 
 #[tokio::test]

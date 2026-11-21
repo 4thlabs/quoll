@@ -31,6 +31,7 @@ mod stream;
 mod text;
 
 pub use axum::routing::MethodFilter;
+pub(crate) use stream::ended_on_stop;
 pub use stream::{Written, byte_stream, events, json_lines};
 
 /// The routes of one group, each served by the group's service.

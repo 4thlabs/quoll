@@ -129,7 +129,8 @@ describe("apiEvents", () => {
   });
 
   it("tells of its opening before its items, then of a clean end, with no error", async () => {
-    answer(() => events("data: 1\n\n"));
+    // As quoll's server writes them: the comment that opens the stream, then the events, then the end, as on a stop.
+    answer(() => events(": \n\n", "data: 1\n\n"));
     const heard: unknown[] = [];
 
     apiEvents("/api/notes/1/events", {
