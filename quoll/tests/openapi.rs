@@ -49,6 +49,7 @@ struct Login {
 enum Change {
     Edited { id: i64 },
     Removed { id: i64 },
+    Moved(Note),
 }
 
 /// A type named as the problem of errors, which takes another name.
@@ -465,6 +466,25 @@ fn a_stream_carries_the_schema_of_its_items_in_x_item() {
         json!({ "application/jsonl": { "schema": { "type": "string" }, "x-item": { "type": "string" } } })
     );
     assert!(DOCUMENT["components"]["schemas"]["Change"]["oneOf"].is_array());
+}
+
+#[test]
+fn a_reference_beside_other_keywords_is_an_all_of() {
+    let moved = &DOCUMENT["components"]["schemas"]["Change"]["oneOf"][2];
+
+    assert_eq!(
+        moved,
+        &json!({
+            "allOf": [
+                { "$ref": "#/components/schemas/Note" },
+                {
+                    "type": "object",
+                    "properties": { "kind": { "type": "string", "const": "moved" } },
+                    "required": ["kind"],
+                },
+            ],
+        })
+    );
 }
 
 #[test]

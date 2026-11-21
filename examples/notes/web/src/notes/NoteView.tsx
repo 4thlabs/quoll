@@ -50,10 +50,13 @@ export function NoteView({ id, onClosed, onExpired }: Props) {
   const changed = useEffectEvent((event: NoteEvent) => {
     listChanged();
 
-    if (isRemoved(event)) {
-      onClosed();
-    } else {
-      refetch();
+    switch (event.kind) {
+      case "edited":
+        refetch();
+        break;
+      case "removed":
+        onClosed();
+        break;
     }
   });
 
@@ -111,11 +114,6 @@ export function NoteView({ id, onClosed, onExpired }: Props) {
       )}
     </>
   );
-}
-
-// orval types the `edited` event as the plain `Note` it holds, without its `kind`.
-function isRemoved(event: NoteEvent): event is Extract<NoteEvent, { kind: "removed" }> {
-  return "kind" in event && event.kind === "removed";
 }
 
 type NoteTextProps = {
