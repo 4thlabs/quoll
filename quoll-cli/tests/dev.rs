@@ -838,6 +838,43 @@ fn the_path_dependencies_of_one_outside_the_workspace_are_watched() {
 }
 
 #[test]
+fn a_package_of_the_workspace_reached_through_one_outside_it_is_watched() {
+    let fixture = Fixture::new("");
+    let outside = tempfile::tempdir().expect("a temporary directory");
+    let shared = outside.path().join("shared");
+
+    // The server, then `shared` outside the workspace, then `web-dev`'s library, in it.
+    write_crate(
+        &shared,
+        "shared",
+        &format!(
+            "\n[dependencies]\nweb-dev = {{ path = \"{}\" }}\n",
+            toml_path(&fixture.path("web-dev"))
+        ),
+        "/// The name of `web-dev`.\npub const NAME: &str = web_dev::NAME;\n",
+    );
+    depend_on_shared(&fixture, &shared, "shared::NAME");
+
+    let mut dev = Dev::start(&fixture);
+
+    dev.ready();
+    assert_eq!(dev.get(), format!("server 1 {DOCUMENT} web-dev 1"));
+
+    let lib = fixture.path("web-dev/src/lib.rs");
+
+    fs::write(
+        &lib,
+        fs::read_to_string(&lib)
+            .expect("the library is read")
+            .replace("web-dev 1", "web-dev 2"),
+    )
+    .expect("the library is written");
+    dev.ready();
+
+    assert_eq!(dev.get(), format!("server 1 {DOCUMENT} web-dev 2"));
+}
+
+#[test]
 fn a_server_whose_version_changed_is_built_and_restarted() {
     let fixture = Fixture::new("");
     let mut dev = Dev::start(&fixture);
