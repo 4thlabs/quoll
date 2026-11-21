@@ -31,7 +31,7 @@ jobs:
   # Every job below runs once per combination of the quoll features, none, each alone and both, with the examples and
   # the guides left out: their crates turn quoll's features on, which cargo would unify into the whole build. The
   # examples run on their own, with the features their crates choose, and the guides with them, their blocks doctests.
-  # quoll-cli, which does not depend on quoll, runs once on its own: its tests run `cargo quoll` on the notes example.
+  # quoll-cli, which does not depend on quoll, runs once on its own; the job web runs it on the notes example.
   clippy:
     name: clippy (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -113,10 +113,34 @@ jobs:
       - run: cargo clippy --package quoll-cli --all-targets -- -D warnings
       - run: cargo test --package quoll-cli
 
+  # The notes example's page: `cargo quoll build` writes the document, runs orval through its `after`, then checks the
+  # types of the page and bundles it, so that a change of the contract that breaks the page breaks the pull request.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/notes/web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+        working-directory: examples/notes/web
+      # Built in the workspace's target directory, which the cache keeps, rather than by `cargo install`.
+      - run: |
+          cargo build --package quoll-cli
+          echo "$PWD/target/debug" >> "$GITHUB_PATH"
+      - run: cargo quoll build
+      - run: cargo quoll gen --check
+      - run: npm test
+        working-directory: examples/notes/web
+
   # The one check branch protection requires: it fails when any job above failed or was skipped.
   ci:
     if: always()
-    needs: [fmt, clippy, test, doc, cli]
+    needs: [fmt, clippy, test, doc, cli, web]
     runs-on: ubuntu-latest
     steps:
       - run: |

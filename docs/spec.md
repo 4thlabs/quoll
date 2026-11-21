@@ -941,7 +941,7 @@ export default defineConfig({
 });
 ```
 
-`web/orval.config.ts`
+`web/orval.config.ts`: one file, whose hooks' data is the body the mutator returns.
 
 ```typescript
 import { defineConfig } from "orval";
@@ -953,23 +953,48 @@ export default defineConfig({
       target: "./src/api/generated.ts",
       client: "react-query",
       httpClient: "fetch",
-      mode: "tags-split",
-      override: { mutator: { path: "./src/api/fetch.ts", name: "apiFetch" } },
+      override: {
+        mutator: { path: "./src/api/fetch.ts", name: "apiFetch" },
+        // The hooks' data is the body, which the mutator returns, not orval's `{ data, status, headers }`.
+        fetch: { includeHttpResponseReturnType: false },
+      },
     },
   },
 });
 ```
 
-The page takes a bearer token, which `EventSource` cannot send: `apiEvents` reads the events with `fetch`, and splits them itself, as quoll's server writes them, each line ending in `\n`. Every event that has data is an item, whatever its name, an event with no data and a comment are skipped, and an `event: problem` ends the stream with an error.
+The page takes a bearer token, which `EventSource` cannot send: `apiEvents` reads the events with `fetch`, and splits them itself, as quoll's server writes them, each line ending in `\n`. Every event that has data is an item, whatever its name, an event with no data and a comment are skipped, and an `event: problem` ends the stream with an error. An error the server answers is an `ApiError`, whose message is the problem's detail, which the page shows.
 
 `web/src/api/fetch.ts`
 
 ```typescript
+import type { Problem } from "./generated";
+
 let token: string | undefined;
 
 export function signIn(accessToken: string) {
   token = accessToken;
 }
+
+export function signOut() {
+  token = undefined;
+}
+
+// An error the server answered, its message the problem's detail: what the page shows.
+export class ApiError extends Error {
+  readonly status: number;
+  readonly problem: Problem | undefined;
+
+  constructor(status: number, problem?: Problem) {
+    super(problem?.detail ?? problem?.title ?? `the server answered ${status}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.problem = problem;
+  }
+}
+
+// The error type of orval's hooks, whatever the problem a route declares: every one is a `Problem`.
+export type ErrorType<_Body> = ApiError;
 
 function authorization(init?: HeadersInit): Headers {
   const headers = new Headers(init);
@@ -981,24 +1006,35 @@ function authorization(init?: HeadersInit): Headers {
   return headers;
 }
 
+// A proxy that cannot reach the server answers with no problem: its status alone is the error.
+async function apiError(response: Response): Promise<ApiError> {
+  const isProblem = response.headers.get("Content-Type")?.startsWith("application/problem+json");
+
+  return new ApiError(response.status, isProblem ? await response.json() : undefined);
+}
+
 export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: authorization(init.headers) });
 
   if (!response.ok) {
-    throw await response.json(); // the RFC 9457 problem
+    throw await apiError(response);
   }
 
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
 // Reads a stream of server-sent events, calling `onItem` with each one's data parsed, until the function it returns
-// is called.
-export function apiEvents<T>(url: string, onItem: (item: T) => void): () => void {
+// is called. A failure, before the stream or within it, goes to `onError`.
+export function apiEvents<T>(
+  url: string,
+  onItem: (item: T) => void,
+  onError: (error: unknown) => void = console.error,
+): () => void {
   const controller = new AbortController();
 
   readEvents(url, onItem, controller.signal).catch((error) => {
     if (!controller.signal.aborted) {
-      console.error(error);
+      onError(error);
     }
   });
 
@@ -1009,7 +1045,7 @@ async function readEvents<T>(url: string, onItem: (item: T) => void, signal: Abo
   const response = await fetch(url, { headers: authorization(), signal });
 
   if (!response.ok) {
-    throw await response.json(); // the RFC 9457 problem
+    throw await apiError(response);
   }
 
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
@@ -1022,6 +1058,7 @@ async function readEvents<T>(url: string, onItem: (item: T) => void, signal: Abo
       return;
     }
 
+    // A chunk may end within an event: its start waits in `buffer` for the next one.
     const blocks = (buffer + value).split("\n\n");
     buffer = blocks.pop() ?? "";
 
@@ -1032,8 +1069,11 @@ async function readEvents<T>(url: string, onItem: (item: T) => void, signal: Abo
         continue;
       }
 
+      // The stream failed after its 200: the problem says the status it would have answered.
       if (event === "problem") {
-        throw JSON.parse(data); // the RFC 9457 problem, after the 200
+        const problem: Problem = JSON.parse(data);
+
+        throw new ApiError(problem.status ?? 500, problem);
       }
 
       onItem(JSON.parse(data) as T);
@@ -1062,28 +1102,128 @@ function parseEvent(block: string): { event?: string; data?: string } {
 }
 ```
 
-`web/src/NoteView.tsx`
+`web/src/notes/NoteView.tsx`, a note, edited in a `NoteEditor` beside it, and read again when it changes elsewhere.
 
 ```typescript
-import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useEffectEvent, useState } from "react";
 
-import { apiEvents } from "./api/fetch";
-import { type NoteEvent, useNotesGet, useNotesUpdate } from "./api/generated";
+import { apiEvents } from "../api/fetch";
+import {
+  getNotesEventsUrl,
+  getNotesGetQueryKey,
+  getNotesSearchQueryKey,
+  type NewNote,
+  type Note,
+  type NoteEvent,
+  useNotesGet,
+  useNotesRemove,
+  useNotesUpdate,
+} from "../api/generated";
+import { ErrorMessage } from "../ErrorMessage";
+import { NoteEditor } from "./NoteEditor";
 
-export function NoteView({ id }: { id: number }) {
-  const { data: note, refetch } = useNotesGet(id);
+type Props = {
+  id: number;
+  onClosed: () => void;
+};
+
+export function NoteView({ id, onClosed }: Props) {
+  const queryClient = useQueryClient();
+  const { data: note, error, refetch } = useNotesGet(id);
   const update = useNotesUpdate();
+  const remove = useNotesRemove();
+  const [editing, setEditing] = useState(false);
 
-  // Another tab or the command line changed the note: read it again.
-  useEffect(() => apiEvents<NoteEvent>(`/api/notes/${id}/events`, () => refetch()), [id, refetch]);
+  function listChanged() {
+    queryClient.invalidateQueries({ queryKey: getNotesSearchQueryKey() });
+  }
+
+  // Another tab or the command line changed the note: read it again, or close it once it is removed.
+  const changed = useEffectEvent((event: NoteEvent) => {
+    listChanged();
+
+    if (isRemoved(event)) {
+      onClosed();
+    } else {
+      refetch();
+    }
+  });
+
+  useEffect(() => apiEvents<NoteEvent>(getNotesEventsUrl(id), changed), [id]);
+
+  if (error) {
+    return <ErrorMessage error={error} />;
+  }
 
   if (!note) {
     return <p>Loading</p>;
   }
 
-  const save = (body: string) => update.mutate({ id, data: { title: note.title, body } });
+  function save(changes: NewNote) {
+    update.mutate(
+      { id, data: changes },
+      {
+        onSuccess: (saved) => {
+          queryClient.setQueryData(getNotesGetQueryKey(id), saved);
+          listChanged();
+          setEditing(false);
+        },
+      },
+    );
+  }
 
-  return <NoteEditor note={note} onSave={save} />;
+  function removeNote() {
+    remove.mutate(
+      { id },
+      {
+        onSuccess: () => {
+          listChanged();
+          onClosed();
+        },
+      },
+    );
+  }
+
+  if (editing) {
+    return (
+      <NoteEditor
+        note={note}
+        saving={update.isPending}
+        error={update.error}
+        onSave={save}
+        onCancel={() => setEditing(false)}
+      />
+    );
+  }
+
+  return <NoteText note={note} error={remove.error} onEdit={() => setEditing(true)} onRemove={removeNote} />;
+}
+
+// orval types the `edited` event as the plain `Note` it holds, without its `kind`.
+function isRemoved(event: NoteEvent): event is Extract<NoteEvent, { kind: "removed" }> {
+  return "kind" in event && event.kind === "removed";
+}
+
+type NoteTextProps = {
+  note: Note;
+  error: Error | null;
+  onEdit: () => void;
+  onRemove: () => void;
+};
+
+function NoteText({ note, error, onEdit, onRemove }: NoteTextProps) {
+  return (
+    <article className="note">
+      <h2>{note.title}</h2>
+      <p className="body">{note.body}</p>
+      <div className="actions">
+        <button onClick={onEdit}>Edit</button>
+        <button onClick={onRemove}>Remove</button>
+      </div>
+      <ErrorMessage error={error} />
+    </article>
+  );
 }
 ```
 

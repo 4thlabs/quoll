@@ -1,0 +1,3 @@
+# Written by orval from openapi.json, itself written by `cargo quoll gen` and gitignored at the root.
+/src/api/generated.ts
+/dist
