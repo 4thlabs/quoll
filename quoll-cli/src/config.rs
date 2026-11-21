@@ -17,13 +17,6 @@ const ROOT: &str = "workspace.metadata.quoll";
 #[derive(Debug)]
 pub(crate) struct Config {
     pub(crate) apis: Vec<Api>,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "`cargo quoll dev` starts the servers, which comes next"
-        )
-    )]
     pub(crate) servers: Vec<Server>,
     pub(crate) web: Option<Web>,
 }
@@ -42,16 +35,13 @@ pub(crate) struct Api {
 
 /// A server, which `cargo quoll dev` builds and starts.
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "`cargo quoll dev` starts the servers, which comes next"
-    )
-)]
 pub(crate) struct Server {
     pub(crate) package: String,
+    /// The binary `cargo run` would run: `default-run`, or the package's only one.
+    pub(crate) bin: String,
     pub(crate) url: String,
+    /// The `host:port` of `url`, which `cargo quoll dev` connects to, to know the server is ready.
+    pub(crate) address: String,
 }
 
 /// The web side: its directory and its commands.
@@ -61,7 +51,6 @@ pub(crate) struct Web {
     pub(crate) key: String,
     /// Relative to the workspace's root.
     pub(crate) dir: PathBuf,
-    #[expect(dead_code, reason = "`cargo quoll dev` runs it, which comes next")]
     pub(crate) dev: Option<Command>,
     pub(crate) build: Option<Command>,
 }
@@ -198,13 +187,67 @@ fn read_api(key: String, raw: RawApi, packages: &[Package]) -> Result<Api, Confi
 fn read_server(key: String, raw: RawServer, packages: &[Package]) -> Result<Server, ConfigError> {
     let package = required(&key, "package", raw.package)?;
 
-    if !packages.iter().any(|candidate| candidate.name == package) {
+    let Some(found) = packages.iter().find(|candidate| candidate.name == package) else {
         return Err(no_package(&key, &package));
-    }
+    };
+
+    let Some(bin) = found.default_binary() else {
+        let binaries: Vec<_> = found.binaries().map(|bin| format!("`{bin}`")).collect();
+        let message = if binaries.is_empty() {
+            format!("`{package}` has no binary")
+        } else {
+            format!(
+                "`{package}` has several binaries, {}: name the one to run with `default-run` in its Cargo.toml",
+                binaries.join(", ")
+            )
+        };
+
+        return Err(ConfigError::new(format!("{key}.package"), message));
+    };
 
     let url = required(&key, "url", raw.url)?;
+    let address =
+        address(&url).map_err(|message| ConfigError::new(format!("{key}.url"), message))?;
 
-    Ok(Server { package, url })
+    Ok(Server {
+        package,
+        bin: bin.to_owned(),
+        url,
+        address,
+    })
+}
+
+/// The `host:port` an `http` or `https` url connects to, its port the scheme's when it names none.
+fn address(url: &str) -> Result<String, String> {
+    let (rest, port) = if let Some(rest) = url.strip_prefix("http://") {
+        (rest, 80)
+    } else if let Some(rest) = url.strip_prefix("https://") {
+        (rest, 443)
+    } else {
+        return Err(format!(
+            "`{url}` is not an http url: write the url the server answers on, `http://127.0.0.1:8080`"
+        ));
+    };
+
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    // The credentials of a url are no part of where it connects.
+    let host = authority.rsplit('@').next().unwrap_or_default();
+
+    if host.is_empty() || host.starts_with(':') {
+        return Err(format!("`{url}` names no host"));
+    }
+
+    match host.rsplit_once(':') {
+        // The last `:` of an IPv6 address in brackets, `[::1]`, is in the address.
+        Some((_, written)) if !written.contains(']') => {
+            if written.parse::<u16>().is_err() {
+                return Err(format!("`{url}`: `{written}` is not a port"));
+            }
+
+            Ok(host.to_owned())
+        }
+        _ => Ok(format!("{host}:{port}")),
+    }
 }
 
 fn read_web(key: String, raw: RawWeb) -> Result<Web, ConfigError> {
@@ -332,6 +375,7 @@ mod tests {
             {
                 "name": "notes-api",
                 "id": "path+file:///notes/api#notes-api@0.1.0",
+                "manifest_path": "/notes/api/Cargo.toml",
                 "targets": [
                     { "name": "notes_api", "kind": ["lib"] },
                     { "name": "openapi", "kind": ["bin"] },
@@ -340,7 +384,23 @@ mod tests {
             {
                 "name": "notes-server",
                 "id": "path+file:///notes/server#notes-server@0.1.0",
+                "manifest_path": "/notes/server/Cargo.toml",
                 "targets": [{ "name": "notes-server", "kind": ["bin"] }],
+            },
+            {
+                "name": "notes-tools",
+                "id": "path+file:///notes/tools#notes-tools@0.1.0",
+                "manifest_path": "/notes/tools/Cargo.toml",
+                "targets": [
+                    { "name": "seed", "kind": ["bin"] },
+                    { "name": "export", "kind": ["bin"] },
+                ],
+            },
+            {
+                "name": "notes-models",
+                "id": "path+file:///notes/models#notes-models@0.1.0",
+                "manifest_path": "/notes/models/Cargo.toml",
+                "targets": [{ "name": "notes_models", "kind": ["lib"] }],
             },
         ]))
         .expect("the packages are those of cargo metadata")
@@ -408,7 +468,9 @@ mod tests {
             panic!("one server: {:?}", config.servers);
         };
         assert_eq!(server.package, "notes-server");
+        assert_eq!(server.bin, "notes-server");
         assert_eq!(server.url, "http://127.0.0.1:8080");
+        assert_eq!(server.address, "127.0.0.1:8080");
 
         let web = config.web.expect("the web side is read");
 
@@ -608,6 +670,80 @@ mod tests {
         assert_eq!(
             error(json!({ "api": [api] })),
             "workspace.metadata.quoll.api[0].bin: `notes-api` has no binary `notes_api`"
+        );
+    }
+
+    #[test]
+    fn a_server_runs_its_only_binary_or_its_default_run() {
+        let servers = |package: &str| {
+            read(json!({ "server": [{ "package": package, "url": "http://127.0.0.1:8080" }] }))
+        };
+
+        let error = chain(&servers("notes-tools").expect_err("the server is refused"));
+        assert_eq!(
+            error,
+            "workspace.metadata.quoll.server[0].package: `notes-tools` has several binaries, `seed`, `export`: name the \
+             one to run with `default-run` in its Cargo.toml"
+        );
+
+        let mut packages = packages();
+        packages[2] = serde_json::from_value(json!({
+            "name": "notes-tools",
+            "id": "path+file:///notes/tools#notes-tools@0.1.0",
+            "manifest_path": "/notes/tools/Cargo.toml",
+            "targets": [{ "name": "seed", "kind": ["bin"] }, { "name": "export", "kind": ["bin"] }],
+            "default_run": "export",
+        }))
+        .expect("the package is one of cargo metadata");
+        let config = Config::read(
+            &json!({ "quoll": { "server": [{ "package": "notes-tools", "url": "http://127.0.0.1:8080" }] } }),
+            &packages,
+        )
+        .expect("the config is read");
+        assert_eq!(config.servers[0].bin, "export");
+
+        let error = chain(&servers("notes-models").expect_err("the server is refused"));
+        assert_eq!(
+            error,
+            "workspace.metadata.quoll.server[0].package: `notes-models` has no binary"
+        );
+    }
+
+    #[test]
+    fn the_address_of_a_url_has_its_port() {
+        assert_eq!(
+            address("http://127.0.0.1:8080"),
+            Ok("127.0.0.1:8080".into())
+        );
+        assert_eq!(address("http://localhost/api"), Ok("localhost:80".into()));
+        assert_eq!(
+            address("https://example.com?q#f"),
+            Ok("example.com:443".into())
+        );
+        assert_eq!(
+            address("http://user:secret@[::1]:3000/"),
+            Ok("[::1]:3000".into())
+        );
+        assert_eq!(address("http://[::1]"), Ok("[::1]:80".into()));
+    }
+
+    #[test]
+    fn a_url_that_does_not_connect_is_refused() {
+        let url =
+            |url: &str| error(json!({ "server": [{ "package": "notes-server", "url": url }] }));
+
+        assert_eq!(
+            url("127.0.0.1:8080"),
+            "workspace.metadata.quoll.server[0].url: `127.0.0.1:8080` is not an http url: write the url the server \
+             answers on, `http://127.0.0.1:8080`"
+        );
+        assert_eq!(
+            url("http://:8080"),
+            "workspace.metadata.quoll.server[0].url: `http://:8080` names no host"
+        );
+        assert_eq!(
+            url("http://localhost:http"),
+            "workspace.metadata.quoll.server[0].url: `http://localhost:http`: `http` is not a port"
         );
     }
 }

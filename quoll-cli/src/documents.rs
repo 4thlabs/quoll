@@ -101,7 +101,7 @@ fn print(workspace: &Workspace, api: &Api, lock: Lock) -> Result<Vec<u8>> {
 ///
 /// The new document is written beside it, then renamed over it, so that a watcher of `path` reads the old document or
 /// the new one, never a part of it.
-fn write(path: &Path, document: &[u8]) -> io::Result<bool> {
+pub(crate) fn write(path: &Path, document: &[u8]) -> io::Result<bool> {
     match fs::read(path) {
         Ok(written) if same(&written, document) => return Ok(false),
         Ok(_) => {}
@@ -145,7 +145,7 @@ fn lf(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// The key of `api`'s output, which its errors name.
-fn output(api: &Api) -> String {
+pub(crate) fn output(api: &Api) -> String {
     format!("{}.output", api.key)
 }
 

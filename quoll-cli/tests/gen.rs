@@ -1,13 +1,14 @@
 //! `cargo quoll gen` and `build`, run as cargo runs them, on a small workspace copied for each test: a contract whose
 //! binary prints its document, and `record`, a command that writes down each of its runs.
 
-use std::env;
+#[path = "support/fixture.rs"]
+mod fixture;
+
 use std::fs::{self, File};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::{Duration, SystemTime};
 
-use tempfile::TempDir;
+use fixture::Fixture;
 
 /// What the contract's binary prints.
 const DOCUMENT: &str = "{\"openapi\": \"3.1.0\"}\n";
@@ -25,58 +26,11 @@ dir = "web"
 build = ["record", "build"]
 "#;
 
-/// A copy of the workspace under `tests/fixture`, with its binaries built.
-struct Fixture {
-    dir: TempDir,
-}
-
 impl Fixture {
-    /// The workspace, with `config` written after its `[workspace]` table.
-    fn new(config: &str) -> Self {
-        let dir = tempfile::tempdir().expect("a temporary directory");
-
-        copy_dir(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixture"),
-            dir.path(),
-        );
-        fs::write(
-            dir.path().join("Cargo.toml"),
-            format!("[workspace]\nmembers = [\"contract\"]\nresolver = \"3\"\n{config}"),
-        )
-        .expect("the workspace's Cargo.toml is written");
-
-        // `record` is found on the PATH, as a project's own commands are: it is built first.
-        let status = cargo()
-            .args(["build", "--quiet"])
-            .current_dir(dir.path())
-            .env_remove("CARGO_TARGET_DIR")
-            .env_remove("CARGO_BUILD_TARGET_DIR")
-            .status()
-            .expect("cargo runs");
-        assert!(status.success(), "the fixture builds");
-
-        Self { dir }
-    }
-
-    fn path(&self, relative: &str) -> PathBuf {
-        self.dir.path().join(relative)
-    }
-
     /// Runs `cargo quoll` with `args`, in the workspace's root, with its binaries on the PATH.
     fn cargo_quoll(&self, args: &[&str]) -> Output {
-        let path = env::var_os("PATH").unwrap_or_default();
-        let path = env::join_paths(
-            std::iter::once(self.path("target/debug")).chain(env::split_paths(&path)),
-        )
-        .expect("the PATH joins");
-
-        Command::new(env!("CARGO_BIN_EXE_cargo-quoll"))
-            .arg("quoll")
+        self.command()
             .args(args)
-            .current_dir(self.dir.path())
-            .env("PATH", path)
-            .env_remove("CARGO_TARGET_DIR")
-            .env_remove("CARGO_BUILD_TARGET_DIR")
             .output()
             .expect("cargo-quoll runs")
     }
@@ -89,30 +43,6 @@ impl Fixture {
     fn document(&self) -> Option<String> {
         fs::read_to_string(self.path("web/openapi.json")).ok()
     }
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    fs::create_dir_all(to).expect("the directory is made");
-
-    for entry in fs::read_dir(from).expect("the fixture is there") {
-        let entry = entry.expect("the fixture is read");
-        let target = to.join(entry.file_name());
-
-        // What a build of the fixture where it lies leaves there.
-        if entry.file_name() == "target" || entry.file_name() == "Cargo.lock" {
-            continue;
-        }
-
-        if entry.file_type().expect("the fixture is read").is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            fs::copy(entry.path(), target).expect("the fixture is copied");
-        }
-    }
-}
-
-fn cargo() -> Command {
-    Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
 }
 
 fn stderr(output: &Output) -> String {
