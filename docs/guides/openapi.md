@@ -153,6 +153,27 @@ JSON line per event on stdout, for a tool that reads them, and its output for a 
 
 The [dev loop of the spec](../spec.md#the-dev-loop) lists every event and its fields.
 
+## The web side
+
+`cargo quoll` knows no bundler and no generator: the web side follows conventions, as the notes example's page,
+[`examples/notes/web`](../../examples/notes/web), does.
+
+- The bundler's own proxy sends `/api` to the server's `url`, Vite's `server.proxy`: the page calls the api on its
+  own origin.
+- orval's config reads the document, `input: "./openapi.json"`, and `after` runs it. Its mutator, one function of the
+  application, adds the credential and throws the problem of an error; with `httpClient: "fetch"`,
+  `override.fetch.includeHttpResponseReturnType: false` makes a hook's data the body the mutator returns.
+- `EventSource` cannot send a header credential: the page reads an `Events` route with `fetch` and
+  `response.body.getReader()`, in a few lines that split the events.
+
+```bash
+npm ci --prefix examples/notes/web
+cargo quoll dev
+```
+
+At the root of the repository, it runs the notes server, orval and Vite, on `http://localhost:5173`. The server
+prints the demo's password when it starts.
+
 ## What it holds
 
 - **Paths**: each route under the api's prefix, its operation named `group_function`, `notes_get`, and tagged with

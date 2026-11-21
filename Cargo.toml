@@ -24,13 +24,19 @@ repository = "https://github.com/4thlabs/quoll"
 unsafe_code = "forbid"
 missing_docs = "warn"
 
-# The config of `cargo quoll`, for the notes example. The `after` that runs orval and the `web` table come with its web
-# page: until then, `cargo quoll gen` writes the document alone, which is gitignored.
+# The config of `cargo quoll`, for the notes example: its document and the TypeScript orval writes from it, both
+# gitignored, its server and its web page.
 [[workspace.metadata.quoll.api]]
 package = "notes-api"
 bin = "openapi"
 output = "examples/notes/web/openapi.json"
+after = [["npx", "orval"]]
 
 [[workspace.metadata.quoll.server]]
 package = "notes-server"
 url = "http://127.0.0.1:8080"
+
+[workspace.metadata.quoll.web]
+dir = "examples/notes/web"
+dev = ["npm", "run", "dev"]
+build = ["npm", "run", "build"]

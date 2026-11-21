@@ -31,6 +31,11 @@ cargo expand -p <crate> --test <test>                              # what the ma
 TRYBUILD=overwrite cargo test -p quoll --test compile_fail         # to accept a new or changed error message
 SNAPSHOT=overwrite cargo test -p notes-api --test openapi          # to accept a changed OpenAPI document of the example
 cargo test -p quoll-guides                                         # the Rust blocks of the guides and the README
+cargo install --path quoll-cli                                     # `cargo quoll`
+npm ci --prefix examples/notes/web                                 # the notes page's dependencies, on Node 22
+cargo quoll build                                                  # the notes document, orval, then the page's build
+npm test --prefix examples/notes/web                               # the page's tests, once orval has written its hooks
+cargo quoll dev                                                    # the notes server, orval and Vite, until Ctrl-C
 ```
 
 ## Layout
@@ -41,10 +46,12 @@ Planned, from the spec:
 - `quoll-macros/`: the proc macro behind `quoll::rest::api!`, re-exported by `quoll`, which users never name.
 - `quoll-cli/`: the binary `cargo-quoll`, `cargo quoll gen`, `build` and `dev`, configured in the workspace's
   `[workspace.metadata.quoll]`. It does not depend on `quoll`: it runs the contract's binary. Its tests run it on a
-  small workspace under `tests/fixture/`, copied for each test, whose server and `web.dev` listen on ports, and on the
-  notes example.
+  small workspace under `tests/fixture/`, copied for each test, whose server and `web.dev` listen on ports.
 - `examples/notes/`: the spec's complete example, split into the contract, its server, its command line and its page.
-  It is built and tested with the workspace.
+  The Rust crates are built and tested with the workspace. `web/` is the page, Vite, React and the TanStack Query
+  hooks orval writes from `openapi.json`, which `cargo quoll gen` writes there, both gitignored; its npm dependencies
+  are pinned, with their `package-lock.json`, on Node 22. `cargo quoll dev` at the root runs the server, orval and
+  Vite; `npm test` in `web/` runs its vitest tests, once `cargo quoll gen` has written the TypeScript.
 - `examples/docker/`: a contract of the Docker Engine API, which it only calls, and a command line on it, built and
   tested with the workspace; its test against a real daemon is skipped where none answers, but in CI.
 - `docs/`: `spec.md`, the coding rules, and the user guides, indexed by `docs/README.md`. `docs/guides/` is the crate
@@ -70,7 +77,10 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
   set `DOCKER_CLI_TEST_DAEMON=required`, so that the Docker example's test fails when the runner's daemon does not
   answer. `quoll-cli`, which does not depend on `quoll`, is left out of the four as well, and has a run of its own,
   `--package quoll-cli`, and its clippy and tests run on macOS and Windows too, in the job `cli`, where `cargo quoll
-  dev` stops its children in other ways. Warnings are errors, in rustc and in rustdoc.
+  dev` stops its children in other ways. The job `web` builds `cargo-quoll` and runs `cargo quoll build` at the root,
+  which writes the notes document, runs orval and bundles the page, then `cargo quoll gen --check` and the page's
+  `npm test`: a change of the contract that breaks the page breaks the pull request. Warnings are errors, in rustc and
+  in rustdoc.
 - The `ci` job gathers all of them and is the one check `main` requires: a new job goes in its `needs`. The branch must
   be up to date with `main`, and every review thread resolved, before the merge.
 - A pull request is merged with a rebase, and its branch deleted. Closing its issue is done in its description with

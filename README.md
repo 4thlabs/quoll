@@ -228,7 +228,7 @@ client and its OpenAPI document. It is used from git until it is published.
 
 The guides are in [`docs/`](docs/README.md), and the API documentation is the crate's own, from `cargo doc -p quoll
 --all-features --open`. Two examples are built and
-tested with the workspace: [`examples/notes`](examples/notes), the spec's complete example, and
+tested with the workspace: [`examples/notes`](examples/notes), the spec's complete example, with its web page, and
 [`examples/docker`](examples/docker), a client alone of the Docker Engine API.
 
 ## License

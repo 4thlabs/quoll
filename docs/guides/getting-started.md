@@ -159,6 +159,9 @@ And the OpenAPI document, which orval turns into TypeScript:
 cargo run -- openapi > openapi.json
 ```
 
+The notes example has a page on it, [`examples/notes/web`](../../examples/notes/web), whose hooks orval writes from
+that document: [the web side](openapi.md#the-web-side) runs it.
+
 ## Crates by role
 
 An application splits into crates by role, as [the notes example](../../examples/notes) does:

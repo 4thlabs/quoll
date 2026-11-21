@@ -1,0 +1,103 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #222;
+  background: #fafafa;
+}
+
+body {
+  margin: 0;
+}
+
+button {
+  cursor: pointer;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+[role="alert"] {
+  color: #b00020;
+}
+
+.sign-in {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 20rem;
+  margin: 4rem auto;
+}
+
+.hint {
+  color: #666;
+  font-size: 0.875rem;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 18rem 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.app header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app h1 {
+  margin: 0;
+}
+
+.note-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.note-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.note-list li button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.25rem 0.5rem;
+}
+
+.note-list li button.selected {
+  background: #e0e8ff;
+}
+
+.search,
+.pages,
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.search input {
+  min-width: 0;
+  flex: 1;
+}
+
+.note .body {
+  white-space: pre-wrap;
+}
+
+.note-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 40rem;
+}
