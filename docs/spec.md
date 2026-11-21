@@ -245,11 +245,13 @@ impl NotesServer for App {
 - With scopes, the caller implements `rest::Scoped`, and the router answers 403 before the handler, after `authenticate` and before the path, the query and the body are read, when the caller lacks one of them: a route needs every scope it names, `scopes("repo", "admin")` both. `optional` with `scopes` does not compile: a request with no credential has no scope to check. OpenAPI lists each route's scopes.
 - The client's trait has no caller: its middleware sends the credential.
 
+An implementation writes `authenticate` as an `async fn`, as the server above does.
+
 ```rust
 pub trait Authenticate<S: Scheme>: Send + Sync + 'static {
     type Caller: Send + Sync + 'static;
 
-    async fn authenticate(&self, credential: S::Credential) -> Result<Self::Caller>;
+    fn authenticate(&self, credential: S::Credential) -> impl Future<Output = Result<Self::Caller>> + Send;
 }
 
 pub trait Scoped {
@@ -300,10 +302,9 @@ The generated code stays thin and calls the crate, compiled once. A client metho
 
 ```rust
 impl Notes for NotesClient {
-    async fn get(&self, id: i64) -> rest::Result<Note> {
-        let path = format!("/api/notes/{}", rest::segment(&id));
-
-        self.client.get(path, &ROUTE_NOTES_GET).send().await?.json().await
+    fn get(&self, id: i64) -> impl Future<Output = rest::Result<Note>> + Send {
+        // The macro writes the call: the api's prefix, read at run time, as a group may be listed by two apis, the
+        // path with its segment, then the request sent and its JSON read, through `quoll::__private`.
     }
 }
 ```
@@ -400,7 +401,7 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 - **`trace()`**: the span `request` has the `method`, the `path` without the query, which may hold a credential, the `operation` and the `request_id`. Each answer is logged once, `answered` with its status and latency: at `INFO`, and at `ERROR` for a 5xx the crate has not logged with its cause already, as it logs an `Error::internal`, an error of another API and a deadline.
 - **`timeout(duration)`**: it bounds the route's future, which reads the body and ends with the head of the answer, and not the body: an `Events`, a `JsonLines` or a `ByteStream` goes on past it. The 503 says the deadline, and is logged once.
 - **`body_limit(bytes)`**: a `Content-Length` past it is answered at once; a chunked body is read up to it. It sets axum's own limit, through which JSON, `Form`, `Text` and `Bytes` are read, and replaces its default of 2 MiB.
-- **`cors(origins)`** takes origins as text, `https://app.example.com`, and returns an error, `server::InvalidOrigin`, for one that is not an origin: `*`, `null`, a path. It allows the methods a contract serves, `OPTIONS` among them, any header a page asks for, and exposes `Location`, `WWW-Authenticate` and `X-Request-Id`. It allows no credentials: a page of another origin sends a token or a key in a header. A cookie scheme's CSRF check still trusts the server's own origin alone, so that a listed origin's call with the cookie, on a method other than `GET`, `HEAD` and `OPTIONS`, is answered 403. A preflight is an `OPTIONS` request with an `Origin` and an `Access-Control-Request-Method`: any other `OPTIONS` request reaches its route.
+- **`cors(origins)`** takes origins as text, `https://app.example.com`, and returns an error, `server::InvalidOrigin`, for one that is not an origin: `*`, `null`, a path. It allows `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS`, the methods a contract can serve, any header a page asks for, and exposes `Location`, `WWW-Authenticate` and `X-Request-Id`. It allows no credentials: a page of another origin sends a token or a key in a header. A cookie scheme's CSRF check still trusts the server's own origin alone, so that a listed origin's call with the cookie, on a method other than `GET`, `HEAD` and `OPTIONS`, is answered 403. A preflight is an `OPTIONS` request with an `Origin` and an `Access-Control-Request-Method`: any other `OPTIONS` request reaches its route.
 - **`compression()`** leaves out what tower-http's default does, small answers, images and server-sent events, and JSON Lines too, whose lines would wait in the encoder, and the answer of every route whose result is a stream, a `ByteStream` of any content type among them.
 
 ## Errors
@@ -462,12 +463,12 @@ build = ["npm", "run", "build"]       # run by `cargo quoll build`, after `gen`
 - **`cargo quoll dev`** runs `gen`, builds and starts the servers, then watches, each with its tree, the directories of the packages its apis and servers are built from and of their path dependencies outside the workspace, and of theirs, which count as the package of the workspace that depends on them, and the workspace's `Cargo.toml` and `Cargo.lock`, which count as every package. Left out are a package's own `target/`, hidden files and directories and `node_modules` at any depth, the target directory, the documents, and `web.dir`, but the packages inside it, as a Tauri app's `src-tauri`. A watcher that missed events, and asks for a rescan, counts as a change of every package. inotify watches each directory of a tree, `node_modules` and the target directory included, up to `fs.inotify.max_user_watches`: a package at the workspace's root that holds the web side may reach it, which a warning names; the limit is raised, or the web side kept out of that package. The packages, their dependencies and the config are read at the start: a change to them, a package or a path dependency added, is read by the next `cargo quoll dev`, though a change to a manifest makes everything again:
   - **A change to a contract crate**, or to a crate it depends on: its document, then its `after` if the document changed, or if it has not succeeded since the start, then the servers that depend on it. The contract crate holds no axum, so its binary builds in seconds. A document whose content did not change is not rewritten, so that the web side reloads nothing.
   - **A change to a server crate**: that server alone.
-  - **A server** runs the binary `cargo run` would: the package's only one, or its `default-run`. It is built with `--message-format=json`, and the one running stops only once the new one has compiled. A cargo error is printed with its message, and the last server that compiled keeps running. A build whose executable is the one that runs leaves it running. Its executable is copied out of the target directory before it runs, so that cargo builds the next one meanwhile, which Windows would refuse on an executable that runs, and it finds its dynamic libraries where `cargo run` gives them. A server is ready when its `url`'s host and port accept a connection. One that does not within a minute is stopped, and one that exits before it answers, or whose port another process holds, fails, reported as `failed` with its exit `code` when it has one. One that exits on its own is started again by the next change that touches it.
+  - **A server** runs the binary `cargo run` would: the package's only one, or its `default-run`. It is built with `--message-format=json`, its diagnostics rendered with ANSI colours when stderr is a terminal, and the one running stops only once the new one has compiled. A cargo error is printed with its message, and the last server that compiled keeps running. A build whose executable is the one that runs leaves it running. Its executable is copied under the target directory's `quoll-dev/`, out of cargo's own, before it runs, so that cargo builds the next one meanwhile, which Windows would refuse on an executable that runs, and it finds its dynamic libraries where `cargo run` gives them. A server is ready when its `url`'s host and port accept a connection. One that does not within a minute is stopped and fails, reported as `failed` with the exit `code` of that stop when it has one; one that exits before it answers, or whose port another process holds, fails too, reported as `failed` with its exit `code` when it has one. One that exits on its own is started again by the next change that touches it.
   - **`web.dev`** starts once, after the first round, each server ready or failed, its output passed through, and is not restarted: its bundler watches its own files.
   - **The children**, cargo's builds, the commands, the servers and `web.dev`, each run in a process group of their own on Unix and a job object on Windows, with their stdin closed, so that stopping one stops what it started, the bundler under `npm run dev`. On Unix a child's group is sent `SIGTERM`, then killed once its last process is gone or after 5 s; on Windows its job is terminated. The children of a round a signal cuts short are stopped the same way. Ctrl-C, `SIGTERM` or `SIGHUP` on Unix, Ctrl-C, Ctrl-Break or the console closing on Windows stop every child, `web.dev` first, and a second one kills them at once. A `cargo quoll dev` that is killed takes its children with it on Windows, through their jobs, not on Unix.
   - **`--json`** prints one JSON line per event on stdout, for a tool that reads them, the output for a person going to stderr with the children's:
     - `{"event": "document", "package": "notes-api", "path": "web/openapi.json", "changed": true}`: a document made, written when `changed`, its `path` as `output` writes it.
-    - `{"event": "error", "source": "cargo", "package": "notes-server", "message": "mismatched types", "file": "server/src/main.rs", "line": 12, "column": 5}`: an error of the compiler, where it points from the workspace's root, `file`, `line` and `column` null when it points nowhere. `source` is `quoll` for any other failure, a build, a binary or a command that fails, a server that exits before it answers, with no `file`, and no `package` when there is none.
+    - `{"event": "error", "source": "cargo", "package": "notes-server", "message": "mismatched types", "file": "server/src/main.rs", "line": 12, "column": 5}`: an error of the compiler, where it points from the workspace's root, `file`, `line` and `column` null when it points nowhere. `source` is `quoll` for any other failure, a build, a binary or a command that fails, a server that exits before it answers, its `file`, `line` and `column` null, and its `package` null when there is none. Every field of an `error` event is written, null when it has no value; the `code` of a `server` or a `web` event is left out when it has none.
     - `{"event": "server", "state": "ready", "package": "notes-server", "url": "http://127.0.0.1:8080"}`: `state` is `building`, then `ready`, or `failed` when it does not compile or cannot start, the last one that compiled keeping on, with its exit `code` when it exited; `stopped` for a newer build, at the end or on its own, with its exit `code` when it has one.
     - `{"event": "web", "state": "started"}`, then `stopped`, with its exit `code` when it has one.
 
@@ -1270,10 +1271,13 @@ export function NoteView({ id, onClosed, onExpired }: Props) {
   const changed = useEffectEvent((event: NoteEvent) => {
     listChanged();
 
-    if (isRemoved(event)) {
-      onClosed();
-    } else {
-      refetch();
+    switch (event.kind) {
+      case "edited":
+        refetch();
+        break;
+      case "removed":
+        onClosed();
+        break;
     }
   });
 
@@ -1331,11 +1335,6 @@ export function NoteView({ id, onClosed, onExpired }: Props) {
       )}
     </>
   );
-}
-
-// orval types the `edited` event as the plain `Note` it holds, without its `kind`.
-function isRemoved(event: NoteEvent): event is Extract<NoteEvent, { kind: "removed" }> {
-  return "kind" in event && event.kind === "removed";
 }
 
 type NoteTextProps = {
