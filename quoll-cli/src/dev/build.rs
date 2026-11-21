@@ -16,8 +16,6 @@ use crate::dev::process::Child;
 #[derive(Debug)]
 pub(crate) struct Built {
     pub(crate) executable: PathBuf,
-    /// Whether cargo found it up to date, and built nothing.
-    pub(crate) fresh: bool,
 }
 
 /// Builds the binary `bin` of `package`. Each diagnostic of rustc is printed, and each error is an event.
@@ -54,10 +52,7 @@ pub(crate) async fn build(
 
         match Message::parse(line.as_bytes())? {
             Message::Artifact(artifact) if artifact.is_binary(package, bin) => {
-                built = artifact.executable.map(|executable| Built {
-                    executable,
-                    fresh: artifact.fresh,
-                });
+                built = artifact.executable.map(|executable| Built { executable });
             }
             Message::Diagnostic(message) => {
                 let package = workspace

@@ -207,9 +207,6 @@ pub(crate) struct Artifact {
     package_id: String,
     target: Target,
     pub(crate) executable: Option<PathBuf>,
-    /// Whether cargo found the target up to date, and built nothing.
-    #[serde(default)]
-    pub(crate) fresh: bool,
 }
 
 impl Artifact {

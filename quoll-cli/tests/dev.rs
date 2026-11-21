@@ -66,13 +66,18 @@ struct Dev {
 
 impl Dev {
     fn start(fixture: &Fixture) -> Self {
-        let server = free_address();
+        Self::start_with(fixture, free_address(), |config| config)
+    }
+
+    /// `cargo quoll dev` with its server on `server`, and the config `edit` makes of the tests' one.
+    fn start_with(fixture: &Fixture, server: SocketAddr, edit: impl Fn(String) -> String) -> Self {
+        let config = edit(CONFIG.replace("{address}", &server.to_string()));
 
         fs::write(
             fixture.path("Cargo.toml"),
             fs::read_to_string(fixture.path("Cargo.toml"))
                 .expect("the workspace's Cargo.toml is read")
-                + &CONFIG.replace("{address}", &server.to_string()),
+                + &config,
         )
         .expect("the config is written");
 
@@ -492,6 +497,154 @@ fn a_server_that_does_not_compile_leaves_the_last_one_running() {
     dev.ready();
 
     assert_eq!(dev.get(), format!("server 3 {DOCUMENT}"));
+}
+
+#[test]
+fn a_web_side_at_the_workspace_s_root_leaves_the_packages_watched() {
+    let fixture = Fixture::new("");
+    let mut dev = Dev::start_with(&fixture, free_address(), |config| {
+        config.replace("dir = \"web\"", "dir = \".\"")
+    });
+    let server = fixture.path("server/src/main.rs");
+    let source = fs::read_to_string(&server).expect("the server is read");
+
+    dev.ready();
+
+    fs::write(&server, with_version(&source, "server 2")).expect("the server is written");
+    dev.ready();
+
+    assert_eq!(dev.get(), format!("server 2 {DOCUMENT}"));
+}
+
+#[test]
+fn a_directory_made_after_the_start_is_watched() {
+    let fixture = Fixture::new("");
+    let mut dev = Dev::start(&fixture);
+
+    dev.ready();
+
+    fs::create_dir_all(fixture.path("server/assets/icons")).expect("the directory is made");
+    dev.ready();
+
+    fs::write(fixture.path("server/assets/icons/logo.svg"), "<svg/>").expect("the file is written");
+    let events = dev.ready();
+
+    position(&events, |event| is(event, "server", "building"));
+}
+
+#[test]
+fn a_document_written_inside_its_contract_starts_no_round() {
+    let fixture = Fixture::new("");
+
+    // No `after`, which would write its own files beside the document, in the contract.
+    fs::create_dir(fixture.path("web")).expect("the directory is made");
+    let mut dev = Dev::start_with(&fixture, free_address(), |config| {
+        config
+            .replace(
+                "output = \"web/openapi.json\"",
+                "output = \"contract/openapi.json\"",
+            )
+            .replace("after = [[\"record\", \"after\"]]\n", "")
+    });
+    let server = fixture.path("server/src/main.rs");
+    let source = fs::read_to_string(&server).expect("the server is read");
+
+    dev.ready();
+
+    fs::write(&server, with_version(&source, "server 2")).expect("the server is written");
+    let events = dev.ready();
+
+    assert!(
+        !events.iter().any(|event| event["event"] == "document"),
+        "the document's first write is no change of its contract: {events:?}"
+    );
+    assert_eq!(dev.get(), format!("server 2 {DOCUMENT}"));
+}
+
+#[test]
+fn a_server_built_by_another_cargo_is_restarted() {
+    let fixture = Fixture::new("");
+    let mut dev = Dev::start(&fixture);
+    let server = fixture.path("server/src/main.rs");
+    let source = fs::read_to_string(&server).expect("the server is read");
+
+    dev.ready();
+
+    // The edit, then a build before the one of `cargo quoll dev`, which waits for its lock and finds it fresh.
+    fs::write(&server, with_version(&source, "server 2")).expect("the server is written");
+    let status =
+        std::process::Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+            .args(["build", "--quiet", "--package", "server"])
+            .current_dir(fixture.path(""))
+            .env_remove("CARGO_TARGET_DIR")
+            .env_remove("CARGO_BUILD_TARGET_DIR")
+            .status()
+            .expect("cargo runs");
+    assert!(status.success(), "the server builds");
+    dev.ready();
+
+    assert_eq!(dev.get(), format!("server 2 {DOCUMENT}"));
+}
+
+#[test]
+fn after_runs_once_its_contract_is_fixed_though_the_document_did_not_change() {
+    let fixture = Fixture::new("");
+    let openapi = fixture.path("contract/src/bin/openapi.rs");
+    let source = fs::read_to_string(&openapi).expect("the contract's binary is read");
+
+    // A committed document, and a contract that does not compile at the start.
+    fs::create_dir(fixture.path("web")).expect("the directory is made");
+    fs::write(fixture.path("web/openapi.json"), format!("{DOCUMENT}\n"))
+        .expect("the document is written");
+    fs::write(&openapi, "fn main() { not_rust }\n").expect("the binary is broken");
+
+    let mut dev = Dev::start(&fixture);
+    let events = dev.until("web started", |event| is(event, "web", "started"));
+
+    assert!(
+        events
+            .iter()
+            .any(|event| event["event"] == "error" && event["package"] == "contract"),
+        "{events:?}"
+    );
+    assert_eq!(
+        record(&fixture),
+        "",
+        "after does not run without its document"
+    );
+
+    fs::write(&openapi, &source).expect("the binary is fixed");
+    let events = dev.ready();
+
+    let document = position(&events, |event| event["event"] == "document");
+    assert_eq!(events[document]["changed"], false);
+    assert_eq!(
+        record(&fixture),
+        "after\n",
+        "after runs, which it could not at the start"
+    );
+}
+
+#[test]
+fn a_port_held_by_another_process_fails_the_server() {
+    let fixture = Fixture::new("");
+    let stray = TcpListener::bind("127.0.0.1:0").expect("a port is free");
+    let address = stray.local_addr().expect("the listener has an address");
+    let mut dev = Dev::start_with(&fixture, address, |config| config);
+
+    let events = dev.until("server failed", |event| is(event, "server", "failed"));
+
+    assert!(
+        !events.iter().any(|event| is(event, "server", "ready")),
+        "the stray process is no server: {events:?}"
+    );
+    let error = &events[position(&events, |event| event["event"] == "error")];
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("another process answers")),
+        "{error}"
+    );
 }
 
 /// Sends `signal` once everything runs, and checks that `cargo quoll dev` stopped the server and `web-dev`.

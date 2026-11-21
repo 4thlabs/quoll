@@ -59,6 +59,11 @@ impl Child {
         self.inner.wait().await
     }
 
+    /// The child's status when it exited, none when it runs.
+    pub(crate) fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        self.inner.try_wait()
+    }
+
     /// Stops the child and what it started. On Unix, its group is asked to stop with `SIGTERM`, then killed after a
     /// grace. On Windows, its job is terminated at once: a console's Ctrl-Break, the gentle stop, is sent through an
     /// API this crate, which has no `unsafe`, does not call.

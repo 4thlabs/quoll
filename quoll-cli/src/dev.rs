@@ -30,12 +30,29 @@ use crate::documents;
 
 /// Runs the dev loop until it is asked to stop, then stops every child. `json` prints its events on stdout.
 pub(crate) fn run(workspace: &Workspace, json: bool) -> Result<()> {
+    let reporter = Reporter::new(json);
+    let graph = Graph::new(workspace);
+    let config = &workspace.config;
+    let roots: Vec<_> = config
+        .apis
+        .iter()
+        .map(|api| api.package.as_str())
+        .chain(config.servers.iter().map(|server| server.package.as_str()))
+        .map(|package| graph.index(package))
+        .collect();
+    let (sender, receiver) = mpsc::unbounded_channel();
+    // Watching starts before the first round, so that a change made meanwhile is seen. It reads the file system, as
+    // the graph does, before the runtime starts.
+    let (_watcher, watched) = watch::start(workspace, graph.clone(), roots, sender)?;
+
+    reporter.status("Watching", format!("{watched} package(s)"));
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("cannot start the runtime of `cargo quoll dev`")?;
 
-    runtime.block_on(Dev::new(workspace, Reporter::new(json)).run())
+    runtime.block_on(Dev::new(workspace, reporter, graph).run(receiver))
 }
 
 /// The documents to make again in a round, and the servers to restart: those a change touches.
@@ -45,13 +62,6 @@ enum Changed {
     All,
     /// The packages whose files changed, by their index in the workspace.
     Packages(BTreeSet<usize>),
-}
-
-/// Whether a document's `after` runs when the document did not change: at the start, as `gen` does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum After {
-    Always,
-    WhenChanged,
 }
 
 /// A child that exited on its own.
@@ -69,42 +79,34 @@ struct Dev<'a> {
     web: Option<Child>,
     web_started: bool,
     copies: Copies,
+    /// For each api, whether its `after` has to run, though its document did not change: at the start, as `gen`
+    /// runs it, and until every command of a run of it succeeded, so that a document made while it could not run
+    /// still gets its TypeScript.
+    after_pending: Vec<bool>,
 }
 
 impl<'a> Dev<'a> {
-    fn new(workspace: &'a Workspace, reporter: Reporter) -> Self {
+    fn new(workspace: &'a Workspace, reporter: Reporter, graph: Graph) -> Self {
         Self {
             workspace,
             reporter,
-            graph: Graph::new(workspace),
+            graph,
             servers: workspace.config.servers.iter().map(Server::new).collect(),
             web: None,
             web_started: false,
             copies: Copies::new(workspace),
+            after_pending: vec![true; workspace.config.apis.len()],
         }
     }
 
-    async fn run(mut self) -> Result<()> {
+    async fn run(mut self, mut receiver: mpsc::UnboundedReceiver<Watched>) -> Result<()> {
         let mut shutdown =
             Shutdown::new().context("cannot listen to the signals that stop `cargo quoll dev`")?;
-        let (sender, mut receiver) = mpsc::unbounded_channel();
-        let config = &self.workspace.config;
-        let roots = config
-            .apis
-            .iter()
-            .map(|api| api.package.as_str())
-            .chain(config.servers.iter().map(|server| server.package.as_str()))
-            .map(|package| self.graph.index(package))
-            .collect::<Vec<_>>();
-        // Watching starts before the first round, so that a change made meanwhile is seen.
-        let (_watcher, watched) = watch::start(self.workspace, roots, sender)?;
 
-        self.copies.clear().await;
-        self.reporter
-            .status("Watching", format!("{watched} package(s)"));
+        self.copies.clear(&self.reporter).await;
 
         let result = tokio::select! {
-            () = self.round(&Changed::All, After::Always) => self.watch(&mut receiver, &mut shutdown).await,
+            () = self.round(&Changed::All) => self.watch(&mut receiver, &mut shutdown).await,
             () = shutdown.requested() => Ok(()),
         };
 
@@ -154,7 +156,7 @@ impl<'a> Dev<'a> {
                     let changed = Changed::Packages(changed);
 
                     tokio::select! {
-                        () = self.round(&changed, After::WhenChanged) => {}
+                        () = self.round(&changed) => {}
                         () = shutdown.requested() => return Ok(()),
                     }
                 }
@@ -173,13 +175,17 @@ impl<'a> Dev<'a> {
 
     /// Makes the documents `changed` touches, then restarts the servers it touches, then starts `web.dev` once
     /// every server is ready.
-    async fn round(&mut self, changed: &Changed, after: After) {
+    async fn round(&mut self, changed: &Changed) {
         let workspace = self.workspace;
 
-        for api in &workspace.config.apis {
-            if self.touches(changed, &api.package)
-                && let Err(error) = document(workspace, &self.reporter, api, after).await
-            {
+        for (index, api) in workspace.config.apis.iter().enumerate() {
+            if !self.touches(changed, &api.package) {
+                continue;
+            }
+
+            let pending = &mut self.after_pending[index];
+
+            if let Err(error) = document(workspace, &self.reporter, api, pending).await {
                 self.reporter.error(Some(&api.package), &error);
             }
         }
@@ -192,7 +198,7 @@ impl<'a> Dev<'a> {
             }
         }
 
-        self.start_web();
+        self.start_web().await;
     }
 
     /// Whether `changed` touches `package`: a change of it or of a package it is built with.
@@ -207,7 +213,7 @@ impl<'a> Dev<'a> {
             .any(|&changed| self.graph.depends_on(package, changed))
     }
 
-    fn start_web(&mut self) {
+    async fn start_web(&mut self) {
         if self.web_started || !self.servers.iter().all(Server::is_ready) {
             return;
         }
@@ -221,7 +227,7 @@ impl<'a> Dev<'a> {
             return;
         };
 
-        match spawn(dev, &self.workspace.root.join(&web.dir), &self.reporter) {
+        match spawn(dev, &self.workspace.root.join(&web.dir), &self.reporter).await {
             Ok(child) => {
                 self.web = Some(child);
                 self.reporter.event(&Event::Web {
@@ -298,13 +304,13 @@ async fn exited(servers: &mut [Server<'_>], web: Option<&mut Child>) -> Exit {
     .await
 }
 
-/// Makes `api`'s document: written when its content changed, then its `after` commands when it changed or `after`
-/// says always.
+/// Makes `api`'s document, written when its content changed, then runs its `after` commands when it changed or
+/// `after_pending` says they have to run. `after_pending` is left set until every command succeeded.
 async fn document(
     workspace: &Workspace,
     reporter: &Reporter,
     api: &Api,
-    after: After,
+    after_pending: &mut bool,
 ) -> Result<()> {
     let package = workspace.package(&api.package);
     let built = build::build(workspace, package, &api.bin, reporter)
@@ -359,14 +365,16 @@ async fn document(
         changed,
     });
 
-    if !changed && after == After::WhenChanged {
+    *after_pending |= changed;
+
+    if !*after_pending {
         return Ok(());
     }
 
     let dir = path.parent().unwrap_or(&workspace.root);
 
     for command in &api.after {
-        let mut child = spawn(command, dir, reporter)?;
+        let mut child = spawn(command, dir, reporter).await?;
         let status = child
             .wait()
             .await
@@ -375,12 +383,19 @@ async fn document(
         command.check(status)?;
     }
 
+    *after_pending = false;
+
     Ok(())
 }
 
-/// Starts `command` in `dir`, its stdout where the reporter says.
-fn spawn(command: &Command, dir: &Path, reporter: &Reporter) -> Result<Child> {
-    let mut process = command.process(dir)?;
+/// Starts `command` in `dir`, its stdout where the reporter says. Its program is found on the PATH apart from the
+/// runtime, as it reads the file system.
+async fn spawn(command: &Command, dir: &Path, reporter: &Reporter) -> Result<Child> {
+    let found = command.clone();
+    let in_dir = dir.to_path_buf();
+    let mut process = tokio::task::spawn_blocking(move || found.process(&in_dir))
+        .await
+        .context("the search of a program panicked")??;
 
     process.stdout(
         reporter
