@@ -39,7 +39,11 @@
 //!
 //! In JSON too a joined field is its text, or `null` for an empty list, as its schema says. Its schema carries a mark
 //! that the OpenAPI document turns into the parameter's style, `explode: false`, with the list's own schema, as it
-//! unfolds a query struct into its keys.
+//! unfolds a query struct into its keys: a `#[schemars(with = ...)]` or `schema_with` on the field would replace it,
+//! and the document would describe a key repeated.
+//!
+//! Unlike a route's `#[join(sep)]`, which the macro checks, nothing checks at compile time that the items are read
+//! from text: a list of structs compiles, and fails when it is written or read.
 
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -125,10 +129,10 @@ macro_rules! joined {
 }
 
 joined! {
-    /// A list joined with `,`, `ids=1,2`: `style: form, explode: false` in OpenAPI.
+    /// A list joined with `,`, which serde_html_form escapes, `ids=1%2C2`: `style: form, explode: false` in OpenAPI.
     Comma => Comma;
-    /// A list joined with a space, `ids=1+2`: `style: spaceDelimited`.
+    /// A list joined with a space, which serde_html_form escapes, `ids=1+2`: `style: spaceDelimited`.
     Space => Space;
-    /// A list joined with `|`, `ids=1|2`: `style: pipeDelimited`.
+    /// A list joined with `|`, which serde_html_form escapes, `ids=1%7C2`: `style: pipeDelimited`.
     Pipe => Pipe;
 }
