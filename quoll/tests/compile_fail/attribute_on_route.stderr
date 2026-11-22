@@ -1,4 +1,4 @@
-error: an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, `#[error(...)]` on the api, a group or a route, and `#[openapi(none)]` on the api
+error: an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, `#[error(...)]` and `#[header(...)]` on the api, a group or a route, and `#[openapi(none)]` on the api
  --> tests/compile_fail/attribute_on_route.rs:7:9
   |
 7 |         #[deprecated]

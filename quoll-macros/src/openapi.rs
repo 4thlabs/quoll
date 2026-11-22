@@ -9,6 +9,7 @@ use syn::spanned::Spanned;
 use syn::{LitStr, Type, ext::IdentExt};
 
 use crate::descriptor::{Cx, below_prefix, descriptor_name};
+use crate::headers::{api_headers, route_headers};
 use crate::model::{Api, Group, Param, ParamKind, Route, SchemeKind, is_vec, option_inner};
 use crate::scheme::scheme_type;
 
@@ -41,6 +42,7 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
     let vis = &api.vis;
     let docs = &api.docs.0;
     let prefix = &api.prefix;
+    let headers = api_headers(&api.headers);
     let listed = listed(api);
     let checks = name_checks(api, &listed);
     let declared = api.schemes.iter().map(|scheme| {
@@ -94,6 +96,7 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
                         ::core::option::Option::None => "0.0.0",
                     },
                     prefix: #prefix,
+                    headers: #headers,
                     schemes: &[#(#declared),*],
                     groups: &[#(#groups),*],
                 };
@@ -313,6 +316,8 @@ fn route_description(group: &Group, route: &Route) -> TokenStream {
         }
     };
 
+    let headers = route_headers(group, route);
+
     quote! {
         ::quoll::__private::openapi::Route {
             id: #id,
@@ -320,6 +325,7 @@ fn route_description(group: &Group, route: &Route) -> TokenStream {
             path: #path,
             docs: &[#(#docs),*],
             params: &[#(#params),*],
+            headers: #headers,
             body: #body,
             reply: #reply,
             auth: #auth,

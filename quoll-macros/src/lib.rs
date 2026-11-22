@@ -4,6 +4,7 @@ mod client;
 mod descriptor;
 mod docs;
 mod expand;
+mod headers;
 mod known;
 mod model;
 mod openapi;
@@ -44,6 +45,10 @@ use crate::syntax::{Contract, GroupContract};
 ///
 /// `#[error(E)]` on the api, a group or a route names the shape of the errors another API answers, which the client
 /// reads: the nearest to a route wins, and a route without one has RFC 9457 problems.
+///
+/// `#[header("name" = value)]` on the api, a group or a route fixes a header its requests send, the value a string or
+/// a `&str` constant's name: the nearest to a route wins, below an argument of the same header, `#[header("name" =
+/// none)]` leaves one of its parent's, and `#[header(none)]` all of them.
 ///
 /// A route is `METHOD "path?query" => function(arguments) -> Result;`, with no `->` for a route that returns nothing.
 /// An argument is a `{name}` of the path or a `key={name}` of the query by its name, a query struct as `query filter:
@@ -107,7 +112,8 @@ pub fn api(input: TokenStream) -> TokenStream {
 /// implementing `quoll::rest::Scheme`. The group has an OpenAPI document, for which each type it names implements
 /// `schemars::JsonSchema`, unless it says `#[openapi(none)]`, as the group of an api that has none. Its client's trait
 /// is written in its block, before an api lists it: the group says the shape of its errors itself, `#[error(E)]`, and an
-/// api with an `#[error(...)]` lists only groups that say one.
+/// api with an `#[error(...)]` lists only groups that say one. The group takes the fixed headers, `#[header(...)]`, of
+/// the api that lists it, which checks what the group leaves of them.
 ///
 /// The api lists the group by its path, `notes::Notes`. A group named alone, `{ Notes }`, is one in the api's module,
 /// or brought by a glob import, `use notes::*;`. The api reads the group's routes through its hidden descriptor,

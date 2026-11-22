@@ -12,12 +12,13 @@ use crate::known::{BodyKind, Known, ResultKind};
 use crate::path::{Segment, Template, literal_problem};
 
 mod auth;
+pub(crate) mod headers;
 
-#[cfg(test)]
-pub(crate) use auth::Location;
 pub(crate) use auth::{
-    Auth, Bounds, DeclaredKind, DeclaredScheme, MAX_ALTERNATIVES, RouteAuth, Scheme, SchemeKind,
+    Auth, Bounds, DeclaredKind, DeclaredScheme, Location, MAX_ALTERNATIVES, RouteAuth, Scheme,
+    SchemeKind,
 };
+pub(crate) use headers::{Fixed, HeaderAttr, Headers, Value};
 
 /// The `///` comments of an item, one string per line, as rustc gives them (with their leading space).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -47,6 +48,8 @@ pub(crate) struct Api {
     /// The shape of the errors of its routes, its `#[error(E)]`, which the groups of its block take unless they or
     /// their routes name their own; `None` for an RFC 9457 problem.
     pub(crate) error: Option<Type>,
+    /// Its `#[header(...)]`s, which every route takes unless its group or itself leaves them.
+    pub(crate) headers: Headers,
 }
 
 /// Routes that go together: one service on the server, one trait on the client, one tag in OpenAPI.
@@ -60,6 +63,8 @@ pub(crate) struct Group {
     pub(crate) name: Ident,
     /// The group's own `#[error(E)]`, which its routes take unless they name their own.
     pub(crate) error: Option<Type>,
+    /// The group's own `#[header(...)]`s, which its routes take unless they leave them.
+    pub(crate) headers: Headers,
     /// The routes, in the order they are written.
     pub(crate) routes: Vec<Route>,
 }
@@ -141,6 +146,8 @@ pub(crate) struct Route {
     pub(crate) auth: Option<RouteAuth>,
     /// The route's own `#[error(E)]`, which wins over its group's and its api's.
     pub(crate) error: Option<Type>,
+    /// The route's own `#[header(...)]`s, which win over its group's and its api's.
+    pub(crate) headers: Headers,
     /// The span of the route's string, where a mistake about the route as a whole is pointed.
     pub(crate) span: Span,
 }
@@ -316,6 +323,8 @@ pub(crate) struct RouteDecl {
     pub(crate) auth: Option<Auth>,
     /// The route's own `#[error(E)]`, if it has one.
     pub(crate) error: Option<Type>,
+    /// The route's own `#[header(...)]`s.
+    pub(crate) headers: Headers,
 }
 
 impl Route {
@@ -340,6 +349,7 @@ impl Route {
             reply,
             auth,
             error,
+            headers,
         } = decl;
         let template = Template::parse(&path)?;
 
@@ -372,6 +382,7 @@ impl Route {
             reply,
             auth,
             error,
+            headers,
             span: path.span(),
         })
     }
@@ -896,6 +907,7 @@ impl Api {
             groups,
             openapi: true,
             error: None,
+            headers: Headers::default(),
         };
         api.check_unique(&mut errors);
         auth::resolve(&mut api, &mut errors);
@@ -921,6 +933,7 @@ impl Api {
             groups: vec![group],
             openapi: true,
             error: None,
+            headers: Headers::default(),
         };
         api.check_unique(&mut errors);
         auth::resolve(&mut api, &mut errors);
@@ -971,6 +984,7 @@ impl Api {
                     vis: Visibility::Inherited,
                     name: name.clone(),
                     error: None,
+                    headers: Headers::default(),
                     routes: Vec::new(),
                 };
 
@@ -1446,6 +1460,7 @@ mod tests {
             vis: Visibility::Inherited,
             name: Ident::new("Type", Span::call_site()),
             error: None,
+            headers: Headers::default(),
             routes: Vec::new(),
         };
 

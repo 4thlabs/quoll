@@ -11,6 +11,7 @@ use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::descriptor::{Cx, descriptor_name, table};
 use crate::docs::{doc_attrs, route_docs};
+use crate::headers::{api_headers, route_headers};
 use crate::model::{Api, Param, Route};
 use crate::path::Segment;
 
@@ -170,6 +171,7 @@ fn group_client(cx: &Cx) -> TokenStream {
     let http = Ident::new("client", Span::mixed_site());
     let prefix = Ident::new("prefix", Span::mixed_site());
     let routes = Ident::new("routes", Span::mixed_site());
+    let headers = Ident::new("headers", Span::mixed_site());
 
     quote! {
         #[doc = #docs]
@@ -178,6 +180,7 @@ fn group_client(cx: &Cx) -> TokenStream {
             client: ::quoll::__private::client::Client,
             prefix: &'static str,
             routes: &'static [::quoll::rest::Route; #count],
+            headers: &'static [::quoll::__private::headers::Fixed],
         }
 
         impl #name for #client {
@@ -186,16 +189,19 @@ fn group_client(cx: &Cx) -> TokenStream {
 
         impl #descriptor {
             /// The group's client, calling through `client` the routes of `routes`, the table of the api that lists
-            /// the group, each path under `prefix`, the api's.
+            /// the group, each path under `prefix`, the api's, with the fixed headers of the api, `headers`, that
+            /// each route takes.
             pub fn client(
                 #http: ::quoll::__private::client::Client,
                 #prefix: &'static str,
                 #routes: &'static [::quoll::rest::Route; #count],
+                #headers: &'static [::quoll::__private::headers::Fixed],
             ) -> #client {
                 #client {
                     client: #http,
                     prefix: #prefix,
                     routes: #routes,
+                    headers: #headers,
                 }
             }
         }
@@ -232,6 +238,7 @@ fn method(cx: &Cx, index: usize, route: &Route) -> TokenStream {
 
         quote_spanned! {ty.span()=> .#write(#name) #fallible }
     });
+    let fixed = route_headers(cx.group, route);
     let accept = route.reply.as_deref().map(|returned| {
         let media_type = Ident::new(returned.kind().accept, returned.served.span());
 
@@ -265,6 +272,7 @@ fn method(cx: &Cx, index: usize, route: &Route) -> TokenStream {
                         #query_struct
                         #(#headers)*
                         #body
+                        .fixed(self.headers, &const { #fixed })
                         #accept
                 ),
             );
@@ -357,10 +365,11 @@ fn api_client(api: &Api) -> TokenStream {
         let descriptor = group.descriptor();
         let table = table(api, &group);
         let prefix = &api.prefix;
+        let headers = api_headers(&api.headers);
         let docs = format!(" The client of the group `{}`.", group.name.unraw());
 
         let call = quote_spanned! {group.span()=>
-            #descriptor::client(::core::clone::Clone::clone(&self.client), #prefix, #table)
+            #descriptor::client(::core::clone::Clone::clone(&self.client), #prefix, #table, #headers)
         };
 
         quote! {

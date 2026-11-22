@@ -157,6 +157,62 @@ The server answers 415 to a body without the content type it reads, and 400 to o
 The doc of `quoll::rest` gives the rules of each form in full: an empty query value, a header given twice, a path
 parameter whose type is a struct.
 
+## Fixed headers
+
+An api that asks every request for headers of its own, a version or a media type, says them in the contract with
+`#[header("name" = value)]`, on the api, a group or a route:
+
+```rust
+use quoll::rest::{self, Bytes};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Repository {
+    pub full_name: String,
+}
+
+/// The version of the REST API the contract follows.
+pub const VERSION: &str = "2022-11-28";
+
+rest::api! {
+    #[openapi(none)]
+    #[header("Accept" = "application/vnd.github+json")]
+    #[header("X-GitHub-Api-Version" = VERSION)]
+    pub api GitHub = "";
+
+    pub group Repos {
+        GET "/repos/{owner}/{repo}" => get(owner: String, repo: String) -> Repository;
+
+        #[header("Accept" = "application/vnd.github.raw+json")]
+        GET "/repos/{owner}/{repo}/readme" => readme(owner: String, repo: String) -> Bytes;
+
+        // Leaves one header of the api.
+        #[header("X-GitHub-Api-Version" = none)]
+        GET "/zen" => zen() -> String;
+    }
+
+    // Leaves every header of the api.
+    #[header(none)]
+    pub group Status {
+        GET "/status" => status() -> String;
+    }
+}
+```
+
+- A value is a string or the name of a `&str` constant, checked at compile time. A value that changes from call to
+  call is an argument, `header("Stripe-Account") account: Option<String>`, and one of a deployment, a signature or a
+  tenant, goes through `client::on_request`.
+- A group or a route takes its parent's headers, and the nearest to the call wins: an argument of the same header the
+  caller gives, then the route, the group and the api. quoll's own `Accept` comes last.
+- `#[header("X" = none)]` leaves one header the group or the route would take, `#[header(none)]` all of them; the
+  headers written beside it are its own. A `none` on a header the parent does not fix does not compile. A `none` never removes what quoll writes: `#[header("Accept" = none)]` gives the route quoll's
+  `Accept` back.
+- A `Content-Type` keeps the media type of the body, adding a parameter: `application/json; charset=utf-8` on a JSON
+  body. A request with no body sends none.
+- A group of another block takes the headers of the api that lists it.
+- The server does not check them. The OpenAPI document describes each one as a header parameter of its value, which a
+  caller need not send.
+
 ## Results
 
 | The route returns | The server answers                   | The client returns |
@@ -329,6 +385,7 @@ fn main() {
 - A group named alone, `{ Notes }`, is one in the api's module, or brought by a glob import, `use notes::*;`.
 - Schemes are declared in the api alone. A `rest::group!` names one by its path, `#[auth(crate::Key)]`, or through an
   import.
+- A group takes the fixed headers of the api that lists it, which checks what the group leaves of them.
 - The api checks its groups against each other at compile time: one method and path twice, one operation id twice, a
   group less visible than the api, do not compile, and the error points at the group in the list.
 - Two apis may list one group: each serves it under its own prefix.

@@ -24,8 +24,8 @@ use syn::{
 };
 
 use crate::model::{
-    Api, ArgDecl, Auth, DeclaredScheme, Docs, ErrorList, Group, MAX_ALTERNATIVES, Method, Route,
-    RouteAuth, RouteDecl, Scheme, Source,
+    Api, ArgDecl, Auth, DeclaredScheme, Docs, ErrorList, Fixed, Group, HeaderAttr, Headers,
+    MAX_ALTERNATIVES, Method, Route, RouteAuth, RouteDecl, Scheme, Source, Value, headers,
 };
 
 /// What the macro is given: one api, with its groups.
@@ -69,6 +69,7 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             auth,
             openapi,
             error,
+            headers,
         } = parse_attrs(input)?;
         let vis: Visibility = input.parse()?;
         let keyword = input.call(Ident::parse_any).map_err(|error| {
@@ -100,7 +101,8 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         };
         let auth = auth.and_then(|(_, auth)| keep(errors, auth));
         let error = error.and_then(|(_, error)| keep(errors, error));
-        let read = parse_group(input, docs, vis, auth.as_ref(), error, errors)?;
+        let headers = keep(errors, headers).unwrap_or_default();
+        let read = parse_group(input, docs, vis, auth.as_ref(), error, headers, errors)?;
 
         match &group {
             Some((first, _)) => errors.push(Error::new(
@@ -123,6 +125,7 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
 
     let mut api = Api::alone(group).map_err(|error| fold(errors, error))?;
     api.openapi = document;
+    headers::check(&api.groups, None, errors);
 
     Ok(api)
 }
@@ -140,6 +143,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             auth,
             openapi,
             error,
+            headers,
         } = parse_attrs(input)?;
         let vis: Visibility = input.parse()?;
         let keyword = input.call(Ident::parse_any).map_err(|error| {
@@ -162,7 +166,8 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 None => true,
             };
             let error = error.and_then(|(_, error)| keep(errors, error));
-            let decl = ApiDecl::parse(input, docs, vis, openapi, error, &keyword)?;
+            let mut decl = ApiDecl::parse(input, docs, vis, openapi, error, &keyword)?;
+            decl.headers = keep(errors, headers).unwrap_or_default();
             match &api {
                 Some(first) => errors.push(Error::new(
                     keyword.span(),
@@ -187,6 +192,12 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                     "a scheme takes no `#[error(...)]`: put it on the api, a group or a route, whose errors it reads",
                 ));
             }
+            if !headers.as_ref().is_ok_and(Headers::is_empty) {
+                errors.push(Error::new(
+                    keyword.span(),
+                    "a scheme takes no `#[header(...)]`: put it on the api, a group or a route, whose requests send it",
+                ));
+            }
 
             match parse_scheme(input, docs, vis)? {
                 Ok(scheme) => schemes.push(scheme),
@@ -196,7 +207,16 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             refuse_openapi(errors, openapi.as_ref(), "a group");
             let auth = auth.and_then(|(_, auth)| keep(errors, auth));
             let error = error.and_then(|(_, error)| keep(errors, error));
-            groups.push(parse_group(input, docs, vis, auth.as_ref(), error, errors)?);
+            let headers = keep(errors, headers).unwrap_or_default();
+            groups.push(parse_group(
+                input,
+                docs,
+                vis,
+                auth.as_ref(),
+                error,
+                headers,
+                errors,
+            )?);
         } else {
             return Err(unexpected_item(&keyword));
         }
@@ -211,6 +231,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
 
     let openapi = api.openapi;
     let error = api.error;
+    let api_headers = api.headers;
     let mut api = Api::new(
         api.docs,
         api.vis,
@@ -223,6 +244,8 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     .map_err(|error| fold(errors, error))?;
     api.openapi = openapi;
     api.error = error;
+    api.headers = api_headers;
+    headers::check(&api.groups, Some((&api, &api.headers)), errors);
 
     Ok(api)
 }
@@ -269,6 +292,7 @@ struct ApiDecl {
     vis: Visibility,
     openapi: bool,
     error: Option<Type>,
+    headers: Headers,
     name: Ident,
     prefix: LitStr,
     listed: Vec<syn::Path>,
@@ -312,6 +336,7 @@ impl ApiDecl {
             vis,
             openapi,
             error,
+            headers: Headers::default(),
             name,
             prefix,
             listed,
@@ -373,13 +398,15 @@ fn parse_scheme(input: ParseStream, docs: Docs, vis: Visibility) -> Result<Resul
 }
 
 /// After the `group` keyword: `Name { routes }`, whose routes take `auth` unless they say otherwise, and the group's
-/// own `#[error(E)]`, `error`. A mistake in one route is gathered, the others are still read.
+/// own `#[error(E)]`, `error`, and `#[header(...)]`s, `headers`. A mistake in one route is gathered, the others are
+/// still read.
 fn parse_group(
     input: ParseStream,
     docs: Docs,
     vis: Visibility,
     auth: Option<&Auth>,
     error: Option<Type>,
+    headers: Headers,
     errors: &mut ErrorList,
 ) -> Result<Group> {
     let name: Ident = input.parse().map_err(|error| {
@@ -405,6 +432,7 @@ fn parse_group(
         vis,
         name,
         error,
+        headers,
         routes,
     })
 }
@@ -417,6 +445,7 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
         auth,
         openapi,
         error,
+        headers,
     } = parse_attrs(input)?;
     let method = parse_method(input)?;
     let path: LitStr = input.parse().map_err(|error| {
@@ -466,6 +495,18 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
         }
     };
 
+    let headers = match headers {
+        Ok(headers) => headers,
+        Err(refused) => {
+            match &mut attr_error {
+                Some(error) => error.combine(refused),
+                None => attr_error = Some(refused),
+            }
+
+            Headers::default()
+        }
+    };
+
     let route = Route::resolve(
         RouteDecl {
             docs,
@@ -476,6 +517,7 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
             reply,
             auth,
             error,
+            headers,
         },
         group_auth,
     );
@@ -560,26 +602,37 @@ impl Parse for Arg {
 }
 
 /// The attributes before an item: its `///` comments, its `#[auth(...)]` with what it says, or the mistake in it, its
-/// `#[openapi(...)]` with whether the api has a document, or the mistake in it, and its `#[error(...)]` with the type
-/// it names, or the mistake in it.
+/// `#[openapi(...)]` with whether the api has a document, or the mistake in it, its `#[error(...)]` with the type it
+/// names, or the mistake in it, and what its `#[header(...)]`s say, or the mistakes in them.
 struct Attrs {
     docs: Docs,
     auth: Option<(Attribute, Result<Auth>)>,
     openapi: Option<(Attribute, Result<bool>)>,
     error: Option<(Attribute, Result<Type>)>,
+    headers: Result<Headers>,
 }
 
-/// The attributes before an item. Any attribute other than a comment, `#[auth(...)]`, `#[openapi(...)]` or
-/// `#[error(...)]` is refused, which stops the reading; a second of any of them is a mistake of the item's, gathered
-/// with the others.
+/// The attributes before an item. Any attribute other than a comment, `#[auth(...)]`, `#[openapi(...)]`,
+/// `#[error(...)]` or `#[header(...)]` is refused, which stops the reading; a second of any of them but
+/// `#[header(...)]`, which an item may have several of, is a mistake of the item's, gathered with the others.
 fn parse_attrs(input: ParseStream) -> Result<Attrs> {
     let attrs = input.call(Attribute::parse_outer)?;
     let mut lines = Vec::with_capacity(attrs.len());
     let mut auth: Option<(Attribute, Result<Auth>)> = None;
     let mut openapi: Option<(Attribute, Result<bool>)> = None;
     let mut error: Option<(Attribute, Result<Type>)> = None;
+    let mut headers: Vec<HeaderAttr> = Vec::new();
+    let mut header_errors = ErrorList::default();
 
     for attr in attrs {
+        if attr.path().is_ident("header") {
+            match parse_header(&attr) {
+                Ok(header) => headers.push(header),
+                Err(error) => header_errors.push(error),
+            }
+            continue;
+        }
+
         if attr.path().is_ident("error") {
             error = Some(match error {
                 None => {
@@ -671,18 +724,88 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
         let Some(line) = line else {
             return Err(Error::new_spanned(
                 attr,
-                "an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, `#[error(...)]` on the api, a group or a route, and `#[openapi(none)]` on the api",
+                "an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, `#[error(...)]` and `#[header(...)]` on the api, a group or a route, and `#[openapi(none)]` on the api",
             ));
         };
 
         lines.push(line);
     }
 
+    let headers = match header_errors.finish() {
+        Ok(()) => Headers::new(headers),
+        Err(error) => Err(error),
+    };
+
     Ok(Attrs {
         docs: Docs(lines),
         auth,
         openapi,
         error,
+        headers,
+    })
+}
+
+/// What a `#[header(...)]` says: a header the item fixes, `#[header("X-GitHub-Api-Version" = "2022-11-28")]`, with a
+/// string or a constant's name for its value; one it leaves of what it would take, `#[header("Name" = none)]`; or
+/// `#[header(none)]`, which leaves them all.
+fn parse_header(attr: &Attribute) -> Result<HeaderAttr> {
+    const WRITE: &str = "write `#[header(\"X-GitHub-Api-Version\" = \"2022-11-28\")]`, with a string or a constant's name for the value, `#[header(\"Name\" = none)]` to leave a header, or `#[header(none)]` to leave them all";
+
+    let Meta::List(list) = &attr.meta else {
+        return Err(Error::new_spanned(
+            attr,
+            format!("`#[header]` names a header: {WRITE}"),
+        ));
+    };
+    let refused = || {
+        Error::new_spanned(
+            &list.tokens,
+            format!("`#[header(...)]` takes a header: {WRITE}"),
+        )
+    };
+
+    list.parse_args_with(|input: ParseStream| {
+        if input.peek(Ident) {
+            let none: Ident = input.parse()?;
+
+            if none != "none" || !input.is_empty() {
+                return Err(refused());
+            }
+
+            return Ok(HeaderAttr::LeaveAll(none.span()));
+        }
+
+        let name: LitStr = input.parse().map_err(|_| refused())?;
+        input.parse::<Token![=]>().map_err(|_| refused())?;
+        headers::check_name(&name)?;
+
+        let attr = if input.peek(LitStr) {
+            let value: LitStr = input.parse()?;
+
+            headers::check_value(&value)?;
+
+            HeaderAttr::Set(Fixed {
+                name,
+                value: Value::Literal(value),
+            })
+        } else {
+            let path: syn::Path = input.parse().map_err(|_| refused())?;
+
+            if path.is_ident("none") {
+                HeaderAttr::Leave(name)
+            } else {
+                HeaderAttr::Set(Fixed {
+                    name,
+                    value: Value::Const(path),
+                })
+            }
+        };
+
+        if !input.is_empty() {
+            return Err(refused());
+        }
+
+        Ok(attr)
     })
 }
 
@@ -2458,6 +2581,288 @@ mod tests {
         assert_eq!(
             callers,
             [Some("Key".into()), Some("Key".into()), Some("Basic".into())]
+        );
+    }
+
+    /// The headers each route of each group sends, its own then its api's, as `name: value`, the constants by their
+    /// names.
+    fn sent(api: &Api) -> Vec<Vec<Vec<String>>> {
+        let block = api.name != "__QuollAlone";
+
+        api.groups
+            .iter()
+            .map(|group| {
+                group
+                    .routes
+                    .iter()
+                    .map(|route| {
+                        let headers = crate::model::headers::RouteHeaders::of(group, route);
+
+                        headers
+                            .sent(block.then_some(&api.headers))
+                            .into_iter()
+                            .map(|fixed| {
+                                let value = match &fixed.value {
+                                    Value::Literal(value) => value.value(),
+                                    Value::Const(path) => text(&path),
+                                };
+
+                                format!("{}: {value}", fixed.name.value())
+                            })
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_route_sends_the_nearest_fixed_headers() {
+        let api = parse(quote! {
+            #[header("Accept" = "application/vnd.github+json")]
+            #[header("X-GitHub-Api-Version" = VERSION)]
+            #[header("X-Beta" = "files")]
+            pub api Api = "";
+
+            #[header("X-Group" = "repos")]
+            pub group Repos {
+                GET "/repos" => list();
+                #[header("accept" = "application/vnd.github.raw+json")]
+                #[header("X-Beta" = none)]
+                GET "/readme" => readme();
+                #[header(none)]
+                GET "/health" => health();
+            }
+
+            #[header("X-Beta" = none)]
+            #[header("X-Group" = "gists")]
+            pub group Gists {
+                GET "/gists" => list();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(
+            sent(&api),
+            [
+                vec![
+                    vec![
+                        "X-Group: repos",
+                        "Accept: application/vnd.github+json",
+                        "X-GitHub-Api-Version: VERSION",
+                        "X-Beta: files"
+                    ],
+                    vec![
+                        "accept: application/vnd.github.raw+json",
+                        "X-Group: repos",
+                        "X-GitHub-Api-Version: VERSION"
+                    ],
+                    vec![],
+                ],
+                vec![vec![
+                    "X-Group: gists",
+                    "Accept: application/vnd.github+json",
+                    "X-GitHub-Api-Version: VERSION"
+                ]],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_header_is_named_once_by_an_item_and_none_goes_below_the_api() {
+        assert_eq!(
+            messages(quote! {
+                #[header("Accept" = none)]
+                pub api Api = "";
+
+                #[header("X-Version" = "1")]
+                #[header("x-version" = "2")]
+                pub group G { GET "/g" => g(); }
+
+                #[header(none)]
+                #[header(none)]
+                #[header("X-Beta" = none)]
+                pub group H { GET "/h" => h(); }
+
+                #[header("X-Key" = "1")]
+                pub scheme Key = header "X-Key";
+            }),
+            [
+                "the header `x-version` is already named here: an item names a header once",
+                "an item takes one `#[header(none)]`: remove this one",
+                "`#[header(none)]` already leaves every header this item would take, `X-Beta` among them: remove this `none`",
+                "a scheme takes no `#[header(...)]`: put it on the api, a group or a route, whose requests send it",
+                "an api takes no header to leave: `none` goes on a group or a route, which leaves what its api or its group fixes",
+            ]
+        );
+    }
+
+    #[test]
+    fn header_takes_a_name_and_a_value_a_header_takes() {
+        assert_eq!(
+            messages(quote! {
+                pub api Api = "";
+
+                #[header]
+                pub group A { GET "/a" => a(); }
+
+                #[header(Accept = "json")]
+                pub group B { GET "/b" => b(); }
+
+                #[header("X Version" = "1")]
+                pub group C { GET "/c" => c(); }
+
+                #[header("Content-Length" = "1")]
+                pub group D { GET "/d" => d(); }
+
+                #[header("X-Version" = " 1")]
+                pub group E { GET "/e" => e(); }
+
+                #[header("X-Version" = 1)]
+                pub group F { GET "/f" => f(); }
+
+                #[header(none, "X-Version")]
+                pub group H { GET "/h" => h(); }
+            }),
+            [
+                "`#[header]` names a header: write `#[header(\"X-GitHub-Api-Version\" = \"2022-11-28\")]`, with a string or a constant's name for the value, `#[header(\"Name\" = none)]` to leave a header, or `#[header(none)]` to leave them all",
+                "`#[header(...)]` takes a header: write `#[header(\"X-GitHub-Api-Version\" = \"2022-11-28\")]`, with a string or a constant's name for the value, `#[header(\"Name\" = none)]` to leave a header, or `#[header(none)]` to leave them all",
+                "`X Version` is not the name of a header: a name is ASCII letters, digits and the signs ! # $ % & ' * + - . ^ _ ` | ~, as in \"X-GitHub-Api-Version\"",
+                "the header `Content-Length` is written by quoll or by HTTP itself, so a contract does not fix it",
+                "a header's value is visible ASCII, with spaces and tabs inside it only, which HTTP drops at either end: give the value as it is sent",
+                "`#[header(...)]` takes a header: write `#[header(\"X-GitHub-Api-Version\" = \"2022-11-28\")]`, with a string or a constant's name for the value, `#[header(\"Name\" = none)]` to leave a header, or `#[header(none)]` to leave them all",
+                "`#[header(...)]` takes a header: write `#[header(\"X-GitHub-Api-Version\" = \"2022-11-28\")]`, with a string or a constant's name for the value, `#[header(\"Name\" = none)]` to leave a header, or `#[header(none)]` to leave them all",
+            ]
+        );
+    }
+
+    #[test]
+    fn none_leaves_only_a_header_the_parent_fixes() {
+        assert_eq!(
+            messages(quote! {
+                #[header("X-Beta" = "files")]
+                pub api Api = "";
+
+                #[header("X-Bta" = none)]
+                pub group A {
+                    #[header("X-Beta" = none)]
+                    GET "/a" => a();
+                }
+
+                #[header(none)]
+                pub group B {
+                    #[header("X-Beta" = none)]
+                    GET "/b" => b();
+                }
+
+                pub group C {
+                    #[header("X-Group" = none)]
+                    GET "/c" => c();
+                }
+            }),
+            [
+                "the api `Api` fixes no header `X-Bta`, so the group has none to leave: check its name, or remove this `none`",
+                "neither the group `B` nor the api `Api` gives the route a header `X-Beta`, so it has none to leave: check its name, or remove this `none`",
+                "neither the group `C` nor the api `Api` gives the route a header `X-Group`, so it has none to leave: check its name, or remove this `none`",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_group_alone_leaves_what_its_api_may_fix() {
+        let alone = syn::parse2::<GroupContract>(quote! {
+            #[header("X-Beta" = none)]
+            pub group Gists {
+                #[header("X-Version" = none)]
+                GET "/gists" => list();
+            }
+        });
+
+        assert!(alone.is_ok());
+
+        let refused = syn::parse2::<GroupContract>(quote! {
+            #[header("X-Beta" = none)]
+            pub group Gists {
+                #[header("X-Beta" = none)]
+                GET "/gists" => list();
+            }
+        })
+        .expect_err("the group leaves the header already");
+
+        assert_eq!(
+            refused.to_string(),
+            "neither the group `Gists` gives the route a header `X-Beta`, so it has none to leave: check its name, or remove this `none`"
+        );
+    }
+
+    #[test]
+    fn a_fixed_content_type_keeps_the_bodys_media_type() {
+        assert_eq!(
+            messages(quote! {
+                #[header("Content-Type" = "application/json; charset=utf-8")]
+                pub api Api = "";
+
+                pub group A {
+                    GET "/a" => list();
+                    POST "/a" => create(note: Note);
+                    POST "/a/form" => form(login: Form<Login>);
+                    POST "/a/bytes" => upload(file: Bytes);
+                    #[header("Content-Type" = none)]
+                    POST "/a/raw" => raw(file: Bytes);
+                    #[header("Content-Type" = "text/plain")]
+                    POST "/a/text" => text(note: Note);
+                    #[header("Content-Type" = "text/plain; charset=utf-8")]
+                    POST "/a/plain" => plain(note: Text);
+                    #[header("Content-Type" = "text/plain; charset=latin1")]
+                    POST "/a/latin" => latin(note: Text);
+                    #[header("Content-Type" = "application/json; charset")]
+                    POST "/a/param" => param(note: Note);
+                    #[header("Content-Type" = "application/json")]
+                    GET "/a/none" => none();
+                }
+            }),
+            [
+                "the `Content-Type` `application/json; charset=utf-8` of the api `Api` is not the media type of the route's body, `application/x-www-form-urlencoded`, in UTF-8, which a fixed one keeps, adding a parameter as `application/x-www-form-urlencoded; charset=utf-8`: write `#[header(\"Content-Type\" = none)]` on the route",
+                "the route's body, `Bytes`, carries its content type, which a fixed `Content-Type` of the api `Api` would not keep: write `#[header(\"Content-Type\" = none)]` on the route, and give the `Bytes` its content type",
+                "the `Content-Type` `text/plain` is not the media type of the route's body, `application/json`, in UTF-8, which a fixed one keeps, adding a parameter as `application/json; charset=utf-8`: write `application/json`, with the parameters the api asks for",
+                "the `Content-Type` `text/plain; charset=latin1` is not the media type of the route's body, `text/plain`, in UTF-8, which a fixed one keeps, adding a parameter as `text/plain; charset=utf-8`: write `text/plain`, with the parameters the api asks for",
+                "the `Content-Type` `application/json; charset` is not the media type of the route's body, `application/json`, in UTF-8, which a fixed one keeps, adding a parameter as `application/json; charset=utf-8`: write `application/json`, with the parameters the api asks for",
+                "the route sends no body, and so no `Content-Type`: remove this header",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_fixed_header_carries_no_credential_of_the_routes_schemes() {
+        assert_eq!(
+            messages(quote! {
+                #[header("X-Api-Key" = "public")]
+                pub api Api = "";
+
+                pub scheme Key = header "X-Api-Key";
+                pub scheme Session = cookie "session";
+
+                pub group A {
+                    #[auth(Key)]
+                    GET "/a" => a();
+                    #[auth(Bearer)]
+                    #[header("Authorization" = "Bearer public")]
+                    GET "/b" => b();
+                    #[auth(Session)]
+                    #[header("Cookie" = "theme=dark")]
+                    GET "/c" => c();
+                    #[auth(Session)]
+                    #[header("Authorization" = "Token public")]
+                    GET "/e" => e();
+                    GET "/d" => d();
+                }
+            }),
+            [
+                "the route `A::a` takes the header `X-Api-Key` of the api `Api`, which carries the credential of `Key`: the client's middleware sends it, so write `#[header(\"X-Api-Key\" = none)]` on the route",
+                "the header `Authorization` carries the credential of `Bearer`, which the route takes: the client's middleware sends it, so the contract does not fix it",
+                "the header `Cookie` carries the credential of `Session`, which the route takes: the client's middleware sends it, so the contract does not fix it",
+                "the header `Authorization` carries the credentials of a route that takes a scheme, as it takes `Session`, which the route takes: the client's middleware sends it, so the contract does not fix it",
+            ]
         );
     }
 }

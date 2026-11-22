@@ -98,6 +98,38 @@
 //! its content type. The server answers 415 to a body without the content type it reads, and 400 to one that does not
 //! read as its type.
 //!
+//! # Fixed headers
+//!
+//! The headers an api asks every request for, a version or a media type, are in its contract:
+//! `#[header("name" = value)]` on the api, a group or a route, the value a string or a `&str` constant's name,
+//! inherited downward as `#[auth]` is. The nearest to the call wins: an argument of the same header the caller gives,
+//! the route, the group, the api, then quoll's own `Accept`. `#[header("name" = none)]` leaves one header the group or
+//! the route would take, `#[header(none)]` all of them, and never what quoll writes for the route. A `Content-Type`
+//! keeps the media type of the body, adding a parameter, and a request with no body sends none. The client sends
+//! them, a [`group!`] taking those of the api that lists it; the server does not check them, and the OpenAPI document
+//! describes each as a header parameter of its value, not required.
+//!
+//! ```
+//! use quoll::rest;
+//!
+//! /// The version of the Messages API the contract follows.
+//! pub const VERSION: &str = "2023-06-01";
+//!
+//! rest::api! {
+//!     #[openapi(none)]
+//!     #[header("anthropic-version" = VERSION)]
+//!     #[header("anthropic-beta" = "files-api-2025-04-14")]
+//!     pub api Anthropic = "/v1";
+//!
+//!     pub group Messages {
+//!         POST "/messages" => create(text: String) -> String;
+//!
+//!         #[header("anthropic-beta" = none)]
+//!         POST "/messages/count_tokens" => count_tokens(text: String) -> u32;
+//!     }
+//! }
+//! ```
+//!
 //! # Results
 //!
 //! | The route returns | The server answers                                      | The client returns |

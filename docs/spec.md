@@ -78,7 +78,9 @@ Decided by the maintainer:
 - **2026-11-22**:
   - the body of `.response()` is `rest::Result<T, E>`: `Ok(T)` on a success, `Err(rest::Error<E>)` on any other status, with `detail()` when its body is an `E`; a 304 is an `Err` with its status and no `detail()`, its headers those of the `.response()`;
   - `#[error(E)]` is inherited api → group → route, as `#[auth]` is, the nearest to the call winning;
-  - `E: Display` gives the message: `another api answered 401: Bad credentials`; rejected, an attribute naming a field.
+  - `E: Display` gives the message: `another api answered 401: Bad credentials`; rejected, an attribute naming a field;
+  - the fixed headers of an api are in its contract, `#[header("name" = value)]` on the api, a group or a route, inherited downward as `#[auth]` is, the nearest to the call winning: the caller's `header("X")` argument, the route, the group, the api, then quoll's own `Accept`; `#[header("X" = none)]` leaves one inherited header and `#[header(none)]` all of them, never what quoll writes for the route; a `none` on a header its parent does not fix does not compile; a `Content-Type` keeps the media type of the body, adding a parameter; the server does not check them, and the document describes each as a header parameter with `const`, not required; `on_request` stays for what belongs to a deployment;
+  - taken with it as implementation, written in [Fixed headers](#fixed-headers): a group of another block takes its api's fixed headers, which are values read at run time, as the prefix is, the api checking at compile time what its groups leave and the `Content-Type` they take; a value is a string or the name of a `&str` constant, checked at compile time; a fixed `Content-Type` is left out of a request with no body, a route's own on one refused, refused on a `Bytes` body, which carries its own, and with a charset other than UTF-8, which quoll writes its bodies in; a fixed header is refused where an argument's would be, but `Content-Type`, and with it the credential of a scheme the route takes; `Accept`, `Content-Type` and `Authorization`, which OpenAPI describes otherwise, and a header an argument reads, are not described as fixed.
 
 ## Stack and crates
 
@@ -152,6 +154,35 @@ An argument is matched to the string by its name, not its position. Each one is:
 - **a header**: `header("Last-Event-ID") last: Option<String>`;
 - **the body**: the one argument left, on `POST`, `PUT`, `PATCH` or `DELETE` only; JSON, or `Form<T>`, `Text`, `Bytes`. `Bytes` carries its content type, any media type but the three a browser sends to another site without a preflight (`application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`), which answer 415, as a missing one does.
 
+### Fixed headers
+
+An api that asks every request for headers of its own, a version, a media type, says them once, in the contract, which every client of it shares:
+
+```rust
+rest::api! {
+    #[openapi(none)]
+    #[header("Accept" = "application/vnd.github+json")]
+    #[header("X-GitHub-Api-Version" = "2022-11-28")]
+    #[error(GitHubError)]
+    pub api GitHub = "";
+
+    pub group Repos {
+        GET "/repos/{owner}/{repo}" => get(owner: String, repo: String) -> Repository;
+
+        #[header("Accept" = "application/vnd.github.raw+json")]
+        GET "/repos/{owner}/{repo}/readme" => readme(owner: String, repo: String) -> Bytes;
+    }
+}
+```
+
+- `#[header("name" = value)]` goes on the api, a group or a route, as many as it needs, one per header, and is inherited downward as `#[auth]` is. The value is a string or the name of a `&str` constant, `#[header("anthropic-version" = ANTHROPIC_VERSION)]`, checked at compile time to be a header's value: visible ASCII, with spaces and tabs inside it only. A value that changes at run time, Stripe Connect's `Stripe-Account`, is a route's argument, `header("Stripe-Account")`, or goes through `on_request`, which stays for what belongs to a deployment, a signature or a tenant.
+- The nearest to the call wins: the caller's `header("X")` argument, when it gives one, then the route, the group, the api, then quoll's own, the `Accept` of the route's result. Names are compared ignoring case.
+- `#[header("X" = none)]` on a group or a route leaves one header it would take; `#[header(none)]` leaves them all, the headers it names beside it being its own, as `#[auth(none)]` then `#[auth(..)]`. A `none` never removes what quoll writes for the route: `#[header("Accept" = none)]` leaves the api's `Accept`, and the route asks for quoll's again. A `none` on a header its parent does not fix does not compile, its message on the name, so that a typo is not silent; neither does a `none` on the api, which has no parent.
+- `Content-Type` is the body's, which a fixed one keeps, adding a parameter: Slack's `application/json; charset=utf-8` on a JSON body. Another media type does not compile, nor does a charset other than UTF-8, which quoll writes its bodies in. One the route takes of its group or its api is left out of a request with no body; a route's own on a route with none does not compile, nor does any on a `Bytes` body, which carries its content type.
+- A fixed header is refused where an argument's would be, the headers quoll or HTTP writes, but `Content-Type`, and on a route that takes a scheme, the header that carries its credential, `Authorization`, a header scheme's, `Cookie` beside a cookie scheme: the client's middleware sends it.
+- The values are read at run time, as the prefix is: a group of another block, a `rest::group!`, takes the fixed headers of the api that lists it, which checks at compile time that the api fixes what the group and its routes leave, so that a group that leaves a header is listed by apis that fix it, that the `Content-Type` they take keeps their bodies' media types, and that they carry no credential of their schemes, its message on the group in its list.
+- The server does not check them, on a contract of quoll's. The OpenAPI document describes each header a route sends as a header parameter with `const`, not required, so that orval does not ask its caller for it, but `Accept`, `Content-Type` and `Authorization`, which OpenAPI describes otherwise, and a header an argument of the route reads, which the argument describes.
+
 ### Results
 
 | The route returns | Status | On the wire |
@@ -208,6 +239,7 @@ rest::api! {
 
 - A `rest::group!` holds one group, written as in an api, which becomes the same items in its module: `NotesServer`, `Notes` and `NotesClient`. It has no prefix, no api and no scheme of its own.
 - The api lists its groups by their paths, after its prefix: their routes are under its prefix, their services fields of `ApiServices`, their clients methods of `ApiClient`, their routes in its document. Paths are the usual form. A group named alone, `{ Notes }`, is one in the api's module or block, or brought by a glob import, `use notes::*;`, which brings its items; otherwise rustc finds no descriptor of the group, `__QuollGroupNotes`, for the name, an error on it. The groups of the list come first, then the ones the api's block writes, which may sit beside them.
+- A `rest::group!` takes the fixed headers of the api that lists it, `#[header(...)]`, values read at run time: the api checks what the group leaves of them (see Fixed headers).
 - Schemes are declared in the api alone. A `group!` names one by its path, `#[auth(crate::Key)]`, or by an import, as any type implementing `Scheme`: the rule that names a declared scheme alone holds in the api's block.
 - The api reads the routes of a group through a hidden descriptor the group writes, `__QuollGroupNotes`, by type, and checks them at compile time against its own and those of its other groups: one method and path, one path with its parameters named otherwise, one operation id, a group less visible than its api, a declared scheme less visible than a group that takes it, two schemes of a route that read one place, an argument that reads the credential of a scheme its route takes. A scheme says by its type whether it is a declared one, with its place, its visibility and whether it checks the origin of a request: a scheme of the application's of a declared scheme's `NAME` is not taken for it. The error points at the group in the api's list. A group the api's block writes goes through the same generator, its mistakes still pointed at their tokens.
 - A group may be listed by two apis: each serves it, calls it and describes it under its own prefix.
@@ -313,9 +345,9 @@ The generated code stays thin and calls the crate, compiled once. A client metho
 ```rust
 impl Notes for NotesClient {
     fn get(&self, id: i64) -> impl rest::Call<Note> {
-        // The macro writes the call: the api's prefix, read at run time, as a group may be listed by two apis, the
-        // path with its segment, then the call that sends the request and reads its JSON once awaited, through
-        // `quoll::__private`.
+        // The macro writes the call: the api's prefix and fixed headers, read at run time, as a group may be listed
+        // by two apis, the path with its segment, then the call that sends the request and reads its JSON once
+        // awaited, through `quoll::__private`.
     }
 }
 ```
@@ -486,7 +518,7 @@ rest::api! {
 - `Api::openapi()` returns the OpenAPI 3.1 document: paths, parameters, bodies, results, schemas from schemars, security schemes, the problem shape of errors. A binary of the contract crate prints it: the schemas are known only once the types are compiled, which a macro does not see.
 - It is a `rest::openapi::Document`: `to_json_pretty()`, `to_json()`, `Serialize`, and `with_title(..)` and `with_version(..)` over its `info`, which is the contract crate's `CARGO_PKG_NAME` and `CARGO_PKG_VERSION`, or the api's name and `0.0.0` for a crate built without Cargo, with the api's `///` as its description.
 - An operation is `group_function`, tagged by its group, whose `///` describes the tag. The first paragraph of a route's `///` is its summary, the rest its description.
-- Path parameters, query keys and headers are parameters, required unless an `Option` or a `Vec`, never `null`. A query struct is unfolded into one query parameter per field of its schema, or is one parameter `style: form, explode: true`, not required, when its schema is not a plain object. The key of a query scheme is no parameter: the security describes it.
+- Path parameters, query keys and headers are parameters, required unless an `Option` or a `Vec`, never `null`. A fixed header a route sends is a header parameter, not required, whose schema is a string of its value, `const`: not `Accept`, `Content-Type` nor `Authorization`, which OpenAPI describes otherwise, nor a header an argument reads, which the argument describes. A query struct is unfolded into one query parameter per field of its schema, or is one parameter `style: form, explode: true`, not required, when its schema is not a plain object. The key of a query scheme is no parameter: the security describes it.
 - Bodies: `application/json`, `application/x-www-form-urlencoded` for `Form<T>`, `text/plain` for `Text`, `application/octet-stream` for `Bytes`. Results: 200, 201 with an optional `Location`, 202, 204; `text/plain` for `Text`, `*/*` for `Bytes` and for `ByteStream`, whose description says it streams.
 - Every error is the `Problem` schema, `application/problem+json`. A route lists what quoll answers itself: 400 when it reads an argument, 401 when it takes a credential, 403 when it needs scopes or takes a cookie scheme the contract declares on a method other than `GET`, `HEAD` and `OPTIONS`, 415 when it reads a body, and `default` for any other.
 - Schemes sit under `securitySchemes` by their `NAME`. A route's requirement lists its schemes, any of which serves, each with its scopes, and `{}` when its credential is optional.
@@ -1440,6 +1472,7 @@ function NoteText({ note, error, onEdit, onRemove }: NoteTextProps) {
 - A query struct and a query in the string together; two query structs; a query struct whose type is not a struct: a scalar, a `String`, an `Option`, a `Vec`...
 - A header read by two arguments; an argument that is a header or the query struct and a `{name}` of the string too.
 - A header that quoll or HTTP writes itself, `Content-Type`, `Content-Length`, `Host`, `Transfer-Encoding` and the hop-by-hop ones, and `Authorization` on a route that takes a scheme.
+- In `#[header(...)]`: anything but `"name" = value`, `"name" = none` or `none`; a name that is not a token, or a header that quoll or HTTP writes but `Content-Type`; a value that is not visible ASCII with blanks inside it only, a string or a `&str` constant's; a header named twice by one item, `none` twice, or a header left beside `#[header(none)]`; a `none` on the api, or on a header the parent does not fix; a `Content-Type` of another media type than the body's or of another charset than UTF-8, a route's own on a route with no body, or any on a `Bytes` body; a header that carries the credential of a scheme the route takes; `#[header(...)]` on a scheme. What a group of another block leaves, or takes of its api's, is checked by the api, its message on the group in the list.
 - One method and path twice in an api, whichever blocks its groups come from.
 - A group less visible than its api, whose router and client name the group's items.
 - A group listed twice, or of the name of another group of the api; an empty list; a path of the list that is not a group, or a group named alone that is not in scope; a group of the list with `#[openapi(none)]` in an api with a document. A `rest::group!` with no group, two groups, an api or a scheme.
