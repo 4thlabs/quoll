@@ -256,11 +256,12 @@ rest::api! {
 - A group or a route takes its parent's headers, and the nearest to the call wins: an argument of the same header the
   caller gives, then the route, the group and the api. quoll's own `Accept` comes last.
 - `#[header("X" = none)]` leaves one header the group or the route would take, `#[header(none)]` all of them; the
-  headers written beside it are its own. A `none` on a header the parent does not fix does not compile. A `none` never removes what quoll writes: `#[header("Accept" = none)]` gives the route quoll's
-  `Accept` back.
+  headers written beside it are its own. A `none` never removes what quoll writes: `#[header("Accept" = none)]` gives
+  the route quoll's `Accept` back. In the api's block, a `none` on a header the parent does not fix does not compile.
 - A `Content-Type` keeps the media type of the body, adding a parameter: `application/json; charset=utf-8` on a JSON
   body. A request with no body sends none.
-- A group of another block takes the headers of the api that lists it.
+- A group of another block takes the headers of the api that lists it, and any api may list it: a `none` of the group
+  or of its routes leaves the header where the api fixes it, and does nothing elsewhere.
 - The server does not check them. The OpenAPI document describes each one as a header parameter of its value, which a
   caller need not send.
 
@@ -436,7 +437,8 @@ fn main() {
 - A group named alone, `{ Notes }`, is one in the api's module, or brought by a glob import, `use notes::*;`.
 - Schemes are declared in the api alone. A `rest::group!` names one by its path, `#[auth(crate::Key)]`, or through an
   import.
-- A group takes the fixed headers of the api that lists it, which checks what the group leaves of them.
+- A group takes the fixed headers of the api that lists it. Any api may list it: a `none` of the group's leaves a
+  header where that api fixes it, and does nothing elsewhere.
 - The api checks its groups against each other at compile time: one method and path twice, one operation id twice, a
   group less visible than the api, do not compile, and the error points at the group in the list.
 - Two apis may list one group: each serves it under its own prefix.

@@ -113,7 +113,8 @@ pub fn api(input: TokenStream) -> TokenStream {
 /// `schemars::JsonSchema`, unless it says `#[openapi(none)]`, as the group of an api that has none. Its client's trait
 /// is written in its block, before an api lists it: the group says the shape of its errors itself, `#[error(E)]`, and an
 /// api with an `#[error(...)]` lists only groups that say one. The group takes the fixed headers, `#[header(...)]`, of
-/// the api that lists it, which checks what the group leaves of them.
+/// the api that lists it, and any api may list it: a `none` of the group's leaves a header where that api fixes it,
+/// and does nothing elsewhere.
 ///
 /// The api lists the group by its path, `notes::Notes`. A group named alone, `{ Notes }`, is one in the api's module,
 /// or brought by a glob import, `use notes::*;`. The api reads the group's routes through its hidden descriptor,

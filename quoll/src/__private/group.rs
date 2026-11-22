@@ -34,8 +34,6 @@ pub struct GroupInfo {
     pub vis: &'static str,
     /// Whether it names the shape of its errors, `#[error(E)]`, which it cannot take from an api with one.
     pub error: bool,
-    /// The headers it leaves of its api's, `#[header("name" = none)]`, which the api fixes.
-    pub leaves: &'static [&'static str],
     /// Its routes, in the order the contract writes them.
     pub routes: &'static [RouteInfo],
 }
@@ -67,8 +65,6 @@ pub struct RouteInfo {
     pub body: BodyInfo,
     /// The fixed headers it takes, beside its api's.
     pub fixed: RouteHeaders,
-    /// The headers it leaves that its group neither fixes nor leaves: its api's, which the api fixes.
-    pub api_leaves: &'static [&'static str],
 }
 
 /// The body of a route, as a fixed `Content-Type` sees it.
@@ -320,8 +316,9 @@ pub struct ApiInfo {
 /// A mistake is when the group is less visible than the api, takes a declared scheme less visible than itself, has a route of a
 /// method and a path that another route has, or of a path another route names with other parameters, or of an
 /// operation id another route has; when a route takes two schemes of an api that read one place, or reads the
-/// credential of a scheme it takes in an argument or sends it in a fixed header; when the group or a route leaves a
-/// header the api does not fix, or a route takes the api's `Content-Type` that its body does not keep.
+/// credential of a scheme it takes in an argument or sends it in a fixed header; or when a route takes the api's
+/// `Content-Type` that its body does not keep. A header the group or a route leaves is not checked: any api may list
+/// the group, and a `none` does nothing where the api does not fix the header.
 pub const fn check(api: &ApiInfo, earlier: &[&GroupInfo], group: &GroupInfo) -> Option<Message> {
     if group.reach < api.reach {
         return Some(
@@ -338,18 +335,11 @@ pub const fn check(api: &ApiInfo, earlier: &[&GroupInfo], group: &GroupInfo) -> 
         );
     }
 
-    if let Some(error) = check_leaves(api, group, None, group.leaves) {
-        return Some(error);
-    }
-
     let mut i = 0;
     while i < group.routes.len() {
         let route = &group.routes[i];
 
         if let Some(error) = check_schemes(api, group, route) {
-            return Some(error);
-        }
-        if let Some(error) = check_leaves(api, group, Some(route), route.api_leaves) {
             return Some(error);
         }
         if let Some(error) = check_content_type(api, group, route) {
@@ -495,47 +485,6 @@ impl Reads {
             Self::Query(key) => message.push("the query key `").push(key).push("`"),
         }
     }
-}
-
-/// Checks that the api fixes each header of `leaves`, which `group`, or its `route`, leaves.
-const fn check_leaves(
-    api: &ApiInfo,
-    group: &GroupInfo,
-    route: Option<&RouteInfo>,
-    leaves: &[&str],
-) -> Option<Message> {
-    let mut i = 0;
-    while i < leaves.len() {
-        if fixed(api.headers, leaves[i]).is_none() {
-            let message = match route {
-                Some(route) => Message::new()
-                    .push("the route `")
-                    .push(group.name)
-                    .push("::")
-                    .push(route.function)
-                    .push("` leaves the header `")
-                    .push(leaves[i])
-                    .push("`, which neither its group nor the api `")
-                    .push(api.name)
-                    .push("` fixes"),
-                None => Message::new()
-                    .push("the group `")
-                    .push(group.name)
-                    .push("` leaves the header `")
-                    .push(leaves[i])
-                    .push("`, which the api `")
-                    .push(api.name)
-                    .push("` does not fix"),
-            };
-
-            return Some(
-                message.push(", so there is none to leave: check its name, or remove this `none`"),
-            );
-        }
-        i += 1;
-    }
-
-    None
 }
 
 /// The header `name` of `headers`.
@@ -990,7 +939,6 @@ mod tests {
             streams: false,
             body: BodyInfo::None,
             fixed: NO_HEADERS,
-            api_leaves: &[],
         },
         RouteInfo {
             id: "notes_home",
@@ -1008,7 +956,6 @@ mod tests {
             streams: true,
             body: BodyInfo::None,
             fixed: NO_HEADERS,
-            api_leaves: &[],
         },
     ];
 

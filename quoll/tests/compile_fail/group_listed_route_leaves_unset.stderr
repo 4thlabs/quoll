@@ -1,5 +1,0 @@
-error[E0080]: evaluation panicked: the route `Messages::count_tokens` leaves the header `anthropic-beta`, which neither its group nor the api `Anthropic` fixes, so there is none to leave: check its name, or remove this `none`
-  --> tests/compile_fail/group_listed_route_leaves_unset.rs:18:43
-   |
-18 |     pub api Anthropic = "/v1" { messages::Messages };
-   |                                           ^^^^^^^^ evaluation of `_::_` failed here

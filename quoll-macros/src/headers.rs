@@ -48,18 +48,6 @@ pub(crate) fn route_headers(group: &Group, route: &Route) -> TokenStream {
     }
 }
 
-/// The headers `route` leaves that its group neither fixes nor leaves: its api's, which the api of a `rest::group!`
-/// checks it fixes.
-pub(crate) fn api_leaves(group: &Group, route: &Route) -> Vec<String> {
-    route
-        .headers
-        .leaves
-        .iter()
-        .map(LitStr::value)
-        .filter(|name| group.headers.get(name).is_none())
-        .collect()
-}
-
 /// The compile-time checks of the fixed headers of the api: each value written as a constant is one a header takes.
 pub(crate) fn api_checks(headers: &Headers) -> TokenStream {
     let checks = headers.set.iter().filter_map(value_check);

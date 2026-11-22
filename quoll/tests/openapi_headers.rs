@@ -1,5 +1,6 @@
 //! The fixed headers of a contract in its OpenAPI document, whatever the features: each one a route sends, its api's,
-//! its group's or its own, a header parameter of its value, `const`, that a caller need not send.
+//! its group's or its own, a header parameter of its value, `const`, that a caller need not send, and nothing for a
+//! header a group leaves that its api does not fix.
 
 use std::sync::LazyLock;
 
@@ -41,6 +42,12 @@ rest::api! {
         #[header(none)]
         GET "/health" => health();
     }
+}
+
+rest::api! {
+    /// An api that does not fix the `X-Beta` its group leaves, which leaves nothing.
+    #[header("X-Version" = VERSION)]
+    pub api Other = "/v2" { files::Files };
 }
 
 static DOCUMENT: LazyLock<Value> =
@@ -104,5 +111,15 @@ fn a_group_of_another_block_takes_its_apis_headers() {
     assert_eq!(
         parameters("/v1/files", "get"),
         &json!([fixed("X-Version", VERSION)])
+    );
+}
+
+#[test]
+fn a_group_listed_by_an_api_that_does_not_fix_what_it_leaves_adds_nothing() {
+    let document: Value = serde_json::from_str(&Other::openapi().to_json()).unwrap();
+
+    assert_eq!(
+        document["paths"]["/v2/files"]["get"]["parameters"],
+        json!([fixed("X-Version", VERSION)])
     );
 }

@@ -265,7 +265,8 @@ impl<'a> RouteHeaders<'a> {
 /// Checks the fixed headers of an api's block, or of a `rest::group!`, whose api is `None`: what each item leaves is
 /// set by its parent, a `Content-Type` keeps the media type of its route's body, and no header a route sends carries
 /// the credential of a scheme it takes. What depends on the api of a `rest::group!` is checked by that api, at compile
-/// time.
+/// time, but what the group leaves of the api's: any api may list it, and a `none` does nothing where the api does not
+/// fix the header.
 pub(crate) fn check(groups: &[Group], api: Option<(&Api, &Headers)>, errors: &mut ErrorList) {
     if let Some((_, headers)) = api {
         if let Some(span) = headers.leaves_all {
@@ -318,7 +319,8 @@ pub(crate) fn check(groups: &[Group], api: Option<(&Api, &Headers)>, errors: &mu
 /// The message of a `none` on an api, which has no parent.
 const NONE_ON_API: &str = "an api takes no header to leave: `none` goes on a group or a route, which leaves what its api or its group fixes";
 
-/// Each header a route leaves is one its group fixes, or one its api fixes that its group does not leave.
+/// Each header a route leaves is one its group fixes, or one its api fixes that its group does not leave. In a
+/// `rest::group!`, whose api is not known, a header its group does not fix may be any api's.
 fn check_leaves(
     group: &Group,
     route: &Route,
@@ -335,20 +337,31 @@ fn check_leaves(
         let blocked = group.headers.leaves_all.is_some() || group.headers.leaves(&text);
         let set = match api {
             Some((_, headers)) => headers.get(&text).is_some(),
-            // The api of a `rest::group!` checks it.
+            // Any api may list a `rest::group!`, which leaves nothing where the api does not fix the header.
             None => true,
         };
 
-        if blocked || !set {
-            let api = api.map_or_else(String::new, |(api, _)| {
-                format!(" nor the api `{}`", api.name.unraw())
-            });
+        if blocked {
+            let what = if group.headers.leaves_all.is_some() {
+                "every header of its api, `#[header(none)]`".to_owned()
+            } else {
+                format!("the header `{text}`")
+            };
 
             errors.push(Error::new(
                 name.span(),
                 format!(
-                    "neither the group `{}`{api} gives the route a header `{text}`, so it has none to leave: check its name, or remove this `none`",
+                    "the group `{}` already leaves {what}, so the route has none to leave: remove this `none`",
                     group.name.unraw(),
+                ),
+            ));
+        } else if let (Some((api, _)), false) = (api, set) {
+            errors.push(Error::new(
+                name.span(),
+                format!(
+                    "neither the group `{}` nor the api `{}` gives the route a header `{text}`, so it has none to leave: check its name, or remove this `none`",
+                    group.name.unraw(),
+                    api.name.unraw(),
                 ),
             ));
         }
