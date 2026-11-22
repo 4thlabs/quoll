@@ -1,0 +1,5 @@
+error: `#[rest::query]` goes on a query struct, whose fields are named as its keys: write `struct Filter { labels: Vec<String> }`
+ --> tests/compile_fail/query_not_a_struct.rs:7:10
+  |
+7 | pub enum Filter {
+  |          ^^^^^^

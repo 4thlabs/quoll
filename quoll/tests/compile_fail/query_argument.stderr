@@ -1,0 +1,5 @@
+error: `#[rest::query]` takes no argument: write it alone, before the derives
+ --> tests/compile_fail/query_argument.rs:5:15
+  |
+5 | #[rest::query(strict)]
+  |               ^^^^^^

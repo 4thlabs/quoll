@@ -1,0 +1,5 @@
+error: `#[join]` writes a list as the one value of a query key, and `labels` is a header: write it as a `key={labels}` of the route's query, or remove the `#[join]`
+ --> tests/compile_fail/join_on_header.rs:7:31
+  |
+7 |         GET "/issues" => list(#[join(",")] header("X-Labels") labels: Vec<String>);
+  |                               ^^^^^^^^^^^^

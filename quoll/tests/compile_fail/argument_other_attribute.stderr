@@ -1,0 +1,5 @@
+error: an argument takes one attribute, `#[join(",")]`, which writes a list as one query value: remove this one
+ --> tests/compile_fail/argument_other_attribute.rs:7:47
+  |
+7 |         GET "/issues?labels={labels}" => list(#[serde(default)] labels: Vec<String>);
+  |                                               ^^^^^^^^^^^^^^^^^

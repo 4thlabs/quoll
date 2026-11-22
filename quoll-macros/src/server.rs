@@ -11,7 +11,7 @@ use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::descriptor::{Cx, GroupRef, descriptor_name, table};
 use crate::docs::{doc_attrs, route_docs};
-use crate::model::{Api, Bounds, Param, Route, is_vec};
+use crate::model::{Api, Bounds, Param, Route, is_vec, vec_inner};
 use crate::scheme::{scheme_type, schemes_type};
 
 /// The server's code of a group, behind the feature `server` of `quoll`: its trait, and the function of its
@@ -333,9 +333,14 @@ fn route_call(routes: &Ident, index: usize, route: &Route) -> TokenStream {
         let fields = query_params.iter().map(|(param, key)| {
             let (name, ty) = (&param.name, &param.ty);
             let default = is_vec(ty).then(|| quote! { , default });
+            let join = param.join().map(|join| {
+                let with = join.with(vec_inner(ty).expect("a joined key is a `Vec`"));
+
+                quote! { , with = #with }
+            });
 
             quote_spanned! {ty.span()=>
-                #[serde(rename = #key #default)]
+                #[serde(rename = #key #default #join)]
                 #name: #ty,
             }
         });

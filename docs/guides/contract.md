@@ -138,6 +138,56 @@ names them. A query struct is the whole query, so the route's string has no quer
 The struct needs no `Default`, but its callers like one: they fill the keys they need and leave the rest,
 `NoteFilter { contains: Some("milk".into()), ..Default::default() }`.
 
+### Joined lists
+
+An API that reads a list as one value, `labels=bug,docs`, says so with `#[join(sep)]`, on an argument of the route or
+on a field of a query struct, whose type stays a `Vec`:
+
+```rust
+use quoll::rest;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum State {
+    Open,
+    Closed,
+}
+
+#[rest::query]
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct IssueFilter {
+    #[join(",")]
+    pub labels: Vec<String>,
+    #[join(" ")]
+    pub milestones: Vec<u32>,
+    pub state: Option<State>,
+}
+
+rest::api! {
+    pub api Api = "";
+
+    pub group Issues {
+        GET "/repos/{owner}/{repo}/issues?labels={labels}&state={state}"
+            => list(owner: String, repo: String, #[join(",")] labels: Vec<String>, state: Option<State>) -> Vec<String>;
+        GET "/search/issues" => search(query filter: IssueFilter) -> Vec<String>;
+    }
+}
+```
+
+- `#[join(",")]` writes `labels=bug,docs`, `#[join(" ")]` `labels=bug%20docs` and `#[join("|")]` `labels=bug|docs`:
+  the three styles OpenAPI describes, and no other separator.
+- The values are read from text, as a path parameter is. An empty list leaves the key out, and a missing key is an
+  empty list, for a field that has `#[serde(default)]` as for any `Vec` of a query struct.
+- The server decodes the value before it splits it: it reads `labels=bug%2Cdocs` too, which a browser's
+  `URLSearchParams` writes, and which the client writes for a field of a query struct. So a value cannot hold the
+  separator, and the client refuses one before sending.
+- `#[rest::query]` goes before the derives, and only on a struct with a `#[join]`. It turns each one into the serde
+  attribute that writes the list, so the struct stays serde's: its other attributes mean what they meant, and in JSON a
+  joined field is its joined text, as its schema says.
+
 ### Headers
 
 `header("If-Match") version: Option<String>` reads a header, from its text as a path parameter is. An `Option` is

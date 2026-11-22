@@ -318,11 +318,29 @@ fn path_calls(route: &Route) -> Vec<TokenStream> {
     calls
 }
 
-/// The struct the query is written from, a field per key, and the call that writes it, when the route has a query.
+/// The struct the query is written from, a field per key but the joined ones, and the calls that write it, the
+/// joined keys after the others, when the route has a query.
 fn query(route: &Route) -> Option<(TokenStream, TokenStream)> {
-    let params: Vec<(&Param, &str)> = route.query_params().collect();
-    if params.is_empty() {
+    let (joined, params): (Vec<_>, Vec<_>) = route
+        .query_params()
+        .partition(|(param, _)| param.join().is_some());
+    if joined.is_empty() && params.is_empty() {
         return None;
+    }
+
+    let joins = joined.iter().map(|(param, key)| {
+        let (name, ty) = (&param.name, &param.ty);
+        let join = Ident::new(
+            param.join().expect("partitioned by its join").variant(),
+            Span::call_site(),
+        );
+
+        quote_spanned! {ty.span()=>
+            .join(#key, ::quoll::__private::join::Join::#join, &#name)?
+        }
+    });
+    if params.is_empty() {
+        return Some((TokenStream::new(), quote! { #(#joins)* }));
     }
 
     // An item, not a local: its name is spelled so that it hides none of the crate's types.
@@ -343,7 +361,7 @@ fn query(route: &Route) -> Option<(TokenStream, TokenStream)> {
             #(#fields)*
         }
     };
-    let call = quote! { .query(&#query_type { #(#names),* })? };
+    let call = quote! { .query(&#query_type { #(#names),* })? #(#joins)* };
 
     Some((item, call))
 }

@@ -23,14 +23,15 @@ use crate::__private::content_type::{
     self, FORM, JSON_LINES, OCTET_STREAM, PROBLEM, TEXT_UTF8, media_type_value,
 };
 use crate::__private::headers::{Fixed, RouteHeaders};
+use crate::__private::join::{self, Join};
 use crate::__private::known::{IsByteStream, IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
 use crate::__private::read::{Deserialized, Read};
+use crate::__private::text;
 use crate::client::CallTimeout;
 use crate::rest::{self, Error, Problem, Result, Route};
 
 mod redact;
 mod stream;
-mod text;
 
 pub(crate) use redact::{redacted, strip_urls};
 
@@ -258,6 +259,42 @@ impl<'a> Request<'a> {
         })?;
 
         self.query = Some(query).filter(|query| !query.is_empty());
+        Ok(self)
+    }
+
+    /// Adds the key `key` to the query, after what [`query`](Self::query) wrote, with `values` joined into its one
+    /// value: each value's text escaped, as a path parameter's is, and the separator between them as it is,
+    /// `labels=bug,docs`. An empty list leaves the key out, as the server reads it.
+    ///
+    /// # Errors
+    ///
+    /// When a value is not written as one piece of text, is a `None`, or holds the separator, which the server would
+    /// read as two values; or when the list is one empty value, which the server would read as an empty list.
+    pub fn join<T: Serialize>(mut self, key: &str, join: Join, values: &[T]) -> Result<Self> {
+        let mut written = String::new();
+        let any = join::each_text(join, values, |first, text| {
+            // The separator as it is, which the URL escapes when it is a space, `%20`.
+            if !first {
+                written.push(join.separator());
+            }
+            written.extend(utf8_percent_encode(text, SEGMENT));
+        })
+        .map_err(|refused| {
+            let what = format!("the query key `{key}` of `{}`", self.route.operation_id);
+
+            Error::misuse(refused.message(join, &what), None)
+        })?;
+        if !any {
+            return Ok(self);
+        }
+
+        let query = self.query.get_or_insert_default();
+        if !query.is_empty() {
+            query.push('&');
+        }
+        query.extend(utf8_percent_encode(key, SEGMENT));
+        query.push('=');
+        query.push_str(&written);
         Ok(self)
     }
 
