@@ -1,0 +1,5 @@
+error: an argument takes one `#[join(...)]`: remove this one
+ --> tests/compile_fail/join_twice.rs:7:60
+  |
+7 |         GET "/issues?labels={labels}" => list(#[join(",")] #[join("|")] labels: Vec<String>);
+  |                                                            ^^^^^^^^^^^^

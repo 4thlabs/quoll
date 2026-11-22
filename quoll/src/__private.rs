@@ -18,8 +18,10 @@ pub mod auth;
 pub(crate) mod content_type;
 pub mod group;
 pub mod headers;
+pub mod join;
 pub mod known;
 pub mod openapi;
+pub(crate) mod text;
 
 #[cfg(any(feature = "server", feature = "client"))]
 pub mod read;

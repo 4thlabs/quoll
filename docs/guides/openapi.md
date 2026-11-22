@@ -80,7 +80,8 @@ which runs the server and the page's dev server side by side.
   its group. The first paragraph of a route's `///` is its summary, the rest its description; a group's describes its
   tag, and the api's the document.
 - **Parameters**: path parameters, query keys and headers, required unless an `Option` or a `Vec`. A query struct is
-  unfolded into one parameter per field. A fixed header, `#[header("name" = value)]`, is a header parameter that is
+  unfolded into one parameter per field. A [joined list](contract.md#joined-lists) is a parameter `explode: false`
+  of the style of its separator, `form`, `spaceDelimited` or `pipeDelimited`, which orval's clients write. A fixed header, `#[header("name" = value)]`, is a header parameter that is
   not required, whose schema is its value, `const`, but `Accept`, `Content-Type` and `Authorization`, which OpenAPI
   describes otherwise, and a header an argument of the route reads, which the argument describes.
 - **Bodies**: `application/json`, `application/x-www-form-urlencoded` for `Form<T>`, `text/plain` for `Text`,

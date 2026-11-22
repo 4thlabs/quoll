@@ -1,0 +1,5 @@
+error: `#[join]` writes a list, which `labels` is not: make it a `Vec`, as `labels: Vec<String>`
+ --> tests/compile_fail/join_not_a_list.rs:7:47
+  |
+7 |         GET "/issues?labels={labels}" => list(#[join(",")] labels: String);
+  |                                               ^^^^^^^^^^^^

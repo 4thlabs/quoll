@@ -1,0 +1,5 @@
+error: `#[join]` writes a list as the one value of a query key, and `ids` is the path's `{ids}`: write it as a `key={ids}` of the route's query, or remove the `#[join]`
+ --> tests/compile_fail/join_on_path.rs:7:36
+  |
+7 |         GET "/issues/{ids}" => get(#[join(",")] ids: Vec<i64>);
+  |                                    ^^^^^^^^^^^^

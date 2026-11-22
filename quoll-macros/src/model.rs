@@ -6,7 +6,7 @@
 //! one body, no route twice.
 
 use proc_macro2::Span;
-use syn::{Error, Ident, LitStr, Result, Type, Visibility, ext::IdentExt};
+use syn::{Attribute, Error, Ident, LitStr, Result, Type, Visibility, ext::IdentExt};
 
 use crate::known::{BodyKind, Known, ResultKind};
 use crate::path::{Segment, Template, literal_problem};
@@ -189,7 +189,7 @@ impl Route {
     /// The query's parameters, each with its key on the wire, in the order they are written.
     pub(crate) fn query_params(&self) -> impl Iterator<Item = (&Param, &str)> {
         self.params.iter().filter_map(|param| match &param.kind {
-            ParamKind::Query { key } => Some((param, key.as_str())),
+            ParamKind::Query { key, .. } => Some((param, key.as_str())),
             _ => None,
         })
     }
@@ -231,15 +231,78 @@ pub(crate) struct Param {
     pub(crate) inner: Option<Type>,
 }
 
+impl Param {
+    /// The separator of its `#[join(sep)]`, for a query key that has one.
+    pub(crate) fn join(&self) -> Option<Join> {
+        match self.kind {
+            ParamKind::Query { join, .. } => join,
+            _ => None,
+        }
+    }
+}
+
+/// How `#[join(sep)]` writes a list as one query value: the three styles OpenAPI describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Join {
+    /// `#[join(",")]`: `labels=bug,docs`, `style: form, explode: false`.
+    Comma,
+    /// `#[join(" ")]`: `labels=bug%20docs`, `style: spaceDelimited`.
+    Space,
+    /// `#[join("|")]`: `labels=bug|docs`, `style: pipeDelimited`.
+    Pipe,
+}
+
+impl Join {
+    /// The separator a contract writes, `","`, `" "` or `"|"`.
+    pub(crate) fn from_separator(separator: &str) -> Option<Self> {
+        match separator {
+            "," => Some(Self::Comma),
+            " " => Some(Self::Space),
+            "|" => Some(Self::Pipe),
+            _ => None,
+        }
+    }
+
+    /// What serde's `with` names for a list of `element`s: `::quoll::__private::join::Comma::<u32>`, whose schema
+    /// schemars takes as the field's.
+    pub(crate) fn with(self, element: &Type) -> String {
+        format!(
+            "::quoll::__private::join::{}::<{}>",
+            self.variant(),
+            quote::quote!(#element)
+        )
+    }
+
+    /// The variant of `quoll::__private::join::Join` the generated code names.
+    pub(crate) fn variant(self) -> &'static str {
+        match self {
+            Self::Comma => "Comma",
+            Self::Space => "Space",
+            Self::Pipe => "Pipe",
+        }
+    }
+}
+
+/// `#[join(sep)]` on an argument, with the attribute, where a mistake about it is pointed.
+#[derive(Debug)]
+pub(crate) struct JoinAttr {
+    /// The separator it names.
+    pub(crate) join: Join,
+    /// The attribute as written.
+    pub(crate) attr: Attribute,
+}
+
 /// Where an argument comes from on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ParamKind {
     /// A `{name}` of the path.
     Path,
-    /// A `key={name}` of the query. An `Option` may be missing; a `Vec` repeats the key.
+    /// A `key={name}` of the query. An `Option` may be missing; a `Vec` repeats the key, or is joined into one value.
     Query {
         /// The key on the wire.
         key: String,
+        /// The separator of `#[join(sep)]`, which writes the `Vec` as one value.
+        join: Option<Join>,
     },
     /// `query name: Type`: the whole query, a field per key.
     QueryStruct,
@@ -291,6 +354,8 @@ pub(crate) struct ArgDecl {
     pub(crate) name: Ident,
     /// Its type.
     pub(crate) ty: Type,
+    /// Its `#[join(sep)]`, if it has one.
+    pub(crate) join: Option<JoinAttr>,
 }
 
 /// Where an argument says its value comes from.
@@ -414,6 +479,11 @@ fn match_args(
 ) -> Result<Vec<Param>> {
     let find = |name: &str| args.iter().find(|arg| arg.name.unraw() == name);
 
+    for arg in &args {
+        if let Some(attr) = &arg.join {
+            check_join(attr, arg, template)?;
+        }
+    }
     for name in template.path_names() {
         let Some(arg) = find(name) else {
             return Err(missing_argument(path, name, &Place::Path));
@@ -436,7 +506,13 @@ fn match_args(
     let mut headers: Vec<LitStr> = Vec::new();
     let mut body: Option<Ident> = None;
 
-    for ArgDecl { source, name, ty } in args {
+    for ArgDecl {
+        source,
+        name,
+        ty,
+        join,
+    } in args
+    {
         let key = name.unraw().to_string();
         let kind = match source {
             Source::Query(span) => {
@@ -461,6 +537,7 @@ fn match_args(
             Source::Named => match template.query.iter().find(|item| item.name == key) {
                 Some(item) => ParamKind::Query {
                     key: item.key.clone(),
+                    join: join.as_ref().map(|attr| attr.join),
                 },
                 None => {
                     check_body(method, &name, &ty, body.as_ref())?;
@@ -502,6 +579,46 @@ fn check_named(arg: &ArgDecl, place: &str) -> Result<()> {
             "`{name}` is {what}, and {place} names it too: an argument comes from one place, so rename one of them"
         ),
     ))
+}
+
+/// `#[join(sep)]` is on a key of the route's query whose type is a `Vec` of a type read from text. Checked before
+/// anything else of the argument, so that the mistake is pointed at the attribute.
+fn check_join(attr: &JoinAttr, arg: &ArgDecl, template: &Template) -> Result<()> {
+    let ArgDecl { name, ty, .. } = arg;
+    let key = name.unraw().to_string();
+    let place = match &arg.source {
+        Source::Query(_) => Some("the query struct".to_owned()),
+        Source::Header(_) => Some("a header".to_owned()),
+        Source::Named if template.path_names().any(|path_name| path_name == key) => {
+            Some(format!("the path's `{{{key}}}`"))
+        }
+        Source::Named if template.query.iter().any(|item| item.name == key) => None,
+        Source::Named => Some("not in the route's string".to_owned()),
+    };
+    if let Some(place) = place {
+        return Err(Error::new_spanned(
+            &attr.attr,
+            format!(
+                "`#[join]` writes a list as the one value of a query key, and `{key}` is {place}: write it as a `key={{{key}}}` of the route's query, or remove the `#[join]`"
+            ),
+        ));
+    }
+
+    check_joined_type(attr, &key, ty)
+}
+
+/// The type of an argument or a field that `#[join(sep)]` writes, `what`, is a `Vec` of a type read from text.
+pub(crate) fn check_joined_type(attr: &JoinAttr, what: &str, ty: &Type) -> Result<()> {
+    let Some(element) = vec_inner(ty) else {
+        return Err(Error::new_spanned(
+            &attr.attr,
+            format!(
+                "`#[join]` writes a list, which `{what}` is not: make it a `Vec`, as `{what}: Vec<String>`"
+            ),
+        ));
+    };
+
+    check_read_from_text(element, &format!("each value of `{what}`"))
 }
 
 /// A query struct is the whole query: the string has none, and the route no other query struct.
@@ -654,6 +771,16 @@ fn check_header_type(ty: &Type, header: &str) -> Result<()> {
 
 /// The `T` of an `Option<T>`.
 pub(crate) fn option_inner(ty: &Type) -> Option<&Type> {
+    single_arg(ty, "Option")
+}
+
+/// The `T` of a `Vec<T>`.
+pub(crate) fn vec_inner(ty: &Type) -> Option<&Type> {
+    single_arg(ty, "Vec")
+}
+
+/// The one type argument of `ty`, when the last segment of its path is `name`.
+fn single_arg<'a>(ty: &'a Type, name: &str) -> Option<&'a Type> {
     let Type::Path(path) = peel(ty) else {
         return None;
     };
@@ -661,7 +788,7 @@ pub(crate) fn option_inner(ty: &Type) -> Option<&Type> {
         .path
         .segments
         .last()
-        .filter(|last| last.ident == "Option")?;
+        .filter(|last| last.ident == name)?;
     let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
         return None;
     };

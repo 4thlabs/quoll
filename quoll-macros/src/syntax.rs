@@ -24,8 +24,9 @@ use syn::{
 };
 
 use crate::model::{
-    Api, ArgDecl, Auth, DeclaredScheme, Docs, ErrorList, Fixed, Group, HeaderAttr, Headers,
-    MAX_ALTERNATIVES, Method, Route, RouteAuth, RouteDecl, Scheme, Source, Value, headers,
+    Api, ArgDecl, Auth, DeclaredScheme, Docs, ErrorList, Fixed, Group, HeaderAttr, Headers, Join,
+    JoinAttr, MAX_ALTERNATIVES, Method, Route, RouteAuth, RouteDecl, Scheme, Source, Value,
+    headers,
 };
 
 /// What the macro is given: one api, with its groups.
@@ -545,12 +546,14 @@ fn parse_method(input: ParseStream) -> Result<Method> {
     Method::from_name(&ident.to_string()).ok_or_else(|| Error::new(ident.span(), expected()))
 }
 
-/// An argument: `name: Type`, `query name: Type` for a query struct, or `header("Name") name: Type`.
+/// An argument: `name: Type`, `query name: Type` for a query struct, or `header("Name") name: Type`, after a
+/// `#[join(sep)]` for a list written as one query value.
 struct Arg(ArgDecl);
 
 impl Parse for Arg {
     fn parse(input: ParseStream) -> Result<Self> {
         let expected = "an argument is written `name: Type`, `query name: Type` or `header(\"Name\") name: Type`";
+        let join = parse_arg_attrs(input)?;
         let first: Ident = input
             .parse()
             .map_err(|error| Error::new(error.span(), expected))?;
@@ -597,8 +600,46 @@ impl Parse for Arg {
             source,
             name,
             ty: input.parse()?,
+            join,
         }))
     }
+}
+
+/// The attributes of an argument: one `#[join(sep)]` at most, and no other.
+fn parse_arg_attrs(input: ParseStream) -> Result<Option<JoinAttr>> {
+    let mut join: Option<JoinAttr> = None;
+
+    for attr in input.call(Attribute::parse_outer)? {
+        if !attr.path().is_ident("join") {
+            return Err(Error::new_spanned(
+                &attr,
+                "an argument takes one attribute, `#[join(\",\")]`, which writes a list as one query value: remove this one",
+            ));
+        }
+        if join.is_some() {
+            return Err(Error::new_spanned(
+                &attr,
+                "an argument takes one `#[join(...)]`: remove this one",
+            ));
+        }
+
+        join = Some(parse_join(attr)?);
+    }
+
+    Ok(join)
+}
+
+/// `#[join(",")]`, `#[join(" ")]` or `#[join("|")]`.
+pub(crate) fn parse_join(attr: Attribute) -> Result<JoinAttr> {
+    let expected = "`#[join]` takes the separator of one of the styles OpenAPI describes: `#[join(\",\")]`, `#[join(\" \")]` or `#[join(\"|\")]`";
+    let separator: LitStr = attr
+        .parse_args()
+        .map_err(|_| Error::new_spanned(&attr, expected))?;
+    let Some(join) = Join::from_separator(&separator.value()) else {
+        return Err(Error::new_spanned(&attr, expected));
+    };
+
+    Ok(JoinAttr { join, attr })
 }
 
 /// The attributes before an item: its `///` comments, its `#[auth(...)]` with what it says, or the mistake in it, its
@@ -1123,9 +1164,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 ParamKind::Query {
-                    key: "contains".into()
+                    key: "contains".into(),
+                    join: None,
                 },
-                ParamKind::Query { key: "page".into() },
+                ParamKind::Query {
+                    key: "page".into(),
+                    join: None
+                },
             ]
         );
         assert!(list.body().is_none());
@@ -1178,7 +1223,8 @@ mod tests {
                 (
                     "force".into(),
                     ParamKind::Query {
-                        key: "force".into()
+                        key: "force".into(),
+                        join: None,
                     }
                 ),
                 ("repo".into(), ParamKind::Path),
@@ -1286,9 +1332,37 @@ mod tests {
         assert_eq!(
             kinds,
             [
-                ParamKind::Query { key: "q".into() },
-                ParamKind::Query { key: "h".into() },
+                ParamKind::Query {
+                    key: "q".into(),
+                    join: None
+                },
+                ParamKind::Query {
+                    key: "h".into(),
+                    join: None
+                },
             ]
+        );
+    }
+
+    #[test]
+    fn a_join_is_read_with_its_separator() {
+        let api = parse(quote! {
+            api Api = "/api";
+            pub group G {
+                GET "/a?l={labels}&i={ids}&s={states}&t={tags}"
+                    => a(#[join(",")] labels: Vec<String>, #[join(" ")] ids: Vec<u32>, #[join("|")] states: Vec<State>, tags: Vec<String>);
+            }
+        })
+        .unwrap();
+        let joins: Vec<_> = api.groups[0].routes[0]
+            .params
+            .iter()
+            .map(|param| param.join())
+            .collect();
+
+        assert_eq!(
+            joins,
+            [Some(Join::Comma), Some(Join::Space), Some(Join::Pipe), None]
         );
     }
 

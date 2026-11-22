@@ -23,12 +23,12 @@ use crate::__private::content_type::{
 };
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
 use crate::__private::read::{Deserialized, Read};
+use crate::__private::text;
 use crate::rest::error::Repr;
 use crate::rest::{self, Authenticate, Error, Result, Route, Scheme, Scoped};
 use crate::server::{body_limit, trace};
 
 mod stream;
-mod text;
 
 pub use axum::routing::MethodFilter;
 pub(crate) use stream::ended_on_stop;

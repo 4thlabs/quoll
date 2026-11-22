@@ -6,7 +6,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{LitStr, Type, ext::IdentExt};
+use syn::{Ident, LitStr, Type, ext::IdentExt};
 
 use crate::descriptor::{Cx, below_prefix, descriptor_name};
 use crate::headers::{api_headers, route_headers};
@@ -341,12 +341,24 @@ fn param_description(param: &Param) -> Option<TokenStream> {
             quote! { Path },
             schema_fn(&param.ty),
         ),
-        ParamKind::Query { key } => {
+        ParamKind::Query { key, join: None } => {
             let required = option_inner(&param.ty).is_none() && !is_vec(&param.ty);
 
             (
                 key.clone(),
                 quote! { Query { required: #required } },
+                schema_fn(param_schema(param)?),
+            )
+        }
+        ParamKind::Query {
+            key,
+            join: Some(join),
+        } => {
+            let join = Ident::new(join.variant(), Span::call_site());
+
+            (
+                key.clone(),
+                quote! { Joined(::quoll::__private::join::Join::#join) },
                 schema_fn(param_schema(param)?),
             )
         }

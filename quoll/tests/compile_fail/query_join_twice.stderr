@@ -1,0 +1,5 @@
+error: a field takes one `#[join(...)]`: remove this one
+ --> tests/compile_fail/query_join_twice.rs:9:5
+  |
+9 |     #[join(" ")]
+  |     ^^^^^^^^^^^^

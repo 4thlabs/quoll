@@ -1,0 +1,5 @@
+error: `#[join]` takes the separator of one of the styles OpenAPI describes: `#[join(",")]`, `#[join(" ")]` or `#[join("|")]`
+ --> tests/compile_fail/join_other_separator.rs:7:47
+  |
+7 |         GET "/issues?labels={labels}" => list(#[join(";")] labels: Vec<String>);
+  |                                               ^^^^^^^^^^^^
