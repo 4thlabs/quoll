@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: the value of `X-Version`, `VERSION`, is not one of a header: a header's value is visible ASCII, with spaces and tabs inside it only, which HTTP drops at either end: give the value as it is sent
+ --> tests/compile_fail/fixed_header_value_const_invalid.rs:8:28
+  |
+8 |     #[header("X-Version" = VERSION)]
+  |                            ^^^^^^^ evaluation of `_` failed here

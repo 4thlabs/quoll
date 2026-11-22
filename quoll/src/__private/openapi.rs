@@ -9,6 +9,7 @@ use schemars::generate::{Contract, SchemaSettings};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde_json::{Map, Value, json};
 
+use crate::__private::headers::{Fixed, RouteHeaders};
 use crate::rest::openapi::{Document, SecurityScheme};
 
 mod refs;
@@ -53,6 +54,8 @@ pub struct Api {
     pub version: &'static str,
     /// What every path starts with, `/api`, or nothing.
     pub prefix: &'static str,
+    /// Its fixed headers, which the routes of its groups take.
+    pub headers: &'static [Fixed],
     /// The schemes the contract declares, in the order it writes them.
     pub schemes: &'static [SchemeRef],
     /// The groups, in the order the api lists them, then the ones it writes.
@@ -94,6 +97,8 @@ pub struct Route {
     pub docs: &'static [&'static str],
     /// Its parameters, in the order the contract writes them; the body is not one.
     pub params: &'static [Param],
+    /// The fixed headers it takes, beside its api's.
+    pub headers: RouteHeaders,
     /// Its body, if it reads one.
     pub body: Option<Body>,
     /// Its result.
@@ -289,6 +294,7 @@ pub fn document(api: &'static Api) -> Document {
         read: generator(Contract::Deserialize),
         written: generator(Contract::Serialize),
         errors: BTreeSet::new(),
+        headers: api.headers,
     };
 
     let mut paths = Map::new();
@@ -409,6 +415,8 @@ struct Builder {
     schemes: Vec<SecurityScheme>,
     /// The names of the responses of errors some route lists.
     errors: BTreeSet<&'static str>,
+    /// The api's fixed headers.
+    headers: &'static [Fixed],
 }
 
 impl Builder {
@@ -456,7 +464,9 @@ impl Builder {
     }
 
     /// The route's parameters, each name of each place once: a query struct may name a key the route's string names
-    /// too, which reads the same key. The key of a query scheme is the credential, which `security` describes.
+    /// too, which reads the same key. The key of a query scheme is the credential, which `security` describes. Then
+    /// the fixed headers it sends, which a caller need not send: each one an argument does not read, as its argument
+    /// describes it, but `Accept`, `Content-Type` and `Authorization`, which OpenAPI describes otherwise.
     fn parameters(&mut self, route: &Route) -> Vec<Value> {
         let credentials: BTreeSet<String> = self
             .route_schemes(route)
@@ -473,6 +483,25 @@ impl Builder {
                 if !credential && seen.insert((name, place)) {
                     parameters.push(parameter);
                 }
+            }
+        }
+
+        for fixed in route.headers.sent(self.headers) {
+            let described = ["Accept", "Content-Type", "Authorization"]
+                .iter()
+                .chain(route.params.iter().filter_map(|param| match param.place {
+                    Place::Header { .. } => Some(&param.name),
+                    _ => None,
+                }))
+                .any(|name| name.eq_ignore_ascii_case(fixed.name));
+
+            if !described {
+                parameters.push(json!({
+                    "name": fixed.name,
+                    "in": "header",
+                    "required": false,
+                    "schema": { "type": "string", "const": fixed.value },
+                }));
             }
         }
 

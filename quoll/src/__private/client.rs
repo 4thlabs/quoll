@@ -22,6 +22,7 @@ use serde_json::Value;
 use crate::__private::content_type::{
     self, FORM, JSON_LINES, OCTET_STREAM, PROBLEM, TEXT_UTF8, media_type_value,
 };
+use crate::__private::headers::{Fixed, RouteHeaders};
 use crate::__private::known::{IsByteStream, IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
 use crate::__private::read::{Deserialized, Read};
 use crate::client::CallTimeout;
@@ -385,6 +386,37 @@ impl<'a> Request<'a> {
 
         self.headers.append(name, value);
         Ok(self)
+    }
+
+    /// Adds the fixed headers of the route, its own and its group's, then the ones it takes of `api`'s, each unless an
+    /// argument of the route already sent it: the caller's wins. A fixed `Content-Type` is the body's, whose media
+    /// type the macro has checked it keeps, and is left out of a request with no body.
+    #[must_use]
+    pub fn fixed(mut self, api: &[Fixed], route: &RouteHeaders) -> Self {
+        let mut content_type = false;
+
+        for fixed in route.sent(api) {
+            let name = HeaderName::from_bytes(fixed.name.as_bytes())
+                .expect("the macro checks that a fixed header's name is a token");
+            // Checked at compile time with `headers::is_value`, which takes what `from_static` takes.
+            let value = HeaderValue::from_static(fixed.value);
+
+            if name == header::CONTENT_TYPE {
+                if let Some(body) = &mut self.body
+                    && !content_type
+                {
+                    body.content_type = value;
+                    content_type = true;
+                }
+                continue;
+            }
+
+            if !self.headers.contains_key(&name) {
+                self.headers.insert(name, value);
+            }
+        }
+
+        self
     }
 
     /// Asks for an answer of `media_type`, the route's result: what the `Accept` header says, unless the route sends

@@ -287,7 +287,9 @@ The call is not sent again when `refresh` gives back the token refused. An error
 ### A header computed from the request
 
 `on_request` runs a closure on each request of a contract to its api's own origin, given the request and its
-`rest::Route`: a signature, a header of the application's.
+`rest::Route`: a signature, a header of the application's. A header of the same value on every request belongs to the
+api, and goes in its contract, `#[header("name" = value)]` (see
+[Fixed headers](contract.md#fixed-headers)).
 
 ```rust,no_run
 use quoll::{client, rest};

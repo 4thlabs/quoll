@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: the group `Messages` leaves the header `anthropic-beta`, which the api `Anthropic` does not fix, so there is none to leave: check its name, or remove this `none`
+  --> tests/compile_fail/group_listed_leaves_unset.rs:19:43
+   |
+19 |     pub api Anthropic = "/v1" { messages::Messages };
+   |                                           ^^^^^^^^ evaluation of `_::_` failed here

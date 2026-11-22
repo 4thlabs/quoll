@@ -1,0 +1,5 @@
+error: the `Content-Type` `text/plain` is not the media type of the route's body, `application/json`, in UTF-8, which a fixed one keeps, adding a parameter as `application/json; charset=utf-8`: write `application/json`, with the parameters the api asks for
+  --> tests/compile_fail/fixed_header_content_type_other.rs:13:35
+   |
+13 |         #[header("Content-Type" = "text/plain")]
+   |                                   ^^^^^^^^^^^^

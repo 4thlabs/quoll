@@ -1,0 +1,5 @@
+error: the route's body, `Bytes`, carries its content type, which a fixed `Content-Type` of the api `Api` would not keep: write `#[header("Content-Type" = none)]` on the route, and give the `Bytes` its content type
+ --> tests/compile_fail/fixed_header_content_type_bytes.rs:9:14
+  |
+9 |         POST "/files" => upload(file: rest::Bytes);
+  |              ^^^^^^^^

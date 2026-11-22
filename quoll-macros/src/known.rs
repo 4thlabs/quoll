@@ -109,29 +109,43 @@ pub(crate) struct BodyKind {
     /// Whether the document has the schema of the type: its own for JSON, the `T` of a `Form<T>`, none for text and
     /// bytes.
     pub(crate) schema: bool,
+    /// Its media type, which a fixed `Content-Type` keeps: none for `Bytes`, which carry their own.
+    pub(crate) media_type: Option<&'static str>,
 }
 
 impl BodyKind {
     /// Any type the macro does not recognize: its JSON, `application/json`.
-    pub(crate) const JSON: Self = Self::fallible("json", "Json", true);
+    pub(crate) const JSON: Self = Self::fallible("json", "Json", true, Some("application/json"));
     /// `Form<T>`: `application/x-www-form-urlencoded`.
-    pub(crate) const FORM: Self = Self::fallible("form", "Form", true);
+    pub(crate) const FORM: Self = Self::fallible(
+        "form",
+        "Form",
+        true,
+        Some("application/x-www-form-urlencoded"),
+    );
     /// `Text`: `text/plain`, UTF-8, which is always written.
     pub(crate) const TEXT: Self = Self {
         method: "text",
         fallible: false,
         document: "Text",
         schema: false,
+        media_type: Some("text/plain"),
     };
     /// `Bytes`: any content type but the three a browser sends to another site without asking.
-    pub(crate) const BYTES: Self = Self::fallible("bytes", "Bytes", false);
+    pub(crate) const BYTES: Self = Self::fallible("bytes", "Bytes", false, None);
 
-    const fn fallible(method: &'static str, document: &'static str, schema: bool) -> Self {
+    const fn fallible(
+        method: &'static str,
+        document: &'static str,
+        schema: bool,
+        media_type: Option<&'static str>,
+    ) -> Self {
         Self {
             method,
             fallible: true,
             document,
             schema,
+            media_type,
         }
     }
 }

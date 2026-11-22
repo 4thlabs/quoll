@@ -1,0 +1,5 @@
+error: a scheme takes no `#[header(...)]`: put it on the api, a group or a route, whose requests send it
+ --> tests/compile_fail/fixed_header_on_scheme.rs:8:9
+  |
+8 |     pub scheme Key = header "X-Api-Key";
+  |         ^^^^^^

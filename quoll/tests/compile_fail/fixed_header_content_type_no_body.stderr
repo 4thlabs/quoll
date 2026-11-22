@@ -1,0 +1,5 @@
+error: the route sends no body, and so no `Content-Type`: remove this header
+ --> tests/compile_fail/fixed_header_content_type_no_body.rs:8:18
+  |
+8 |         #[header("Content-Type" = "application/json; charset=utf-8")]
+  |                  ^^^^^^^^^^^^^^

@@ -17,6 +17,7 @@ pub use serde;
 pub mod auth;
 pub(crate) mod content_type;
 pub mod group;
+pub mod headers;
 pub mod known;
 pub mod openapi;
 

@@ -10,7 +10,7 @@ use crate::descriptor::{self, Cx};
 use crate::docs::doc_attrs;
 use crate::known::Known;
 use crate::model::Api;
-use crate::{client, openapi, scheme, server};
+use crate::{client, headers, openapi, scheme, server};
 
 /// What a contract becomes: the api's type, its schemes, each group its block writes, its OpenAPI document, the checks
 /// of the groups it lists, the server's code behind the feature `server` of `quoll`, and the client's behind its
@@ -27,6 +27,7 @@ pub(crate) fn api(api: &Api) -> TokenStream {
     });
     let checks = descriptor::api_checks(api);
     let error = api.error.as_ref().map(named);
+    let fixed = headers::api_checks(&api.headers);
     let openapi = openapi::expand(api);
     let server = server::expand(api);
     let client = client::expand(api);
@@ -37,6 +38,7 @@ pub(crate) fn api(api: &Api) -> TokenStream {
         #(#groups)*
         #checks
         #error
+        #fixed
         #openapi
         #server
         #client
@@ -74,6 +76,7 @@ fn group(cx: &Cx) -> TokenStream {
         TokenStream::new()
     };
     let challenges = scheme::challenge_checks(cx.group);
+    let fixed = headers::group_checks(cx);
     let openapi = openapi::group(cx);
     let server = server::group(cx);
     let client = client::group(cx);
@@ -84,6 +87,7 @@ fn group(cx: &Cx) -> TokenStream {
         #(#errors)*
         #alone
         #challenges
+        #fixed
         #openapi
         #server
         #client

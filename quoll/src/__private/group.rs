@@ -8,6 +8,7 @@ use std::marker::PhantomData;
 use http::Method;
 
 use crate::__private::auth::{Declared, Place};
+use crate::__private::headers::{Fixed, RouteHeaders, keeps_media_type};
 use crate::rest::Route;
 
 /// A group, as the descriptor `rest::group!` writes for it describes it: the type `__QuollGroupNotes` of the group
@@ -33,6 +34,8 @@ pub struct GroupInfo {
     pub vis: &'static str,
     /// Whether it names the shape of its errors, `#[error(E)]`, which it cannot take from an api with one.
     pub error: bool,
+    /// The headers it leaves of its api's, `#[header("name" = none)]`, which the api fixes.
+    pub leaves: &'static [&'static str],
     /// Its routes, in the order the contract writes them.
     pub routes: &'static [RouteInfo],
 }
@@ -60,6 +63,23 @@ pub struct RouteInfo {
     pub scheme_infos: &'static [SchemeInfo],
     /// Whether its result is a stream.
     pub streams: bool,
+    /// Its body.
+    pub body: BodyInfo,
+    /// The fixed headers it takes, beside its api's.
+    pub fixed: RouteHeaders,
+    /// The headers it leaves that its group neither fixes nor leaves: its api's, which the api fixes.
+    pub api_leaves: &'static [&'static str],
+}
+
+/// The body of a route, as a fixed `Content-Type` sees it.
+#[derive(Debug, Clone, Copy)]
+pub enum BodyInfo {
+    /// None.
+    None,
+    /// A body of this media type: its JSON, a form or text.
+    Of(&'static str),
+    /// `Bytes`, which carry their content type.
+    Bytes,
 }
 
 /// A scheme a route takes, as its type says: where its credential travels, when the macro knows it, and, for a scheme
@@ -289,6 +309,8 @@ pub struct ApiInfo {
     pub reach: u8,
     /// Its visibility as the contract writes it, `pub`.
     pub vis: &'static str,
+    /// Its fixed headers, `#[header("name" = value)]`, which the routes of its groups take.
+    pub headers: &'static [Fixed],
 }
 
 /// Checks, at compile time, a group an api lists against the api and the groups before it: the message of the first
@@ -298,7 +320,8 @@ pub struct ApiInfo {
 /// A mistake is when the group is less visible than the api, takes a declared scheme less visible than itself, has a route of a
 /// method and a path that another route has, or of a path another route names with other parameters, or of an
 /// operation id another route has; when a route takes two schemes of an api that read one place, or reads the
-/// credential of a scheme it takes in an argument.
+/// credential of a scheme it takes in an argument or sends it in a fixed header; when the group or a route leaves a
+/// header the api does not fix, or a route takes the api's `Content-Type` that its body does not keep.
 pub const fn check(api: &ApiInfo, earlier: &[&GroupInfo], group: &GroupInfo) -> Option<Message> {
     if group.reach < api.reach {
         return Some(
@@ -315,11 +338,21 @@ pub const fn check(api: &ApiInfo, earlier: &[&GroupInfo], group: &GroupInfo) -> 
         );
     }
 
+    if let Some(error) = check_leaves(api, group, None, group.leaves) {
+        return Some(error);
+    }
+
     let mut i = 0;
     while i < group.routes.len() {
         let route = &group.routes[i];
 
-        if let Some(error) = check_schemes(group, route) {
+        if let Some(error) = check_schemes(api, group, route) {
+            return Some(error);
+        }
+        if let Some(error) = check_leaves(api, group, Some(route), route.api_leaves) {
+            return Some(error);
+        }
+        if let Some(error) = check_content_type(api, group, route) {
             return Some(error);
         }
 
@@ -464,10 +497,123 @@ impl Reads {
     }
 }
 
+/// Checks that the api fixes each header of `leaves`, which `group`, or its `route`, leaves.
+const fn check_leaves(
+    api: &ApiInfo,
+    group: &GroupInfo,
+    route: Option<&RouteInfo>,
+    leaves: &[&str],
+) -> Option<Message> {
+    let mut i = 0;
+    while i < leaves.len() {
+        if fixed(api.headers, leaves[i]).is_none() {
+            let message = match route {
+                Some(route) => Message::new()
+                    .push("the route `")
+                    .push(group.name)
+                    .push("::")
+                    .push(route.function)
+                    .push("` leaves the header `")
+                    .push(leaves[i])
+                    .push("`, which neither its group nor the api `")
+                    .push(api.name)
+                    .push("` fixes"),
+                None => Message::new()
+                    .push("the group `")
+                    .push(group.name)
+                    .push("` leaves the header `")
+                    .push(leaves[i])
+                    .push("`, which the api `")
+                    .push(api.name)
+                    .push("` does not fix"),
+            };
+
+            return Some(
+                message.push(", so there is none to leave: check its name, or remove this `none`"),
+            );
+        }
+        i += 1;
+    }
+
+    None
+}
+
+/// The header `name` of `headers`.
+const fn fixed(headers: &[Fixed], name: &str) -> Option<Fixed> {
+    let mut i = 0;
+    while i < headers.len() {
+        if same_ignoring_case(headers[i].name, name) {
+            return Some(headers[i]);
+        }
+        i += 1;
+    }
+
+    None
+}
+
+/// The header `name` a route takes of its api's: not one it fixes itself, leaves, or under a `#[header(none)]`.
+const fn api_header(api: &ApiInfo, route: &RouteInfo, name: &str) -> Option<Fixed> {
+    let headers = route.fixed;
+
+    if !headers.inherits || fixed(headers.own, name).is_some() {
+        return None;
+    }
+
+    let mut i = 0;
+    while i < headers.leaves.len() {
+        if same_ignoring_case(headers.leaves[i], name) {
+            return None;
+        }
+        i += 1;
+    }
+
+    fixed(api.headers, name)
+}
+
+/// Checks that a route that takes its api's `Content-Type` has a body that keeps its media type.
+const fn check_content_type(
+    api: &ApiInfo,
+    group: &GroupInfo,
+    route: &RouteInfo,
+) -> Option<Message> {
+    let Some(content_type) = api_header(api, route, "Content-Type") else {
+        return None;
+    };
+    let message = Message::new()
+        .push("the route `")
+        .push(group.name)
+        .push("::")
+        .push(route.function)
+        .push("` takes the `Content-Type` `")
+        .push(content_type.value)
+        .push("` of the api `")
+        .push(api.name)
+        .push("`, ");
+
+    match route.body {
+        BodyInfo::None => None,
+        BodyInfo::Bytes => Some(message.push(
+            "which its body, `Bytes`, would not keep, as they carry their content type: write `#[header(\"Content-Type\" = none)]` on the route, and give the `Bytes` its content type",
+        )),
+        BodyInfo::Of(media_type) => {
+            if keeps_media_type(content_type.value, media_type) {
+                return None;
+            }
+
+            Some(
+                message
+                    .push("which is not the media type of its body, `")
+                    .push(media_type)
+                    .push("`, in UTF-8: write `#[header(\"Content-Type\" = none)]` on the route, or a `Content-Type` of its body's media type"),
+            )
+        }
+    }
+}
+
 /// Checks the schemes of a route of `group` the macro of the group did not know, by what their types say: a declared
-/// one as visible as the group, each reading another place than the other schemes of the route and than its
-/// arguments.
-const fn check_schemes(group: &GroupInfo, route: &RouteInfo) -> Option<Message> {
+/// one as visible as the group, each reading another place than the other schemes of the route, than its arguments,
+/// and than the fixed headers it sends.
+const fn check_schemes(api: &ApiInfo, group: &GroupInfo, route: &RouteInfo) -> Option<Message> {
     let mut i = 0;
     while i < route.scheme_infos.len() {
         let name = route.schemes[i];
@@ -523,10 +669,104 @@ const fn check_schemes(group: &GroupInfo, route: &RouteInfo) -> Option<Message> 
         if let Some(error) = check_arguments(group, route, name, place) {
             return Some(error);
         }
+        let header = match place {
+            Reads::Header(name) => Some(name),
+            Reads::Cookie(_) => Some("Cookie"),
+            Reads::Authorization(_) | Reads::Query(_) => None,
+        };
+
+        if let Some(header) = header
+            && let Some(error) = check_fixed(api, group, route, header, name, true)
+        {
+            return Some(error);
+        }
         i += 1;
     }
 
-    None
+    check_authorization(api, group, route)
+}
+
+/// Checks that a route that takes a scheme sends no fixed `Authorization`, which the client's middleware sends: the
+/// credential of a scheme that reads it, or the header of any credential, which a scheme the macro does not know may
+/// read.
+const fn check_authorization(
+    api: &ApiInfo,
+    group: &GroupInfo,
+    route: &RouteInfo,
+) -> Option<Message> {
+    if route.schemes.is_empty() {
+        return None;
+    }
+
+    let mut i = 0;
+    while i < route.scheme_infos.len() {
+        if let Some(Reads::Authorization(_)) = route.scheme_infos[i].reads {
+            return check_fixed(api, group, route, "Authorization", route.schemes[i], true);
+        }
+        i += 1;
+    }
+
+    check_fixed(api, group, route, "Authorization", route.schemes[0], false)
+}
+
+/// Checks that no fixed header `name` a route sends, its own or its api's, is the client's middleware's: the
+/// credential of `scheme`, which the route takes, when `reads` says that the scheme reads it, or else the
+/// `Authorization` of any credential on a route that takes a scheme, as `scheme`.
+const fn check_fixed(
+    api: &ApiInfo,
+    group: &GroupInfo,
+    route: &RouteInfo,
+    name: &str,
+    scheme: &str,
+    reads: bool,
+) -> Option<Message> {
+    let message = Message::new()
+        .push("the route `")
+        .push(group.name)
+        .push("::")
+        .push(route.function);
+    let own = fixed(route.fixed.own, name);
+    let (header, message) = match own {
+        Some(header) => (
+            header,
+            message.push("` fixes the header `").push(header.name),
+        ),
+        None => match api_header(api, route, name) {
+            Some(header) => (
+                header,
+                message
+                    .push("` takes the header `")
+                    .push(header.name)
+                    .push("` of the api `")
+                    .push(api.name),
+            ),
+            None => return None,
+        },
+    };
+    let message = if reads {
+        message
+            .push("`, which carries the credential of `")
+            .push(scheme)
+            .push("`, a scheme it takes")
+    } else {
+        message
+            .push("`, which carries the credentials of a route that takes a scheme, as it takes `")
+            .push(scheme)
+            .push("`")
+    };
+
+    if own.is_some() {
+        return Some(
+            message.push(": the client's middleware sends it, so the contract does not fix it"),
+        );
+    }
+
+    Some(
+        message
+            .push(": the client's middleware sends it, so write `#[header(\"")
+            .push(header.name)
+            .push("\" = none)]` on the route"),
+    )
 }
 
 /// Checks that no argument of a route reads the credential of `scheme`, which it takes and which travels in `place`.
@@ -748,6 +988,9 @@ mod tests {
             scheme_types: &[],
             scheme_infos: &[],
             streams: false,
+            body: BodyInfo::None,
+            fixed: NO_HEADERS,
+            api_leaves: &[],
         },
         RouteInfo {
             id: "notes_home",
@@ -763,8 +1006,17 @@ mod tests {
                 reach: None,
             }],
             streams: true,
+            body: BodyInfo::None,
+            fixed: NO_HEADERS,
+            api_leaves: &[],
         },
     ];
+
+    const NO_HEADERS: RouteHeaders = RouteHeaders {
+        own: &[],
+        inherits: true,
+        leaves: &[],
+    };
 
     #[test]
     fn a_table_puts_each_route_under_the_prefix() {
