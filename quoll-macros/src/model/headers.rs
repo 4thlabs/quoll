@@ -445,26 +445,55 @@ fn check_content_type(
 /// Whether the content type `value` has the media type `media_type`, whatever its parameters, as
 /// `quoll::__private::headers::keeps_media_type` says: no charset but UTF-8, which quoll writes its bodies in.
 pub(crate) fn keeps_media_type(value: &str, media_type: &str) -> bool {
-    let mut parts = value.split(';');
-    let essence = parts.next().unwrap_or_default().trim();
+    let parts = split_params(value);
+    let essence = parts[0].trim();
 
-    // A parameter is `name=value`, neither of them empty, and a charset is UTF-8.
-    let parameter = |param: &str| {
+    // A parameter is `name=value`, neither of them empty, a quoted string closed, and a charset is UTF-8.
+    let parameter = |param: &&str| {
         let Some((name, value)) = param.split_once('=') else {
             return false;
         };
         let (name, value) = (name.trim(), value.trim());
-        let unquoted = value
-            .strip_prefix('"')
-            .and_then(|value| value.strip_suffix('"'))
-            .unwrap_or(value);
+        let unquoted = match value.strip_prefix('"') {
+            Some(quoted) => match quoted.strip_suffix('"') {
+                Some(inner) => inner,
+                None => return false,
+            },
+            None => value,
+        };
 
         !name.is_empty()
             && !value.is_empty()
             && !(name.eq_ignore_ascii_case("charset") && !unquoted.eq_ignore_ascii_case("utf-8"))
     };
 
-    essence.eq_ignore_ascii_case(media_type) && parts.all(parameter)
+    essence.eq_ignore_ascii_case(media_type) && parts[1..].iter().all(parameter)
+}
+
+/// A content type cut at each `;` outside a quoted string, as in `profile="a;b"`: its media type, then its parameters.
+fn split_params(value: &str) -> Vec<&str> {
+    let bytes = value.as_bytes();
+    let mut parts = Vec::new();
+    let mut quoted = false;
+    let mut start = 0;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            // A quoted pair, `\"`, is one character of the string.
+            b'\\' if quoted => i += 1,
+            b'"' => quoted = !quoted,
+            b';' if !quoted => {
+                parts.push(&value[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    parts.push(&value[start..]);
+    parts
 }
 
 /// No header a route sends carries the credential of a scheme it takes, which the client's middleware sends: an
@@ -518,4 +547,34 @@ fn check_credentials<'a>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keeps_media_type;
+
+    #[test]
+    fn a_content_type_keeps_its_media_type_as_the_generated_check_says() {
+        let kept = [
+            "application/json",
+            "Application/JSON ; charset=UTF-8",
+            "application/json; profile=\"https://example.com/schema;v1\"; charset=utf-8",
+            "application/json; note=\"a \\\" ; b\"",
+        ];
+        let refused = [
+            "text/plain",
+            "application/json; charset=iso-8859-1",
+            "application/json;",
+            "application/json; charset",
+            "application/json; =x",
+            "application/json; profile=\"open",
+        ];
+
+        for value in kept {
+            assert!(keeps_media_type(value, "application/json"), "{value}");
+        }
+        for value in refused {
+            assert!(!keeps_media_type(value, "application/json"), "{value}");
+        }
+    }
 }

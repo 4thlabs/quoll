@@ -353,9 +353,23 @@ pub(crate) fn table(api: &Api, group: &GroupRef) -> TokenStream {
 }
 
 /// The compile-time checks of the groups of other blocks the api lists, which the macro does not see: each against
-/// the api, and against the groups before it and the ones the block writes, after the check that it is a group.
+/// the api, and against the groups before it and the ones the block writes, after the check that it is a group. A
+/// group the block writes that takes a scheme the macro knows by its type alone, one of another block, is checked
+/// against the api too: what its arguments and its fixed headers read of that scheme's place.
 pub(crate) fn api_checks(api: &Api) -> TokenStream {
-    if api.listed.is_empty() {
+    let typed: Vec<&Group> = api
+        .groups
+        .iter()
+        .filter(|group| {
+            group
+                .routes
+                .iter()
+                .flat_map(Route::schemes)
+                .any(|scheme| scheme.kind == SchemeKind::Foreign)
+        })
+        .collect();
+
+    if api.listed.is_empty() && typed.is_empty() {
         return TokenStream::new();
     }
 
@@ -392,6 +406,20 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
             };
         }
     });
+    let typed = typed.into_iter().map(|group| {
+        let descriptor = descriptor_name(&group.name);
+
+        // Against no group: the macro has checked the block's groups against each other.
+        quote_spanned! {group.name.span()=>
+            const _: () = if let ::core::option::Option::Some(error) = ::quoll::__private::group::check(
+                &API,
+                &[],
+                &<#descriptor as ::quoll::__private::group::Group>::INFO,
+            ) {
+                ::core::panic!("{}", error.as_str());
+            };
+        }
+    });
     let is_group = api.listed.iter().map(is_group);
     let errors = refs[..api.listed.len()]
         .iter()
@@ -411,6 +439,7 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
             };
 
             #(#checks)*
+            #(#typed)*
         };
     }
 }

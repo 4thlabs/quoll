@@ -70,14 +70,14 @@ pub const fn is_value(text: &str) -> bool {
 /// other parameters: what a fixed `Content-Type` may say of the body's, `application/json; charset=utf-8` of
 /// `application/json`, and not `charset=iso-8859-1`. Media types and charsets are compared ignoring case.
 pub const fn keeps_media_type(value: &str, media_type: &str) -> bool {
-    let (essence, mut rest) = split(value.as_bytes(), b';');
+    let (essence, mut rest) = split_param(value.as_bytes());
 
     if !same_ascii(trim(essence), media_type.as_bytes()) {
         return false;
     }
 
     while let Some(params) = rest {
-        let (param, after) = split(params, b';');
+        let (param, after) = split_param(params);
         let (name, value) = split(param, b'=');
         let (name, value) = (
             trim(name),
@@ -94,6 +94,8 @@ pub const fn keeps_media_type(value: &str, media_type: &str) -> bool {
 
         let value = match value {
             [b'"', inner @ .., b'"'] => inner,
+            // A quoted string is closed.
+            [b'"', ..] => return false,
             _ => value,
         };
 
@@ -104,6 +106,33 @@ pub const fn keeps_media_type(value: &str, media_type: &str) -> bool {
     }
 
     true
+}
+
+/// `bytes` up to the first `;` outside a quoted string, as in `profile="a;b"`, and what follows it, `None` when there
+/// is none.
+const fn split_param(bytes: &[u8]) -> (&[u8], Option<&[u8]>) {
+    let mut quoted = false;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            // A quoted pair, `\"`, is one character of the string.
+            b'\\' if quoted => i += 1,
+            b'"' => quoted = !quoted,
+            b';' if !quoted => break,
+            _ => {}
+        }
+        i += 1;
+    }
+
+    if i >= bytes.len() {
+        return (bytes, None);
+    }
+
+    let (before, after) = bytes.split_at(i);
+    let (_, rest) = after.split_at(1);
+
+    (before, Some(rest))
 }
 
 /// `bytes` up to the first `separator`, and what follows it, `None` when there is no separator.
@@ -191,6 +220,18 @@ mod tests {
         ));
         assert!(!keeps_media_type(
             "application/json; =x",
+            "application/json"
+        ));
+        assert!(keeps_media_type(
+            "application/json; profile=\"https://example.com/schema;v1\"; charset=utf-8",
+            "application/json"
+        ));
+        assert!(keeps_media_type(
+            "application/json; note=\"a \\\" ; b\"",
+            "application/json"
+        ));
+        assert!(!keeps_media_type(
+            "application/json; profile=\"open",
             "application/json"
         ));
     }
