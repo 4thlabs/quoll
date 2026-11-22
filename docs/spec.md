@@ -177,10 +177,10 @@ pub struct IssueFilter {
 }
 ```
 
-- `#[join(",")]` and `rest::join::Comma` are `labels=bug,docs`, `style: form, explode: false` in OpenAPI; `#[join(" ")]` and `Space` are `labels=bug%20docs`, `spaceDelimited`; `#[join("|")]` and `Pipe` are `labels=bug|docs`, `pipeDelimited`. No other separator.
+- `#[join(",")]` is `labels=bug,docs`, `style: form, explode: false` in OpenAPI; `#[join(" ")]` is `labels=bug%20docs`, `spaceDelimited`; `#[join("|")]` is `labels=bug|docs`, `pipeDelimited`. No other separator. `rest::join::Comma`, `Space` and `Pipe` are the same styles, their separator escaped by serde_html_form, `labels=bug%2Cdocs`, `bug+docs`, `bug%7Cdocs`.
 - The values are read from text, as a path parameter is. An empty list leaves the key out; a missing key is an empty list for an argument, and for a field that has `#[serde(default)]`, as any `Vec` of a query struct; `labels=` is an empty list too.
 - The client writes an argument's values escaped, with the separator between them as is, and a field as serde_html_form writes its text, the separator escaped, `labels=bug%2Cdocs`. The server decodes the value before it splits it, so that it reads both, and what orval's clients write through `URLSearchParams`. A value cannot hold the separator: the client refuses one, before sending, as it refuses a list of one empty value, which would read as an empty list.
-- serde infers the `T` of `Comma<T>` from the field; schemars takes the type as written, and `Comma` alone is `Comma<rest::join::Any>`, whose items have any schema: `Comma::<u32>` gives the exact one. In JSON a joined field is its joined text, `null` when it is empty, as its schema says where the struct is a body or a result.
+- serde infers the `T` of `Comma<T>` from the field; schemars takes the type as written, and `Comma` alone is `Comma<rest::join::Any>`, whose items have any schema: `Comma::<u32>` gives the exact one. A `#[schemars(with = ...)]` on the field would replace its schema and its style in the document, and nothing checks at compile time that the items of a field are read from text, as the macro does for an argument: a list of structs fails when it is written or read. In JSON a joined field is its joined text, `null` when it is empty, as its schema says where the struct is a body or a result.
 
 ### Fixed headers
 

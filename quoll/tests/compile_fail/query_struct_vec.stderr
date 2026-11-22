@@ -1,0 +1,5 @@
+error: the query struct `tags` is read with a field per key, which this type is not: write a struct of your own, as `query tags: NoteFilter`
+ --> tests/compile_fail/query_struct_vec.rs:8:44
+  |
+8 |         GET "/notes" => search(query tags: Vec<String>);
+  |                                            ^^^^^^^^^^^

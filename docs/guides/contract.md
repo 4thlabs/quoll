@@ -176,15 +176,18 @@ rest::api! {
 }
 ```
 
-- `#[join(",")]` and `rest::join::Comma` write `labels=bug,docs`, `#[join(" ")]` and `Space` `labels=bug%20docs`,
-  `#[join("|")]` and `Pipe` `labels=bug|docs`: the three styles OpenAPI describes, and no other separator.
+- `#[join(",")]` writes `labels=bug,docs`, `#[join(" ")]` `labels=bug%20docs`, `#[join("|")]` `labels=bug|docs`:
+  the three styles OpenAPI describes, and no other separator. `rest::join::Comma`, `Space` and `Pipe` write the same
+  lists, their separator escaped by serde_html_form, `labels=bug%2Cdocs`, `bug+docs`, `bug%7Cdocs`.
 - The values are read from text, as a path parameter is. An empty list leaves the key out, and a missing key is an
   empty list, for a field that has `#[serde(default)]` as for any `Vec` of a query struct.
 - The server decodes the value before it splits it: it reads `labels=bug%2Cdocs` too, which a browser's
   `URLSearchParams` writes, and which the client writes for a field of a query struct. So a value cannot hold the
   separator, and the client refuses one before sending.
 - serde infers the `T` of `Comma<T>` from the field, but the schema needs it written: `rest::join::Comma` alone
-  documents items of any schema. In JSON too a joined field is its joined text, as its schema says.
+  documents items of any schema. A field takes no `#[schemars(with = ...)]`, which would drop its style from the
+  document, and nothing checks at compile time that its items are read from text. In JSON too a joined field is its
+  joined text, as its schema says.
 
 ### Headers
 
