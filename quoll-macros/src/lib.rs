@@ -9,7 +9,6 @@ mod known;
 mod model;
 mod openapi;
 mod path;
-mod query;
 mod scheme;
 mod server;
 mod syntax;
@@ -126,26 +125,4 @@ pub fn group(input: TokenStream) -> TokenStream {
         Ok(GroupContract(alone)) => expand::alone_group(&alone).into(),
         Err(error) => error.into_compile_error().into(),
     }
-}
-
-/// Reads a query struct whose fields take `#[join(sep)]`, as a route's arguments do, written before its derives.
-///
-/// ```text
-/// #[rest::query]
-/// #[derive(Serialize, Deserialize, JsonSchema)]
-/// pub struct IssueFilter {
-///     #[join(",")]
-///     #[serde(default)]
-///     pub labels: Vec<String>,
-///     pub state: Option<State>,
-/// }
-/// ```
-///
-/// Each `#[join(",")]`, `#[join(" ")]` or `#[join("|")]` becomes the `#[serde(with = "...")]` of a type of quoll's,
-/// named with the field's `T`, which writes the list as one value and reads it back, and whose schema is the list's,
-/// with the mark the OpenAPI document turns into the parameter's style. The struct stays serde's: its other
-/// attributes mean what they meant. A struct with no `#[join]` needs no `#[rest::query]`.
-#[proc_macro_attribute]
-pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
-    query::query(attr.into(), item.into()).into()
 }

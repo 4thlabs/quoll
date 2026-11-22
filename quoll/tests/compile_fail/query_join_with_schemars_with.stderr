@@ -1,5 +1,0 @@
-error: `#[join]` writes the field itself, and its `#[schemars(with = ...)]` too: remove one of them
- --> tests/compile_fail/query_join_with_schemars_with.rs:8:5
-  |
-8 |     #[join(",")]
-  |     ^^^^^^^^^^^^

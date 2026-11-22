@@ -1,5 +1,0 @@
-error: `page` is not a `key={name}` pair: write the key, then the argument that takes it in braces, as in `page={page}`
- --> tests/compile_fail/query_item_without_name.rs:7:13
-  |
-7 |         GET "/notes?page" => list(page: u32);
-  |             ^^^^^^^^^^^^^

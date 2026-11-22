@@ -89,33 +89,21 @@
 //! `Default` is for the callers, which fill the keys they need, `NoteFilter { contains: Some("milk".into()),
 //! ..Default::default() }`.
 //!
-//! `#[join(sep)]` writes a `Vec` as the one value of its key, on an argument of the route or on a field of a query
-//! struct under [`#[rest::query]`](query): `#[join(",")]` is `labels=bug,docs`, `#[join(" ")]` `labels=bug%20docs`,
-//! `#[join("|")]` `labels=bug|docs`, and the document says the style. The values are read from text, as a path
-//! parameter is; an empty list leaves the key out, and `labels=` reads as one. The server decodes the value before it
-//! splits it, so that it reads `labels=bug%2Cdocs` too, which the client writes for a field: a value that holds the
-//! separator is refused by the client, before sending.
+//! `#[join(sep)]` on an argument writes a `Vec` as the one value of its key: `#[join(",")]` is `labels=bug,docs`,
+//! `#[join(" ")]` `labels=bug%20docs`, `#[join("|")]` `labels=bug|docs`, and the document says the style. The values
+//! are read from text, as a path parameter is; an empty list leaves the key out, and `labels=` reads as one. The server
+//! decodes the value before it splits it, so that it reads `labels=bug%2Cdocs` too: a value that holds the separator
+//! is refused by the client, before sending. A field of a query struct names a type of [`join`] in serde's `with`
+//! instead, `#[serde(with = "rest::join::Comma::<u32>")]`.
 //!
 //! ```
 //! use quoll::rest;
-//! use schemars::JsonSchema;
-//! use serde::{Deserialize, Serialize};
-//!
-//! #[rest::query]
-//! #[derive(Default, Serialize, Deserialize, JsonSchema)]
-//! #[serde(default)]
-//! pub struct IssueFilter {
-//!     #[join(" ")]
-//!     pub milestones: Vec<u32>,
-//!     pub page: Option<u32>,
-//! }
 //!
 //! rest::api! {
 //!     pub api Api = "/api";
 //!
 //!     pub group Issues {
 //!         GET "/issues?labels={labels}" => list(#[join(",")] labels: Vec<String>) -> Vec<String>;
-//!         GET "/search"                 => search(query filter: IssueFilter) -> Vec<String>;
 //!     }
 //! }
 //! ```
@@ -469,6 +457,7 @@ mod body;
 mod call;
 mod created;
 pub(crate) mod error;
+pub mod join;
 pub mod openapi;
 mod problem;
 mod response;
@@ -483,7 +472,7 @@ pub use call::Call;
 pub use created::Created;
 pub use error::{Error, Result};
 pub use problem::Problem;
-pub use quoll_macros::{api, group, query};
+pub use quoll_macros::{api, group};
 pub use response::{InvalidStatus, Response, Status};
 pub use route::Route;
 pub use stream::{ByteStream, Events, JsonLines};

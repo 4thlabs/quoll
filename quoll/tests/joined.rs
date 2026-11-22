@@ -28,17 +28,15 @@ struct Listed {
     state: Option<State>,
 }
 
-/// A query struct whose lists are joined, beside a key that is not.
-#[rest::query]
+/// A query struct whose lists are joined, with their `T` or without, beside a key that is not.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 struct IssueFilter {
-    #[join(",")]
+    #[serde(with = "rest::join::Comma")]
     labels: Vec<String>,
-    #[join(" ")]
-    #[serde(rename = "milestone")]
+    #[serde(rename = "milestone", with = "rest::join::Space::<u32>")]
     milestones: Vec<u32>,
-    #[join("|")]
+    #[serde(with = "rest::join::Pipe::<State>")]
     states: Vec<State>,
     page: Option<u32>,
 }

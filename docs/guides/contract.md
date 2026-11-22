@@ -140,8 +140,8 @@ The struct needs no `Default`, but its callers like one: they fill the keys they
 
 ### Joined lists
 
-An API that reads a list as one value, `labels=bug,docs`, says so with `#[join(sep)]`, on an argument of the route or
-on a field of a query struct, whose type stays a `Vec`:
+An API that reads a list as one value, `labels=bug,docs`, says so with `#[join(sep)]` on an argument of the route, or
+with a type of `rest::join` in serde's `with` on a field of a query struct, whose type stays a `Vec`:
 
 ```rust
 use quoll::rest;
@@ -155,13 +155,12 @@ pub enum State {
     Closed,
 }
 
-#[rest::query]
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct IssueFilter {
-    #[join(",")]
+    #[serde(with = "rest::join::Comma::<String>")]
     pub labels: Vec<String>,
-    #[join(" ")]
+    #[serde(with = "rest::join::Space::<u32>")]
     pub milestones: Vec<u32>,
     pub state: Option<State>,
 }
@@ -177,16 +176,15 @@ rest::api! {
 }
 ```
 
-- `#[join(",")]` writes `labels=bug,docs`, `#[join(" ")]` `labels=bug%20docs` and `#[join("|")]` `labels=bug|docs`:
-  the three styles OpenAPI describes, and no other separator.
+- `#[join(",")]` and `rest::join::Comma` write `labels=bug,docs`, `#[join(" ")]` and `Space` `labels=bug%20docs`,
+  `#[join("|")]` and `Pipe` `labels=bug|docs`: the three styles OpenAPI describes, and no other separator.
 - The values are read from text, as a path parameter is. An empty list leaves the key out, and a missing key is an
   empty list, for a field that has `#[serde(default)]` as for any `Vec` of a query struct.
 - The server decodes the value before it splits it: it reads `labels=bug%2Cdocs` too, which a browser's
   `URLSearchParams` writes, and which the client writes for a field of a query struct. So a value cannot hold the
   separator, and the client refuses one before sending.
-- `#[rest::query]` goes before the derives, and only on a struct with a `#[join]`. It turns each one into the serde
-  attribute that writes the list, so the struct stays serde's: its other attributes mean what they meant, and in JSON a
-  joined field is its joined text, as its schema says.
+- serde infers the `T` of `Comma<T>` from the field, but the schema needs it written: `rest::join::Comma` alone
+  documents items of any schema. In JSON too a joined field is its joined text, as its schema says.
 
 ### Headers
 

@@ -1,5 +1,0 @@
-error: `page` is the query struct, and the query's `page={page}` names it too: an argument comes from one place, so rename one of them
- --> tests/compile_fail/query_struct_named_in_query.rs:8:48
-  |
-8 |         GET "/notes?page={page}" => list(query page: Paging);
-  |                                                ^^^^

@@ -16,22 +16,22 @@ enum State {
 }
 
 /// A query struct whose lists are joined.
-#[rest::query]
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 struct IssueFilter {
     /// The labels an issue has all of.
-    #[join(",")]
+    #[serde(with = "rest::join::Comma::<String>")]
     labels: Vec<String>,
-    #[join(" ")]
-    #[serde(rename = "milestone")]
+    #[serde(rename = "milestone", with = "rest::join::Space::<u32>")]
     milestones: Vec<u32>,
-    #[join("|")]
+    #[serde(with = "rest::join::Pipe::<State>")]
     states: Vec<State>,
     tag: Vec<String>,
-    #[join(",")]
-    #[serde(default = "open")]
+    #[serde(default = "open", with = "rest::join::Comma::<State>")]
     opened: Vec<State>,
+    /// A list whose `T` is not written, inferred by serde and not by schemars.
+    #[serde(with = "rest::join::Comma")]
+    any: Vec<u32>,
 }
 
 /// A result with a property of the name of the mark, which is no mark.
@@ -175,6 +175,19 @@ fn a_joined_field_of_a_query_struct_is_a_parameter_of_its_style() {
 
     let tag = parameter_of("/api/search", "tag");
     assert_eq!((tag.get("style"), tag.get("explode")), (None, None));
+}
+
+#[test]
+fn a_joined_field_without_its_t_has_items_of_any_schema() {
+    let any = parameter_of("/api/search", "any");
+
+    assert_eq!(any["style"], "form");
+    assert_eq!(any["explode"], false);
+    assert_eq!(
+        any["schema"],
+        json!({ "type": "array", "items": {} }),
+        "{any}"
+    );
 }
 
 #[test]

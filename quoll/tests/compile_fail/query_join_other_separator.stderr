@@ -1,5 +1,0 @@
-error: `#[join]` takes the separator of one of the styles OpenAPI describes: `#[join(",")]`, `#[join(" ")]` or `#[join("|")]`
- --> tests/compile_fail/query_join_other_separator.rs:8:5
-  |
-8 |     #[join(";")]
-  |     ^^^^^^^^^^^^

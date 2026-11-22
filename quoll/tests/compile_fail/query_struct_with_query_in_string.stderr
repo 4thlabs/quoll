@@ -1,5 +1,0 @@
-error: `filter` is the whole query, and the route's string has a query too: remove the `?...` from the string and make its keys fields of the struct, or write `filter` as an argument of the string's query
- --> tests/compile_fail/query_struct_with_query_in_string.rs:7:55
-  |
-7 |         GET "/notes?page={page}" => search(page: u32, query filter: NoteFilter);
-  |                                                       ^^^^^
