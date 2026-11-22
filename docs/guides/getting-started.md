@@ -111,7 +111,7 @@ async fn call() -> rest::Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     match std::env::args().nth(1).as_deref() {
         Some("serve") => serve().await?,
         Some("openapi") => println!("{}", Api::openapi().to_json_pretty()),

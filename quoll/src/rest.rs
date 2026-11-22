@@ -338,6 +338,55 @@
 //! with its status and an RFC 9457 [`Problem`]; a client's is the answer of an error status, or a call that got no
 //! answer to read.
 //!
+//! Another API answers its errors in a shape of its own: `#[error(E)]` on its api, a group or a route says which, the
+//! nearest to a route winning, as `#[auth]` does. Its calls give a `rest::Result<T, E>`, whose error has the `E` the
+//! body of an error answer reads as, its [`detail`](Error::detail). `E` implements `Deserialize`, `Display`, which
+//! gives the error's message, and `Debug`. A [`group!`] says its own: it cannot take its api's.
+//!
+//! ```
+//! use std::fmt;
+//!
+//! use quoll::rest;
+//! use serde::Deserialize;
+//!
+//! /// What GitHub answers on an error.
+//! #[derive(Debug, Deserialize)]
+//! pub struct GitHubError {
+//!     pub message: String,
+//! }
+//!
+//! impl fmt::Display for GitHubError {
+//!     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//!         f.write_str(&self.message)
+//!     }
+//! }
+//!
+//! /// What its OAuth endpoint answers.
+//! #[derive(Debug, Deserialize)]
+//! pub struct OAuthError {
+//!     pub error: String,
+//! }
+//!
+//! impl fmt::Display for OAuthError {
+//!     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//!         f.write_str(&self.error)
+//!     }
+//! }
+//!
+//! rest::api! {
+//!     #[openapi(none)]
+//!     #[error(GitHubError)]
+//!     pub api GitHub = "";
+//!
+//!     pub group Repos {
+//!         GET "/repos/{owner}/{repo}/topics" => topics(owner: String, repo: String) -> Vec<String>;
+//!
+//!         #[error(OAuthError)]
+//!         POST "/login/oauth/access_token" => token(code: String) -> String;
+//!     }
+//! }
+//! ```
+//!
 //! # Middleware
 //!
 //! Each request of the client, and each answer of the server, carries the [`Route`] it is for, which a middleware of

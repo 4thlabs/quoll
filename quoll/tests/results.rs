@@ -260,7 +260,7 @@ async fn an_error_of_a_text_route_is_a_problem_with_its_status() {
 
     assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     assert_eq!(
-        error.problem().and_then(rest::Problem::detail),
+        error.detail().and_then(rest::Problem::detail),
         Some("no such text")
     );
 }

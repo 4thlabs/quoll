@@ -6,11 +6,11 @@ use std::mem;
 use futures_util::{StreamExt, stream};
 use serde::de::DeserializeOwned;
 
-use http::StatusCode;
+use http::{HeaderMap, StatusCode, Version};
 
-use super::{no_answer, read_problem};
+use super::{Shape, no_answer, read_problem};
 use crate::__private::known::Items;
-use crate::rest::{Error, Result, Route};
+use crate::rest::{Error, Response, Route};
 
 /// The most one item holds, 1 MiB: the `data` of an event, or a line of either body. A stream runs for long, and a
 /// server that never ends an item would have the client hold all it sends: past it, the stream ends with an error.
@@ -134,7 +134,7 @@ pub(crate) fn chunks(response: reqwest::Response, route: &'static Route) -> Item
 const NOT_AN_ITEM: &str = "got an item that does not read as its type";
 
 /// The error an `event: problem` stands for, whose data is `json`: the problem's status, 500 when it names none that
-/// is an error, and the problem, as an error answer gives them.
+/// is an error, and the problem, as an error answer gives them, with no headers, which the event has none of.
 fn problem(route: &Route, json: &[u8]) -> Error {
     let Some(problem) = read_problem(json) else {
         return no_answer(
@@ -148,7 +148,10 @@ fn problem(route: &Route, json: &[u8]) -> Error {
         .filter(|status| status.is_client_error() || status.is_server_error())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
-    Error::upstream(status, Some(problem), json.to_vec())
+    let message = problem.message();
+    let answer = Response::from_parts(status, Version::HTTP_11, HeaderMap::new(), problem);
+
+    Error::upstream(status, Some(answer), Some(json.to_vec()), message)
 }
 
 /// A body split into lines, as its chunks come.

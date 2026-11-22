@@ -998,8 +998,12 @@ mod tests {
 
     #[test]
     fn an_error_from_another_api_is_logged_with_its_status() {
-        let (log, status, detail) =
-            logged(&Error::upstream(StatusCode::NOT_FOUND, None, Vec::new()));
+        let (log, status, detail) = logged(&Error::upstream(
+            StatusCode::NOT_FOUND,
+            None,
+            Some(Vec::new()),
+            None,
+        ));
 
         assert!(log.contains("404"), "{log}");
         assert_eq!(status, StatusCode::BAD_GATEWAY);
@@ -1047,7 +1051,8 @@ mod tests {
                 Err(Error::upstream(
                     StatusCode::NOT_FOUND,
                     None,
-                    br#"{"detail":"the other api's secret"}"#.to_vec(),
+                    Some(br#"{"detail":"the other api's secret"}"#.to_vec()),
+                    Some("the other api's secret".to_owned()),
                 ))
             })
             .finish();

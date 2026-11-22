@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: the group `Gists` takes no `#[error(...)]`, and a `rest::group!` cannot take its api's: write `#[error(HubError)]` on the group in its block, the type named from the group's module, or the shape its errors have
+  --> tests/compile_fail/group_listed_without_error.rs:32:31
+   |
+32 |     pub api Hub = "" { gists::Gists };
+   |                               ^^^^^ evaluation of `_` failed here

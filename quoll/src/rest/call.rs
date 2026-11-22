@@ -3,10 +3,11 @@
 use std::future::{Future, IntoFuture};
 use std::time::Duration;
 
-use crate::rest::{Response, Result};
+use crate::rest::{Problem, Response, Result};
 
 /// A call of a route that returns `T`, described and not sent yet: what every method of a contract's client
-/// returns. `.await` sends it and gives the route's value; its methods change it first.
+/// returns. `.await` sends it and gives the route's value, or an error of the shape `E`, the api's, an RFC 9457
+/// [`Problem`] unless the contract says `#[error(E)]`; its methods change it first.
 ///
 /// ```no_run
 /// # use std::time::Duration;
@@ -41,10 +42,57 @@ use crate::rest::{Response, Result};
 /// # }
 /// ```
 ///
-/// Any future of a `rest::Result<T>` is a `Call<T>` too, so that a fake of a group's trait returns an `async move`
-/// block: its `.timeout` does nothing, and its `.response()` gives a 200 with no headers, or the error with the status
-/// it has, as an answer of that status, and an error with none, a call that got no answer, as it is. A 200 even for a
-/// route that the server answers 201 or 202: a fake has no contract's status to read.
+/// An api that answers its errors in a shape of its own says it with `#[error(E)]`: its calls give a
+/// `rest::Result<T, E>`, whose error has the `E` the answer's body is, its [`detail`](crate::rest::Error::detail).
+///
+/// ```no_run
+/// use std::fmt;
+///
+/// use quoll::rest;
+/// use serde::Deserialize;
+///
+/// /// What GitHub answers on an error.
+/// #[derive(Debug, Deserialize)]
+/// pub struct GitHubError {
+///     pub message: String,
+///     pub documentation_url: Option<String>,
+/// }
+///
+/// impl fmt::Display for GitHubError {
+///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+///         f.write_str(&self.message)
+///     }
+/// }
+///
+/// rest::api! {
+///     #[openapi(none)]
+///     #[error(GitHubError)]
+///     pub api GitHub = "";
+///
+///     pub group Repos {
+///         GET "/repos/{owner}/{repo}/topics" => topics(owner: String, repo: String) -> Vec<String>;
+///     }
+/// }
+///
+/// # async fn run() -> rest::Result<()> {
+/// let github = GitHub::client("https://api.github.com")?;
+///
+/// match github.repos().topics("rust-lang".into(), "rust".into()).await {
+///     Ok(topics) => println!("{topics:?}"),
+///     Err(error) => match error.detail() {
+///         Some(GitHubError { documentation_url: Some(url), .. }) => println!("{error}, see {url}"),
+///         _ => return Err(error.into()),
+///     },
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Any future of a `rest::Result<T, E>` is a `Call<T, E>` too, so that a fake of a group's trait returns an
+/// `async move` block: its `.timeout` does nothing, and its `.response()` gives a 200 with no headers, or the error
+/// with the status it has, as an answer of that status, and an error with none, a call that got no answer, as it is. A
+/// 200 even for a route that the server answers 201 or 202: a fake has no contract's status to read. A fake of an api
+/// with `#[error(E)]` builds the error of an answer with [`rest::Error::answered`](crate::rest::Error::answered).
 ///
 /// ```
 /// use quoll::rest::{self, Call};
@@ -71,16 +119,20 @@ use crate::rest::{Response, Result};
 ///     }
 /// }
 /// ```
-pub trait Call<T>: IntoFuture<Output = Result<T>, IntoFuture: Send> + Send + Sized {
+pub trait Call<T, E = Problem>:
+    IntoFuture<Output = Result<T, E>, IntoFuture: Send> + Send + Sized
+{
     /// Sends the call, and gives the answer it got, whatever its status: its status, its headers, and its body read
-    /// as the route's value on a success, or as the error of the answer, with its status, its problem and its body,
-    /// otherwise. [`Response::into_value`] gives the value, or that error, to go up with `?`.
+    /// as the route's value on a success, or as the error of the answer otherwise, with its status, its detail when
+    /// the body is an `E`, and its body. A 304 Not Modified is such an error, with no detail: it comes to a call that
+    /// sent `If-None-Match`, whose answer's headers are these. [`Response::into_value`] gives the value, or that
+    /// error, to go up with `?`.
     ///
     /// # Errors
     ///
     /// When the call got no answer it can read: a connection refused, a timeout, a middleware's error, or an answer
     /// with a success status whose body is not the route's result.
-    fn response(self) -> impl Future<Output = Result<Response<Result<T>>>> + Send;
+    fn response(self) -> impl Future<Output = Result<Response<Result<T, E>>, E>> + Send;
 
     /// A deadline of `duration` for this call alone, in place of the client's [`client::timeout`]: for each attempt
     /// and each hop, and for the head of the answer alone on a stream, as `client::timeout`'s, which
@@ -92,11 +144,11 @@ pub trait Call<T>: IntoFuture<Output = Result<T>, IntoFuture: Send> + Send + Siz
     fn timeout(self, duration: Duration) -> Self;
 }
 
-impl<T, F> Call<T> for F
+impl<T, E, F> Call<T, E> for F
 where
-    F: Future<Output = Result<T>> + Send,
+    F: Future<Output = Result<T, E>> + Send,
 {
-    async fn response(self) -> Result<Response<Result<T>>> {
+    async fn response(self) -> Result<Response<Result<T, E>>, E> {
         let error = match self.await {
             Ok(value) => return Ok(Response::new(Ok(value))),
             Err(error) => error,
@@ -127,7 +179,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_future_answers_a_value_as_a_200_with_no_headers() {
-        let response = async { Ok(3) }
+        let response = async { Ok::<_, Error>(3) }
             .timeout(Duration::from_millis(1))
             .response()
             .await

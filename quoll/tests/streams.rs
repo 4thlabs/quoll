@@ -277,7 +277,7 @@ async fn an_error_before_the_stream_is_a_problem_with_its_status() {
     for error in [events, lines] {
         assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
         assert_eq!(
-            error.problem().and_then(rest::Problem::detail),
+            error.detail().and_then(rest::Problem::detail),
             Some("no such feed")
         );
     }
@@ -318,7 +318,7 @@ async fn an_item_that_fails_ends_events_with_its_problem_after_every_value() {
     let error = next().await.expect("the problem").expect_err("an error");
 
     assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
-    assert_eq!(error.problem().and_then(rest::Problem::detail), None);
+    assert_eq!(error.detail().and_then(rest::Problem::detail), None);
     assert!(next().await.is_none());
 
     // A problem with a detail gives it.
@@ -331,7 +331,7 @@ async fn an_item_that_fails_ends_events_with_its_problem_after_every_value() {
 
     assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     assert_eq!(
-        error.problem().and_then(rest::Problem::detail),
+        error.detail().and_then(rest::Problem::detail),
         Some("the note is gone")
     );
 }
@@ -582,13 +582,10 @@ async fn a_problem_of_another_api_is_its_error_and_ends_the_stream() {
     assert_eq!(values(items), [changed(1, "a")]);
     assert_eq!(error.status(), Some(StatusCode::SERVICE_UNAVAILABLE));
     assert_eq!(
-        error.problem().map(rest::Problem::kind),
+        error.detail().map(rest::Problem::kind),
         Some("https://example.com/down")
     );
-    assert_eq!(
-        error.problem().and_then(rest::Problem::detail),
-        Some("down")
-    );
+    assert_eq!(error.detail().and_then(rest::Problem::detail), Some("down"));
 }
 
 #[tokio::test]

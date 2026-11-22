@@ -297,7 +297,7 @@ async fn a_response_of_an_error_status_holds_its_error() -> Result<()> {
 
     assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     assert_eq!(
-        error.problem().and_then(|problem| problem.detail()),
+        error.detail().and_then(|problem| problem.detail()),
         Some("no such note")
     );
     Ok(())

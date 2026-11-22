@@ -42,6 +42,9 @@ use crate::syntax::{Contract, GroupContract};
 /// - the schemes it declares, `header`, `cookie`, `query` or `openid`, each with its visibility and its name;
 /// - its groups, each a table of routes, with `#[auth(...)]` on the group or on a route.
 ///
+/// `#[error(E)]` on the api, a group or a route names the shape of the errors another API answers, which the client
+/// reads: the nearest to a route wins, and a route without one has RFC 9457 problems.
+///
 /// A route is `METHOD "path?query" => function(arguments) -> Result;`, with no `->` for a route that returns nothing.
 /// An argument is a `{name}` of the path or a `key={name}` of the query by its name, a query struct as `query filter:
 /// NoteFilter`, a header as `header("Last-Event-ID") last: Option<String>`, or else the body. The docs of
@@ -67,8 +70,8 @@ use crate::syntax::{Contract, GroupContract};
 /// | `impl client::Contract for Api` | `client`           | what `client::builder().build::<Api>(url)` builds   |
 ///
 /// Each handler of `NotesServer` returns `impl Future<Output = Result<Response<T>>> + Send`, and an implementation
-/// writes `async fn`, which returns `Ok(Response::new(note))`; each method of `Notes` returns `impl Call<T>`, and a
-/// fake writes an `async move` block. A hidden descriptor of each group, `__QuollGroupNotes`, holds its routes, which
+/// writes `async fn`, which returns `Ok(Response::new(note))`; each method of `Notes` returns `impl Call<T, E>`, `E`
+/// the shape of the route's errors, `Problem` by default, and a fake writes an `async move` block. A hidden descriptor of each group, `__QuollGroupNotes`, holds its routes, which
 /// the api that lists it reads.
 #[proc_macro]
 pub fn api(input: TokenStream) -> TokenStream {
@@ -102,7 +105,9 @@ pub fn api(input: TokenStream) -> TokenStream {
 /// module: its server trait, `NotesServer`, its client's trait and its client, `Notes` and `NotesClient`, each behind
 /// its feature. A scheme the api declares is named by its path or an import, `#[auth(crate::Key)]`, as any type
 /// implementing `quoll::rest::Scheme`. The group has an OpenAPI document, for which each type it names implements
-/// `schemars::JsonSchema`, unless it says `#[openapi(none)]`, as the group of an api that has none.
+/// `schemars::JsonSchema`, unless it says `#[openapi(none)]`, as the group of an api that has none. Its client's trait
+/// is written in its block, before an api lists it: the group says the shape of its errors itself, `#[error(E)]`, and an
+/// api with an `#[error(...)]` lists only groups that say one.
 ///
 /// The api lists the group by its path, `notes::Notes`. A group named alone, `{ Notes }`, is one in the api's module,
 /// or brought by a glob import, `use notes::*;`. The api reads the group's routes through its hidden descriptor,

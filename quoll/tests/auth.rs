@@ -274,7 +274,7 @@ async fn the_generated_client_without_a_token_gets_a_401() -> Result<()> {
 
     assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
     assert_eq!(
-        error.problem().and_then(rest::Problem::detail),
+        error.detail().and_then(rest::Problem::detail),
         Some("the request carries no credential, which this route takes")
     );
     assert_eq!(served.handled(), 0);
@@ -297,14 +297,14 @@ async fn the_error_of_authenticate_is_answered_as_it_is() -> Result<()> {
     let unknown = unknown.expect_err("an unknown token");
     assert_eq!(unknown.status(), Some(StatusCode::UNAUTHORIZED));
     assert_eq!(
-        unknown.problem().and_then(rest::Problem::detail),
+        unknown.detail().and_then(rest::Problem::detail),
         Some("unknown or expired token")
     );
 
     let banned = banned.expect_err("a banned user");
     assert_eq!(banned.status(), Some(StatusCode::FORBIDDEN));
     assert_eq!(
-        banned.problem().and_then(rest::Problem::detail),
+        banned.detail().and_then(rest::Problem::detail),
         Some("this user is banned")
     );
 

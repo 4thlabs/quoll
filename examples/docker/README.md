@@ -32,8 +32,9 @@ names none. TLS, `DOCKER_TLS_VERIFY`, and `ssh://` are not supported.
   a message that says so.
 - **The socket.** reqwest's own `unix_socket`, given to `client::builder().http(..)`; the URL is then
   `http://localhost`, whose host Docker does not read.
-- **The errors.** Docker answers `{"message": "..."}`, not an RFC 9457 problem: the command line reads it with
-  `Error::body_as::<DockerError>()`.
+- **The errors.** Docker answers `{"message": "..."}`, not an RFC 9457 problem: the api says it with
+  `#[error(DockerError)]`, so that each call's error has it as its `detail()`, and says its message,
+  `another api answered 404: No such container: web`.
 - **304.** `start` and `stop` answer `304 Not Modified` when the container runs, or is stopped, already: the command
   line says so rather than fail.
 - **The logs.** A `ByteStream`, read as its chunks come. Without a TTY, Docker sends frames,

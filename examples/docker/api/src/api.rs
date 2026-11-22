@@ -1,13 +1,14 @@
 use quoll::rest::{self, ByteStream, JsonLines};
 
 use crate::{
-    ContainerInspect, ContainerSummary, CreatedContainer, Event, NewContainer, PullProgress,
-    Version,
+    ContainerInspect, ContainerSummary, CreatedContainer, DockerError, Event, NewContainer,
+    PullProgress, Version,
 };
 
 rest::api! {
     /// The Docker Engine API, version 1.47, which Docker 27.3 and later serve.
     #[openapi(none)]
+    #[error(DockerError)]
     pub api Docker = "/v1.47";
 
     pub group Containers {

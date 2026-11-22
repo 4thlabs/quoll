@@ -358,7 +358,7 @@ async fn an_error_is_read_back_with_its_status_and_its_problem() -> Result<()> {
     let api = Api::client(&serve().await)?;
 
     let error = api.notes().get(999).await.expect_err("no note 999");
-    let problem = error.problem().expect("the server answers a problem");
+    let problem = error.detail().expect("the server answers a problem");
 
     assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     assert_eq!(problem.kind(), "about:blank");
@@ -383,7 +383,7 @@ async fn an_error_is_read_back_with_its_status_and_its_problem() -> Result<()> {
         .expect_err("a conflict");
     assert_eq!(error.status(), Some(StatusCode::CONFLICT));
     assert_eq!(
-        error.problem().and_then(rest::Problem::detail),
+        error.detail().and_then(rest::Problem::detail),
         Some("already there")
     );
 
@@ -393,7 +393,7 @@ async fn an_error_is_read_back_with_its_status_and_its_problem() -> Result<()> {
         .await
         .expect_err("an internal error");
     assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
-    assert_eq!(error.problem().and_then(rest::Problem::detail), None);
+    assert_eq!(error.detail().and_then(rest::Problem::detail), None);
     Ok(())
 }
 
@@ -417,10 +417,10 @@ async fn a_handler_returning_what_its_client_received_answers_502() -> Result<()
     ] {
         assert_eq!(error.status(), Some(StatusCode::BAD_GATEWAY));
         assert_eq!(
-            error.problem().and_then(rest::Problem::status),
+            error.detail().and_then(rest::Problem::status),
             Some(StatusCode::BAD_GATEWAY)
         );
-        assert_eq!(error.problem().and_then(rest::Problem::detail), None);
+        assert_eq!(error.detail().and_then(rest::Problem::detail), None);
     }
     Ok(())
 }
@@ -432,7 +432,7 @@ async fn a_call_that_gets_no_response_has_no_status() -> Result<()> {
     let error = api.notes().get(1).await.expect_err("nothing answers");
 
     assert_eq!(error.status(), None);
-    assert!(error.problem().is_none() && error.body().is_none());
+    assert!(error.detail().is_none() && error.body().is_none());
     assert_eq!(error.to_string(), "the call `notes_get` got no response");
     assert!(
         error
@@ -510,7 +510,7 @@ async fn an_error_of_another_shape_is_read_with_body_as() -> Result<()> {
     let error = api.notes().get(3).await.expect_err("a teapot");
 
     assert_eq!(error.status(), Some(StatusCode::IM_A_TEAPOT));
-    assert!(error.problem().is_none(), "JSON, not a problem");
+    assert!(error.detail().is_none(), "JSON, not a problem");
     assert_eq!(
         error.body_as::<Teapot>(),
         Some(Teapot {

@@ -19,12 +19,55 @@ use crate::path::Segment;
 pub(crate) fn group(cx: &Cx) -> TokenStream {
     let group_trait = group_trait(cx);
     let group_client = group_client(cx);
+    let shapes = shape_checks(cx);
 
     quote! {
         ::quoll::__private::client! {
             #group_trait
             #group_client
+            #shapes
         }
+    }
+}
+
+/// Checks that each type an `#[error(E)]` of the group's routes names is the shape of an api's errors, once per type,
+/// spanned on it: what the client reads in the body of an error answer.
+fn shape_checks(cx: &Cx) -> TokenStream {
+    let mut seen: Vec<String> = Vec::new();
+    let mut checks = Vec::new();
+
+    for route in &cx.group.routes {
+        let Some(error) = cx.error(route) else {
+            continue;
+        };
+        let shown = quote! { #error }.to_string();
+
+        if seen.contains(&shown) {
+            continue;
+        }
+
+        seen.push(shown);
+        checks.push(
+            quote_spanned! {error.span()=> ::quoll::__private::client::is_shape::<#error>(); },
+        );
+    }
+
+    if checks.is_empty() {
+        return TokenStream::new();
+    }
+
+    quote! {
+        const _: () = {
+            #(#checks)*
+        };
+    }
+}
+
+/// The shape of `route`'s errors, as the client's code names it: its `#[error(E)]`'s type, or `rest::Problem`.
+fn error_type(cx: &Cx, route: &Route) -> TokenStream {
+    match cx.error(route) {
+        Some(error) => quote! { #error },
+        None => quote! { ::quoll::rest::Problem },
     }
 }
 
@@ -66,7 +109,7 @@ fn group_trait(cx: &Cx) -> TokenStream {
     let docs = doc_attrs(&lines);
     let methods = group.routes.iter().map(|route| {
         let docs = route_docs(cx.prefix(), route);
-        let signature = signature(route);
+        let signature = signature(cx, route);
 
         quote! {
             #docs
@@ -82,9 +125,9 @@ fn group_trait(cx: &Cx) -> TokenStream {
     }
 }
 
-/// `fn get(&self, id: i64) -> impl rest::Call<Note>`: a `Created<T>` or an `Accepted<T>` gives its `T`, as the 201
-/// or the 202 is only the server's answer.
-fn signature(route: &Route) -> TokenStream {
+/// `fn get(&self, id: i64) -> impl rest::Call<Note, Problem>`, of the shape of the route's errors: a `Created<T>` or an
+/// `Accepted<T>` gives its `T`, as the 201 or the 202 is only the server's answer.
+fn signature(cx: &Cx, route: &Route) -> TokenStream {
     let name = &route.name;
     let args = route
         .params
@@ -99,8 +142,10 @@ fn signature(route: &Route) -> TokenStream {
         }
     };
 
+    let error = error_type(cx, route);
+
     quote_spanned! {route.name.span()=>
-        fn #name(&self, #(#args),*) -> impl ::quoll::rest::Call<#output>
+        fn #name(&self, #(#args),*) -> impl ::quoll::rest::Call<#output, #error>
     }
 }
 
@@ -121,7 +166,7 @@ fn group_client(cx: &Cx) -> TokenStream {
         .routes
         .iter()
         .enumerate()
-        .map(|(index, route)| method(index, route));
+        .map(|(index, route)| method(cx, index, route));
     let http = Ident::new("client", Span::mixed_site());
     let prefix = Ident::new("prefix", Span::mixed_site());
     let routes = Ident::new("routes", Span::mixed_site());
@@ -158,8 +203,9 @@ fn group_client(cx: &Cx) -> TokenStream {
 }
 
 /// A route's method on the group's client: the route, then its path, query and body written from the arguments.
-fn method(index: usize, route: &Route) -> TokenStream {
-    let signature = signature(route);
+fn method(cx: &Cx, index: usize, route: &Route) -> TokenStream {
+    let signature = signature(cx, route);
+    let error = error_type(cx, route);
 
     let path_calls = path_calls(route);
     let (query_type, query_call) = query(route).unzip();
@@ -223,7 +269,7 @@ fn method(index: usize, route: &Route) -> TokenStream {
                 ),
             );
 
-            ::quoll::__private::client::Pending::new(#request, |#answer| #read)
+            ::quoll::__private::client::Pending::<_, #error>::new(#request, |#answer| #read)
         }
     }
 }
