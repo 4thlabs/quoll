@@ -2,7 +2,7 @@
 # The REST contract
 
 > [!NOTE]
-> **Validated** by the maintainer on 2026-11-21.
+> **Validated** by the maintainer on 2026-11-22.
 
 A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI document; the OpenAPI document feeds TypeScript generators (TanStack Query, SWR, zod...). No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
 
@@ -73,7 +73,12 @@ Decided by the maintainer:
   - every handler returns `rest::Result<Response<T>>`, as tonic's do, `Ok(Response::new(note))`, with its headers, `.header(ETAG, tag)`; `Created<T>` and `Accepted<T>` are only written in the contract, to say 201 or 202, a handler of either returning a `Response<T>`, and `Location` is a header as any other, `Created::at` gone;
   - the status of a response is the contract's unless the handler gives another, a success or a redirection, with `.with_status(Status::CREATED)`, `rest::Status` holding a `2xx` or a `3xx` alone, so that an error's status is refused at compile time and goes through `Err(rest::Error)`; the document describes the contract's status alone;
   - every route's method on the client returns a `rest::Call<T>`, the call described and not sent yet, an `IntoFuture`: `.await` gives `rest::Result<T>`, `.response()` the whole answer, `rest::Result<Response<rest::Result<T>>>`, its body the route's value on a success and the error of the answer otherwise, a 304 among them, with its status and its headers and no body; its `Err` is only no usable answer; `.timeout(duration)` gives the call a deadline of its own, in place of the client's `client::timeout`, with its meaning; any future of a `rest::Result<T>` is a `Call<T>` too, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or the status of its error, so that a fake returns an `async move` block;
-  - `client::retry(times)` keeps its rule, and `.when(|attempt: &Attempt| -> Retry)` is one decision for every other case, a `429` and its `Retry-After`, a `POST` with an `Idempotency-Key`, a `500`: `Retry::No`, `Retry::Backoff` or `Retry::After(duration)`; the `Attempt` gives the contract's `Route`, the request, the answer's status and headers or the error, and its number, `transient()` the rule of `retry(times)` alone and `retry_after()` the answer's `Retry-After`, in seconds or as an HTTP date, capped by `.max_wait(..)`; the middleware is quoll's own on backon's backoff, which no public signature shows, and reqwest-retry leaves the dependencies.
+  - `client::retry(times)` keeps its rule, and `.when(|attempt: &Attempt| -> Retry)` is one decision for every other case, a `429` and its `Retry-After`, a `POST` with an `Idempotency-Key`, a `500`: `Retry::No`, `Retry::Backoff` or `Retry::After(duration)`; the `Attempt` gives the contract's `Route`, the request, the answer's status and headers or the error, and its number, `transient()` the rule of `retry(times)` alone and `retry_after()` the answer's `Retry-After`, in seconds or as an HTTP date, capped by `.max_wait(..)`; the middleware is quoll's own on backon's backoff, which no public signature shows, and reqwest-retry leaves the dependencies;
+  - the shape of the errors another API answers is said once, `#[error(E)]` on the api, and the errors of its calls carry its type: they return `rest::Result<T, E>`, an alias of `Result<T, rest::Error<E>>`, `rest::Error<Problem>` being `rest::Error`, the default; `error.detail()` gives the `E`, `error.response()` the answer with it; a body that is not an `E` is an answer with no detail, which keeps its status and its raw body; a fake builds one with `rest::Error::answered(status, e)`.
+- **2026-11-22**:
+  - the body of `.response()` is `rest::Result<T, E>`: `Ok(T)` on a success, `Err(rest::Error<E>)` on any other status, with `detail()` when its body is an `E`; a 304 is an `Err` with its status and no `detail()`, its headers those of the `.response()`;
+  - `#[error(E)]` is inherited api → group → route, as `#[auth]` is, the nearest to the call winning;
+  - `E: Display` gives the message: `another api answered 401: Bad credentials`; rejected, an attribute naming a field.
 
 ## Stack and crates
 
@@ -337,7 +342,7 @@ A server trait's method returns `impl Future<Output = rest::Result<rest::Respons
 - `client::builder()` builds one with middleware: `.with(middleware)` for quoll's helpers and any `reqwest_middleware::Middleware` (see Middleware), `.http(|http| http.proxy(proxy))` configures reqwest's `ClientBuilder`, and `.build::<Api>(url)` gives the `ApiClient`, through `client::Contract`, which the macro implements on `Api`: its `Client` and its `client_with`. `.build_http()` gives the `ClientWithMiddleware`, for the clients of several contracts. Both return a `rest::Result`, an error when reqwest cannot build its client or the URL is not an api's.
 - `api.notes().get(3)`: a method per route, arguments in the contract's order. Rust has no named arguments: a route with many optional filters takes a query struct with `Default`.
 - Each method returns a `rest::Call<T>`, the call described and not sent yet, which `.await` sends: it gives `rest::Result<T>`, the value, or an error that goes up, an answer with an error status among them. Its methods give the call changed: `.timeout(duration)`, a deadline for this call alone, in place of the client's `client::timeout`, with its meaning, a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; a client of `client::builder()` or of `Api::client` keeps it per attempt whatever its helpers, a chain built otherwise without `client::timeout` for the whole call on a stream.
-- `.response()` sends it and gives the whole answer, `rest::Result<Response<rest::Result<T>>>`, as reqwest's `send()` gives an `Ok` whatever the status: its status, its version, its headers, a rate limit's or a `Retry-After`, and its body, read as the route's value on a success and as the error of the answer otherwise, which holds its status, its problem and its body. A 304 is an answer of its own status and headers with no body, and an error with `.await`. `response.into_value()` gives the value, or that error, to go up with `?`. The `Err` of `.response()` is only no usable answer: a connection, a timeout, an answer with a success status that is not the route's result.
+- `.response()` sends it and gives the whole answer, `rest::Result<Response<rest::Result<T, E>>, E>`, as reqwest's `send()` gives an `Ok` whatever the status: its status, its version, its headers, a rate limit's or a `Retry-After`, and its body, `Ok(T)` on a success and `Err(rest::Error<E>)` on any other status, which holds its status, its detail when the body is an `E`, and its body. A 304 is such an `Err`, with no detail: it comes only to a caller that sent `If-None-Match`, whose answer's headers are those of the `.response()`. `response.into_value()` gives the value, or that error, to go up with `?`. The `Err` of `.response()` is only no usable answer: a connection, a timeout, an answer with a success status that is not the route's result.
 
 ```rust
 let response = api.notes().get(3).timeout(Duration::from_secs(5)).response().await?;
@@ -350,7 +355,7 @@ if response.status() == StatusCode::NOT_FOUND {
 Ok(Some(response.into_value()?))
 ```
 
-- Any future of a `rest::Result<T>` is a `Call<T>` too: a fake returns an `async move` block, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or an answer of its error's status, an error with none, which got no answer, as it is. Code generic over `impl Notes` calls either.
+- Any future of a `rest::Result<T, E>` is a `Call<T, E>` too: a fake returns an `async move` block, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or an answer of its error's status, an error with none, which got no answer, as it is. A fake of an api with `#[error(E)]` builds the error of an answer with `rest::Error::answered(StatusCode::NOT_FOUND, e)`. Code generic over `impl Notes` calls either.
 - Each request carries a `rest::Route` in its extensions: the operation id, the group, the method, the path as written and the schemes it accepts. Middleware reads it.
 
 ## Middleware
@@ -429,12 +434,52 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 
 ## Errors
 
-- `rest::Result<T>` is `Result<T, rest::Error>`, one error for the server and the client: its `status()`, the RFC 9457 problem when there is one, the raw body, and `body_as::<T>()` for a third-party API's own error shape.
-- On the client, the headers of an answer with an error status, a `Retry-After` or a rate limit, are read with `.response()`, whose body is then that error; `error.response()`, with a typed body, comes with the api's error type, [#86](https://github.com/4thlabs/quoll/issues/86).
+- `rest::Result<T>` is `Result<T, rest::Error>`, one error for the server and the client: its `status()`, its `detail()`, the RFC 9457 problem when the body of an answer is one, `response()`, that answer with its headers, the raw `body()`, and `body_as::<T>()` for the extension members of a problem.
 - The server answers a handler's error with its status and a problem in JSON: `Error::not_found(detail)`, `Error::bad_request(detail)`, `Error::unauthorized(detail)`, `Error::new(status, detail)`, and `Error::internal(err)` for a 500 that logs `err` without sending it.
 - An error a client received from another API answers 502 when a handler returns it, so that the other API's status is not passed on as ours.
 - On the client, a failure with no response (connection, timeout) is an `Error` without a status. Its sources, the errors of quoll's client and middlewares and those of reqwest and reqwest-middleware, show the URL of the call by its origin and its path, never its credentials nor its query, where a query scheme sends its key, and so does a reqwest error given to `Error::internal`; an error the application wraps itself is its own to redact, with `reqwest::Error::without_url`.
-- Every route has this one error, and its TypeScript the problem shape. Typed errors per route, `Result<Note, NotFound>` with `#[derive(rest::Problem)] #[problem(status = 404)]`, come later: adding them breaks no contract.
+- Every route of quoll's server has this one error, and its TypeScript the problem shape. Typed errors per route, `Result<Note, NotFound>` with `#[derive(rest::Problem)] #[problem(status = 404)]`, come later: adding them breaks no contract.
+
+### Another API's errors
+
+Another API answers its errors in a shape of its own. The contract says it once, `#[error(E)]` on the api, and the errors of its calls carry its type:
+
+```rust
+/// What GitHub answers on an error.
+#[derive(Debug, Deserialize)]
+pub struct GitHubError {
+    pub message: String,
+    pub documentation_url: Option<String>,
+}
+
+impl fmt::Display for GitHubError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+rest::api! {
+    #[openapi(none)]
+    #[error(GitHubError)]
+    pub api GitHub = "";
+
+    pub group Repos {
+        GET "/repos/{owner}/{repo}" => get(owner: String, repo: String) -> Repository;
+
+        #[error(OAuthError)]
+        POST "/login/oauth/access_token" => token(code: String) -> Token;
+    }
+}
+```
+
+- `rest::Error<E>` is the error of a call whose route has the shape `E`, and `rest::Result<T, E>` an alias of `Result<T, rest::Error<E>>`; `rest::Error` is `rest::Error<Problem>`. Each method of the group's trait returns `impl rest::Call<T, E>`.
+- `#[error(E)]` goes on the api, a group or a route, and is inherited downward as `#[auth]` is, the nearest to the call winning: a route answering another shape, an OAuth endpoint, says its own; `#[error(rest::Problem)]` gives a group or a route problems again.
+- A `rest::group!` writes its client's trait before an api lists it, and cannot take the api's: a group of another block says its own `#[error(E)]`, and an api with an `#[error(...)]` that lists a group without one does not compile, its message naming the attribute to write.
+- `E` implements `Deserialize`, `Display` and `Debug`, and is `Send`, `Sync` and `'static`: the client reads the body of an answer with an error status as the JSON of `E`, whatever its content type, and `E`'s `Display` gives the message, `another api answered 401: Bad credentials`. The author of `E` says where its message is, GitHub's `message`, Stripe's `error.message`, in an `impl Display` or a `#[error("{message}")]` of thiserror. A `Problem` is read from `application/problem+json` alone, and says its `detail`.
+- `error.detail()` gives `Option<&E>`, `error.response()` the answer, `Option<&Response<E>>`, its status, its headers and its detail. A body that is not an `E`, an HTML page from a proxy, an empty one, or a 304, gives no detail and no `response()`, and keeps its status and its raw `body()`: `another api answered 502`.
+- `?` carries a `rest::Error<E>` up into a `rest::Error`, a handler's, through `From`: it keeps its status, its message and its body, and leaves its detail; the handler answers 502, as for any other API's answer.
+- A fake builds the error of an answer with `rest::Error::answered(StatusCode::NOT_FOUND, error)`: its status, its detail, a `response()` with no headers, and no body.
+- `#[error(E)]` shapes what the client reads, and nothing else: quoll's server answers problems whatever the contract says, and the OpenAPI document describes them. The items of a stream, `Events` and `JsonLines`, keep `rest::Error`: a failure after the 200 is quoll's own `event: problem`. The client's constructors, `Api::client` and `client::builder()`, return a `rest::Result`.
 
 ## OpenAPI and TypeScript
 
@@ -1434,7 +1479,7 @@ rustfmt formats it and rust-analyzer reads it as any Rust; it repeats `&self`, `
 
 Decided, not in the first version. The first two change no contract already written.
 
-1. **Typed errors per route**, as the Errors section says.
+1. **Typed errors per route** of quoll's server, as the Errors section says.
 2. **Pagination by header.** GitHub pages with a `Link` header (`rel="next"`, `rel="last"`), which a result cannot say yet: a result `Paged<T>` carrying it, and on the client `.pages()`, a stream that follows the links.
 3. **A `rest::PathValue` derive** on unit enums and newtypes, so that a path parameter not read from text is refused at compile time: a struct of the application in a path no longer compiles.
 4. **A `subscribe` helper** for the web side, in an npm package of its own: `subscribe<T>(url, onItem, init)` reads a stream with `fetch`, so that it sends a header credential, calls `onItem` with each item parsed and returns the function that stops it. It reads `Events`, every event that has data an item whatever its name and `event: problem` an error, and `JsonLines`, an aborted body an error, not a clean end, and does not connect again after a clean end; `ByteStream` too, with `onChunk`.

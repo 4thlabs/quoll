@@ -26,6 +26,7 @@ pub(crate) fn api(api: &Api) -> TokenStream {
         })
     });
     let checks = descriptor::api_checks(api);
+    let error = api.error.as_ref().map(named);
     let openapi = openapi::expand(api);
     let server = server::expand(api);
     let client = client::expand(api);
@@ -35,6 +36,7 @@ pub(crate) fn api(api: &Api) -> TokenStream {
         #schemes
         #(#groups)*
         #checks
+        #error
         #openapi
         #server
         #client
@@ -55,6 +57,17 @@ pub(crate) fn alone_group(alone: &Api) -> TokenStream {
 fn group(cx: &Cx) -> TokenStream {
     let descriptor = descriptor::expand(cx);
     let known = known_types(cx);
+    let errors = cx
+        .group
+        .error
+        .iter()
+        .chain(
+            cx.group
+                .routes
+                .iter()
+                .filter_map(|route| route.error.as_ref()),
+        )
+        .map(named);
     let alone = if cx.api.is_none() {
         descriptor::alone_checks(cx)
     } else {
@@ -68,6 +81,7 @@ fn group(cx: &Cx) -> TokenStream {
     quote! {
         #descriptor
         #known
+        #(#errors)*
         #alone
         #challenges
         #openapi
@@ -107,6 +121,14 @@ fn known_types(cx: &Cx) -> TokenStream {
         const _: () = {
             #(#checks)*
         };
+    }
+}
+
+/// Names the type of an `#[error(E)]` whatever the features of `quoll`, so that it is checked, and its import used,
+/// with neither of them: only the client reads it, and checks that it is the shape of an api's errors.
+fn named(error: &syn::Type) -> TokenStream {
+    quote_spanned! {error.span()=>
+        const _: ::core::marker::PhantomData<#error> = ::core::marker::PhantomData;
     }
 }
 

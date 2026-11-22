@@ -183,7 +183,7 @@ async fn a_wrong_password_and_an_unknown_user_are_refused() -> anyhow::Result<()
 
         assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED), "{user}");
         assert_eq!(
-            error.problem().and_then(|problem| problem.detail()),
+            error.detail().and_then(|problem| problem.detail()),
             Some("wrong user or password")
         );
     }
@@ -390,7 +390,7 @@ async fn a_contains_past_its_limit_is_refused() -> anyhow::Result<()> {
     assert!(at_limit.is_empty());
     assert_eq!(past_limit.status(), Some(StatusCode::BAD_REQUEST));
     assert_eq!(
-        past_limit.problem().and_then(|problem| problem.detail()),
+        past_limit.detail().and_then(|problem| problem.detail()),
         Some("`contains` holds more than 1000 characters")
     );
     Ok(())
@@ -540,7 +540,7 @@ async fn the_events_of_a_missing_note_are_not_found() -> anyhow::Result<()> {
 
         assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
         assert_eq!(
-            error.problem().and_then(|problem| problem.detail()),
+            error.detail().and_then(|problem| problem.detail()),
             Some("no such note")
         );
     }
@@ -569,7 +569,7 @@ async fn a_removed_note_is_not_found() -> anyhow::Result<()> {
 
     assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     assert_eq!(
-        error.problem().and_then(|problem| problem.detail()),
+        error.detail().and_then(|problem| problem.detail()),
         Some("no such note")
     );
     Ok(())
@@ -781,7 +781,7 @@ async fn a_token_past_its_lifetime_is_refused() -> anyhow::Result<()> {
 
     assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
     assert_eq!(
-        error.problem().and_then(|problem| problem.detail()),
+        error.detail().and_then(|problem| problem.detail()),
         Some("unknown or expired token")
     );
     Ok(())

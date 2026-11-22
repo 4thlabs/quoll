@@ -57,11 +57,7 @@ impl<T> Response<T> {
         }
     }
 
-    /// The answer the client read: its status, its version, its headers and its body.
-    #[cfg_attr(
-        not(feature = "client"),
-        expect(dead_code, reason = "only the client reads an answer")
-    )]
+    /// The answer the client read, or a fake's error gives: its status, its version, its headers and its body.
     pub(crate) fn from_parts(
         status: StatusCode,
         version: Version,
@@ -179,17 +175,17 @@ impl<T> Response<T> {
     }
 }
 
-impl<T> Response<Result<T>> {
+impl<T, E> Response<Result<T, E>> {
     /// The route's value, or the error of the answer, to go up with `?`: what [`Call`]'s
     /// `.response()` gives once its status and its headers are read.
     ///
     /// # Errors
     ///
-    /// The error of an answer with an error status, which holds its status, its problem and its body.
+    /// The error of an answer with an error status, which holds its status, its detail and its body.
     ///
     #[cfg_attr(feature = "client", doc = "[`Call`]: crate::rest::Call")]
     #[cfg_attr(not(feature = "client"), doc = "[`Call`]: crate#features")]
-    pub fn into_value(self) -> Result<T> {
+    pub fn into_value(self) -> Result<T, E> {
         self.body
     }
 }

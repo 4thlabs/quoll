@@ -1,0 +1,5 @@
+error: an item takes one `#[error(...)]`: remove this one
+ --> tests/compile_fail/error_twice.rs:9:9
+  |
+9 |         #[error(String)]
+  |         ^^^^^^^^^^^^^^^^

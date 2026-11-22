@@ -31,6 +31,8 @@ pub struct GroupInfo {
     pub reach: u8,
     /// Its visibility as the contract writes it, `pub`, which a message shows.
     pub vis: &'static str,
+    /// Whether it names the shape of its errors, `#[error(E)]`, which it cannot take from an api with one.
+    pub error: bool,
     /// Its routes, in the order the contract writes them.
     pub routes: &'static [RouteInfo],
 }

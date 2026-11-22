@@ -351,7 +351,7 @@ async fn inspect_shows_a_container_and_says_dockers_message_for_another() {
 
     assert!(!missing.status.success());
     assert!(
-        stderr.contains("Error: No such container: nope"),
+        stderr.contains("Error: another api answered 404: No such container: nope"),
         "{stderr}"
     );
 }

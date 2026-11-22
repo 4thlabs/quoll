@@ -206,7 +206,10 @@ async fn a_copy_has_the_title_of_its_note() -> Result<()> {
 ```
 
 A fake's methods have the client's signatures: no caller, the `T` of a `Created<T>`, and an `impl Call<T>`, which
-an `async move` block is. A route left out, or a method of the wrong signature, does not compile.
+an `async move` block is. A route left out, or a method of the wrong signature, does not compile. The fake of an api
+that answers its errors in a shape of its own, `#[error(E)]`, returns an `impl Call<T, E>`, and builds the error of
+an answer with `rest::Error::answered(StatusCode::NOT_FOUND, e)`: [Another API's errors](errors.md#another-apis-errors)
+shows one.
 
 ## The OpenAPI snapshot
 

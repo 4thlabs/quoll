@@ -5,7 +5,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::args::Command;
 use crate::frames::{Demux, Output};
-use crate::utils::{docker_error, error_chain, is_undecoded, short_id};
+use crate::utils::{error_chain, is_undecoded, short_id};
 
 /// The content type of the logs of a container with a TTY: its bytes as they are, in no frame.
 const RAW_STREAM: &str = "application/vnd.docker.raw-stream";
@@ -22,7 +22,7 @@ pub async fn run(docker: &DockerClient, command: Command) -> anyhow::Result<()> 
 }
 
 async fn ps(docker: &DockerClient, all: bool) -> anyhow::Result<()> {
-    let containers = docker.containers().list(all).await.map_err(docker_error)?;
+    let containers = docker.containers().list(all).await?;
 
     println!(
         "{:<12}  {:<24}  {:<28}  NAMES",
@@ -49,11 +49,7 @@ async fn ps(docker: &DockerClient, all: bool) -> anyhow::Result<()> {
 }
 
 async fn inspect(docker: &DockerClient, container: String) -> anyhow::Result<()> {
-    let inspected = docker
-        .containers()
-        .inspect(container)
-        .await
-        .map_err(docker_error)?;
+    let inspected = docker.containers().inspect(container).await?;
 
     println!("{}", serde_json::to_string_pretty(&inspected)?);
     Ok(())
@@ -66,7 +62,7 @@ async fn start(docker: &DockerClient, container: String) -> anyhow::Result<()> {
         Err(error) if error.status() == Some(StatusCode::NOT_MODIFIED) => {
             println!("{container} is running already");
         }
-        Err(error) => return Err(docker_error(error)),
+        Err(error) => return Err(error.into()),
     }
 
     Ok(())
@@ -82,7 +78,7 @@ async fn stop(
         Err(error) if error.status() == Some(StatusCode::NOT_MODIFIED) => {
             println!("{container} is stopped already");
         }
-        Err(error) => return Err(docker_error(error)),
+        Err(error) => return Err(error.into()),
     }
 
     Ok(())
@@ -92,8 +88,7 @@ async fn logs(docker: &DockerClient, container: String, follow: bool) -> anyhow:
     let mut logs = docker
         .containers()
         .logs(container, follow, true, true)
-        .await
-        .map_err(docker_error)?;
+        .await?;
     let framed = !logs.has_type(RAW_STREAM);
     let mut demux = Demux::default();
     let mut stdout = tokio::io::stdout();
@@ -124,7 +119,7 @@ async fn logs(docker: &DockerClient, container: String, follow: bool) -> anyhow:
 }
 
 async fn events(docker: &DockerClient, since: Option<i64>) -> anyhow::Result<()> {
-    let mut events = docker.system().events(since).await.map_err(docker_error)?;
+    let mut events = docker.system().events(since).await?;
 
     while let Some(event) = events.next().await {
         let event = match event {

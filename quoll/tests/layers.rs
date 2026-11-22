@@ -508,7 +508,7 @@ async fn a_route_past_its_deadline_answers_503_logged_once() {
 
     assert_eq!(error.status(), Some(StatusCode::SERVICE_UNAVAILABLE));
     assert_eq!(
-        error.problem().and_then(rest::Problem::detail),
+        error.detail().and_then(rest::Problem::detail),
         Some("the server took longer than 100ms to answer")
     );
 }
@@ -579,7 +579,7 @@ async fn a_body_with_a_length_past_the_limit_answers_413() {
             "{case}"
         );
         assert_eq!(
-            error.problem().and_then(rest::Problem::detail),
+            error.detail().and_then(rest::Problem::detail),
             Some("the body is larger than the 1024 bytes this server reads"),
             "{case}"
         );
@@ -706,7 +706,7 @@ async fn a_lower_limit_of_a_route_is_not_said_as_the_layer_s() {
             "{case}"
         );
         assert_eq!(
-            error.problem().and_then(rest::Problem::detail),
+            error.detail().and_then(rest::Problem::detail),
             Some("the body is larger than this server reads"),
             "{case}"
         );

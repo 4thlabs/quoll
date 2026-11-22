@@ -25,6 +25,16 @@ impl Cx<'_> {
     pub(crate) fn prefix(&self) -> Option<&str> {
         self.api.map(|api| api.prefix.as_str())
     }
+
+    /// The shape of `route`'s errors, the nearest `#[error(E)]` to it: its own, its group's, then its api's, which a
+    /// `rest::group!` has none of. `None` for an RFC 9457 problem.
+    pub(crate) fn error<'a>(&'a self, route: &'a Route) -> Option<&'a syn::Type> {
+        route
+            .error
+            .as_ref()
+            .or(self.group.error.as_ref())
+            .or(self.api.and_then(|api| api.error.as_ref()))
+    }
 }
 
 /// `__QuollGroupNotes` for the group `Notes`: the descriptor of its routes.
@@ -43,6 +53,7 @@ pub(crate) fn expand(cx: &Cx) -> TokenStream {
     );
     let group_reach = reach(vis);
     let shown = shown_vis(vis);
+    let error = group.error.is_some();
     let routes = group.routes.iter().map(|route| route_info(group, route));
 
     quote! {
@@ -56,6 +67,7 @@ pub(crate) fn expand(cx: &Cx) -> TokenStream {
                 name: #name,
                 reach: #group_reach,
                 vis: #shown,
+                error: #error,
                 routes: &[#(#routes),*],
             };
         }
@@ -367,9 +379,13 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
         }
     });
     let is_group = api.listed.iter().map(is_group);
+    let errors = refs[..api.listed.len()]
+        .iter()
+        .filter_map(|group| takes_error(api, group));
 
     quote! {
         #(#is_group)*
+        #(#errors)*
 
         const _: () = {
             const API: ::quoll::__private::group::ApiInfo = ::quoll::__private::group::ApiInfo {
@@ -382,6 +398,28 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
             #(#checks)*
         };
     }
+}
+
+/// For a group of the list of an api with an `#[error(E)]`, a check that the group names the shape of its errors: a
+/// `rest::group!` writes its client's trait before any api lists it, and cannot take the api's.
+fn takes_error(api: &Api, group: &GroupRef) -> Option<TokenStream> {
+    let error = api.error.as_ref()?;
+    let descriptor = group.descriptor();
+    let shown = quote! { #error }.to_string().replace(' ', "");
+    let message = LitStr::new(
+        &format!(
+            "the group `{}` takes no `#[error(...)]`, and a `rest::group!` cannot take its api's: write `#[error({shown})]` on the group in its block, the type named from the group's module, or the shape its errors have",
+            group.name.unraw(),
+        ),
+        group.span(),
+    );
+
+    Some(quote_spanned! {group.span()=>
+        const _: () = ::core::assert!(
+            <#descriptor as ::quoll::__private::group::Group>::INFO.error,
+            #message
+        );
+    })
 }
 
 /// For each group of the list, a check that its path names a group: its descriptor, named as its path names it, from

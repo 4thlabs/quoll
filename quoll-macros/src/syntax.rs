@@ -68,6 +68,7 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             docs,
             auth,
             openapi,
+            error,
         } = parse_attrs(input)?;
         let vis: Visibility = input.parse()?;
         let keyword = input.call(Ident::parse_any).map_err(|error| {
@@ -98,7 +99,8 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             None => true,
         };
         let auth = auth.and_then(|(_, auth)| keep(errors, auth));
-        let read = parse_group(input, docs, vis, auth.as_ref(), errors)?;
+        let error = error.and_then(|(_, error)| keep(errors, error));
+        let read = parse_group(input, docs, vis, auth.as_ref(), error, errors)?;
 
         match &group {
             Some((first, _)) => errors.push(Error::new(
@@ -137,6 +139,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             docs,
             auth,
             openapi,
+            error,
         } = parse_attrs(input)?;
         let vis: Visibility = input.parse()?;
         let keyword = input.call(Ident::parse_any).map_err(|error| {
@@ -158,7 +161,8 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 Some((_, read)) => keep(errors, read).is_none_or(|document| document),
                 None => true,
             };
-            let decl = ApiDecl::parse(input, docs, vis, openapi, &keyword)?;
+            let error = error.and_then(|(_, error)| keep(errors, error));
+            let decl = ApiDecl::parse(input, docs, vis, openapi, error, &keyword)?;
             match &api {
                 Some(first) => errors.push(Error::new(
                     keyword.span(),
@@ -177,6 +181,12 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                     "a scheme takes no `#[auth(...)]`: put it on a group, or on a route, that takes the scheme",
                 ));
             }
+            if let Some((attr, _)) = &error {
+                errors.push(Error::new_spanned(
+                    attr,
+                    "a scheme takes no `#[error(...)]`: put it on the api, a group or a route, whose errors it reads",
+                ));
+            }
 
             match parse_scheme(input, docs, vis)? {
                 Ok(scheme) => schemes.push(scheme),
@@ -185,7 +195,8 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         } else if keyword == "group" {
             refuse_openapi(errors, openapi.as_ref(), "a group");
             let auth = auth.and_then(|(_, auth)| keep(errors, auth));
-            groups.push(parse_group(input, docs, vis, auth.as_ref(), errors)?);
+            let error = error.and_then(|(_, error)| keep(errors, error));
+            groups.push(parse_group(input, docs, vis, auth.as_ref(), error, errors)?);
         } else {
             return Err(unexpected_item(&keyword));
         }
@@ -199,6 +210,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     };
 
     let openapi = api.openapi;
+    let error = api.error;
     let mut api = Api::new(
         api.docs,
         api.vis,
@@ -210,6 +222,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     )
     .map_err(|error| fold(errors, error))?;
     api.openapi = openapi;
+    api.error = error;
 
     Ok(api)
 }
@@ -255,6 +268,7 @@ struct ApiDecl {
     docs: Docs,
     vis: Visibility,
     openapi: bool,
+    error: Option<Type>,
     name: Ident,
     prefix: LitStr,
     listed: Vec<syn::Path>,
@@ -268,6 +282,7 @@ impl ApiDecl {
         docs: Docs,
         vis: Visibility,
         openapi: bool,
+        error: Option<Type>,
         keyword: &Ident,
     ) -> Result<Self> {
         let name: Ident = input.parse().map_err(|error| {
@@ -296,6 +311,7 @@ impl ApiDecl {
             docs,
             vis,
             openapi,
+            error,
             name,
             prefix,
             listed,
@@ -356,13 +372,14 @@ fn parse_scheme(input: ParseStream, docs: Docs, vis: Visibility) -> Result<Resul
     Ok(DeclaredScheme::new(docs, vis, name, &kind, &value))
 }
 
-/// After the `group` keyword: `Name { routes }`, whose routes take `auth` unless they say otherwise. A mistake in one
-/// route is gathered, the others are still read.
+/// After the `group` keyword: `Name { routes }`, whose routes take `auth` unless they say otherwise, and the group's
+/// own `#[error(E)]`, `error`. A mistake in one route is gathered, the others are still read.
 fn parse_group(
     input: ParseStream,
     docs: Docs,
     vis: Visibility,
     auth: Option<&Auth>,
+    error: Option<Type>,
     errors: &mut ErrorList,
 ) -> Result<Group> {
     let name: Ident = input.parse().map_err(|error| {
@@ -387,6 +404,7 @@ fn parse_group(
         docs,
         vis,
         name,
+        error,
         routes,
     })
 }
@@ -398,6 +416,7 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
         docs,
         auth,
         openapi,
+        error,
     } = parse_attrs(input)?;
     let method = parse_method(input)?;
     let path: LitStr = input.parse().map_err(|error| {
@@ -434,6 +453,19 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
             None => attr_error = Some(refused),
         }
     }
+
+    let error = match error.map(|(_, error)| error).transpose() {
+        Ok(error) => error,
+        Err(refused) => {
+            match &mut attr_error {
+                Some(error) => error.combine(refused),
+                None => attr_error = Some(refused),
+            }
+
+            None
+        }
+    };
+
     let route = Route::resolve(
         RouteDecl {
             docs,
@@ -443,6 +475,7 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
             args: args.into_iter().map(|Arg(arg)| arg).collect(),
             reply,
             auth,
+            error,
         },
         group_auth,
     );
@@ -526,24 +559,53 @@ impl Parse for Arg {
     }
 }
 
-/// The attributes before an item: its `///` comments, its `#[auth(...)]` with what it says, or the mistake in it, and
-/// its `#[openapi(...)]` with whether the api has a document, or the mistake in it.
+/// The attributes before an item: its `///` comments, its `#[auth(...)]` with what it says, or the mistake in it, its
+/// `#[openapi(...)]` with whether the api has a document, or the mistake in it, and its `#[error(...)]` with the type
+/// it names, or the mistake in it.
 struct Attrs {
     docs: Docs,
     auth: Option<(Attribute, Result<Auth>)>,
     openapi: Option<(Attribute, Result<bool>)>,
+    error: Option<(Attribute, Result<Type>)>,
 }
 
-/// The attributes before an item. Any attribute other than a comment, `#[auth(...)]` or `#[openapi(...)]` is refused,
-/// which stops the reading; a second `#[auth(...)]` or `#[openapi(...)]` is a mistake of the item's, gathered with the
-/// others.
+/// The attributes before an item. Any attribute other than a comment, `#[auth(...)]`, `#[openapi(...)]` or
+/// `#[error(...)]` is refused, which stops the reading; a second of any of them is a mistake of the item's, gathered
+/// with the others.
 fn parse_attrs(input: ParseStream) -> Result<Attrs> {
     let attrs = input.call(Attribute::parse_outer)?;
     let mut lines = Vec::with_capacity(attrs.len());
     let mut auth: Option<(Attribute, Result<Auth>)> = None;
     let mut openapi: Option<(Attribute, Result<bool>)> = None;
+    let mut error: Option<(Attribute, Result<Type>)> = None;
 
     for attr in attrs {
+        if attr.path().is_ident("error") {
+            error = Some(match error {
+                None => {
+                    let read = parse_error(&attr);
+
+                    (attr, read)
+                }
+                Some((first, read)) => {
+                    let twice = Error::new_spanned(
+                        &attr,
+                        "an item takes one `#[error(...)]`: remove this one",
+                    );
+                    let error = match read {
+                        Ok(_) => twice,
+                        Err(mut error) => {
+                            error.combine(twice);
+                            error
+                        }
+                    };
+
+                    (first, Err(error))
+                }
+            });
+            continue;
+        }
+
         if attr.path().is_ident("openapi") {
             openapi = Some(match openapi {
                 None => {
@@ -609,7 +671,7 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
         let Some(line) = line else {
             return Err(Error::new_spanned(
                 attr,
-                "an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, and `#[openapi(none)]` on the api",
+                "an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, `#[error(...)]` on the api, a group or a route, and `#[openapi(none)]` on the api",
             ));
         };
 
@@ -620,7 +682,35 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
         docs: Docs(lines),
         auth,
         openapi,
+        error,
     })
+}
+
+/// What an `#[error(...)]` says: the type of the errors an api, a group or a route answers, `#[error(GitHubError)]`.
+fn parse_error(attr: &Attribute) -> Result<Type> {
+    const WRITE: &str =
+        "write `#[error(GitHubError)]`, the type the body of an error answer reads as";
+
+    let Meta::List(list) = &attr.meta else {
+        return Err(Error::new_spanned(
+            attr,
+            format!("`#[error]` names the type of the errors: {WRITE}"),
+        ));
+    };
+
+    let refused = || {
+        Error::new_spanned(
+            &list.tokens,
+            format!("`#[error(...)]` takes a type: {WRITE}"),
+        )
+    };
+    let ty: Type = syn::parse2(list.tokens.clone()).map_err(|_| refused())?;
+
+    // A type a struct holds, by its path: not `_`, `impl Trait`, `dyn Trait` nor `!`, which no body reads as.
+    match &ty {
+        Type::Path(_) => Ok(ty),
+        _ => Err(refused()),
+    }
 }
 
 /// What an `#[openapi(...)]` says: `none`, which leaves out the api's document. Whether the api has one.
@@ -1661,6 +1751,96 @@ mod tests {
             ]
         );
         assert_eq!(api.groups[0].routes[1].docs.0, [" Open to all."]);
+    }
+
+    /// The shape of each route's errors, by group, as the client names it: empty for a problem.
+    fn errors(api: &Api) -> Vec<Vec<String>> {
+        let block = api.name != "__QuollAlone";
+
+        api.groups
+            .iter()
+            .map(|group| {
+                let cx = crate::descriptor::Cx {
+                    group,
+                    api: block.then_some(api),
+                    openapi: true,
+                };
+
+                group
+                    .routes
+                    .iter()
+                    .map(|route| cx.error(route).map(text).unwrap_or_default())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_route_takes_the_nearest_error_shape() {
+        let api = parse(quote! {
+            #[error(HubError)]
+            pub api Api = "";
+
+            pub group Repos {
+                GET "/repos" => list();
+                #[error(crate::OAuthError)]
+                POST "/token" => token();
+            }
+
+            #[error(rest::Problem)]
+            pub group Mirror {
+                GET "/mirror" => get();
+                #[error(MirrorError)]
+                GET "/mirror/status" => status();
+            }
+        })
+        .unwrap();
+        let alone = syn::parse2::<GroupContract>(quote! {
+            pub group Gists {
+                GET "/gists" => list();
+                #[error(HubError)]
+                GET "/gists/starred" => starred();
+            }
+        })
+        .unwrap()
+        .0;
+
+        assert_eq!(
+            errors(&api),
+            [
+                vec!["HubError", "crate :: OAuthError"],
+                vec!["rest :: Problem", "MirrorError"]
+            ]
+        );
+        assert_eq!(errors(&alone), [vec!["", "HubError"]]);
+    }
+
+    #[test]
+    fn error_names_one_type_on_the_api_a_group_or_a_route() {
+        assert_eq!(
+            messages(quote! {
+                #[error(A)]
+                #[error(B)]
+                pub api Api = "";
+
+                #[error]
+                pub group G { #[error("A")] GET "/a" => a(); }
+
+                #[error(A)]
+                pub scheme Key = header "X-Key";
+
+                #[error(_)]
+                pub group H { #[error(impl Display)] GET "/h" => h(); }
+            }),
+            [
+                "an item takes one `#[error(...)]`: remove this one",
+                "`#[error]` names the type of the errors: write `#[error(GitHubError)]`, the type the body of an error answer reads as",
+                "`#[error(...)]` takes a type: write `#[error(GitHubError)]`, the type the body of an error answer reads as",
+                "a scheme takes no `#[error(...)]`: put it on the api, a group or a route, whose errors it reads",
+                "`#[error(...)]` takes a type: write `#[error(GitHubError)]`, the type the body of an error answer reads as",
+                "`#[error(...)]` takes a type: write `#[error(GitHubError)]`, the type the body of an error answer reads as",
+            ]
+        );
     }
 
     #[test]

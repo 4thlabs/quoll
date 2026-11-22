@@ -44,6 +44,9 @@ pub(crate) struct Api {
     /// Whether the api has an OpenAPI document, `Api::openapi`: not with `#[openapi(none)]`, for a contract of a
     /// third-party API that is only called, whose types need no schema.
     pub(crate) openapi: bool,
+    /// The shape of the errors of its routes, its `#[error(E)]`, which the groups of its block take unless they or
+    /// their routes name their own; `None` for an RFC 9457 problem.
+    pub(crate) error: Option<Type>,
 }
 
 /// Routes that go together: one service on the server, one trait on the client, one tag in OpenAPI.
@@ -55,6 +58,8 @@ pub(crate) struct Group {
     pub(crate) vis: Visibility,
     /// The name of the group.
     pub(crate) name: Ident,
+    /// The group's own `#[error(E)]`, which its routes take unless they name their own.
+    pub(crate) error: Option<Type>,
     /// The routes, in the order they are written.
     pub(crate) routes: Vec<Route>,
 }
@@ -134,6 +139,8 @@ pub(crate) struct Route {
     /// The authentication the route takes: its own attribute's, else its group's; `None` when it takes no
     /// credential.
     pub(crate) auth: Option<RouteAuth>,
+    /// The route's own `#[error(E)]`, which wins over its group's and its api's.
+    pub(crate) error: Option<Type>,
     /// The span of the route's string, where a mistake about the route as a whole is pointed.
     pub(crate) span: Span,
 }
@@ -307,6 +314,8 @@ pub(crate) struct RouteDecl {
     pub(crate) reply: Option<Type>,
     /// The route's own `#[auth(...)]`, if it has one.
     pub(crate) auth: Option<Auth>,
+    /// The route's own `#[error(E)]`, if it has one.
+    pub(crate) error: Option<Type>,
 }
 
 impl Route {
@@ -330,6 +339,7 @@ impl Route {
             args,
             reply,
             auth,
+            error,
         } = decl;
         let template = Template::parse(&path)?;
 
@@ -361,6 +371,7 @@ impl Route {
             path_order,
             reply,
             auth,
+            error,
             span: path.span(),
         })
     }
@@ -884,6 +895,7 @@ impl Api {
             listed,
             groups,
             openapi: true,
+            error: None,
         };
         api.check_unique(&mut errors);
         auth::resolve(&mut api, &mut errors);
@@ -908,6 +920,7 @@ impl Api {
             listed: Vec::new(),
             groups: vec![group],
             openapi: true,
+            error: None,
         };
         api.check_unique(&mut errors);
         auth::resolve(&mut api, &mut errors);
@@ -957,6 +970,7 @@ impl Api {
                     docs: Docs::default(),
                     vis: Visibility::Inherited,
                     name: name.clone(),
+                    error: None,
                     routes: Vec::new(),
                 };
 
@@ -1431,6 +1445,7 @@ mod tests {
             docs: Docs::default(),
             vis: Visibility::Inherited,
             name: Ident::new("Type", Span::call_site()),
+            error: None,
             routes: Vec::new(),
         };
 
