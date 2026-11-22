@@ -125,8 +125,9 @@
 //! the route, the group, the api, then quoll's own `Accept`. `#[header("name" = none)]` leaves one header the group or
 //! the route would take, `#[header(none)]` all of them, and never what quoll writes for the route. A `Content-Type`
 //! keeps the media type of the body, adding a parameter, and a request with no body sends none. The client sends
-//! them, a [`group!`] taking those of the api that lists it; the server does not check them, and the OpenAPI document
-//! describes each as a header parameter of its value, not required.
+//! them, a [`group!`] taking those of the api that lists it, whose `none` does nothing where that api does not fix
+//! the header; the server does not check them, and the OpenAPI document describes each as a header parameter of its
+//! value, not required.
 //!
 //! ```
 //! use quoll::rest;

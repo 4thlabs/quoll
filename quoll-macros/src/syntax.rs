@@ -2836,7 +2836,7 @@ mod tests {
             }),
             [
                 "the api `Api` fixes no header `X-Bta`, so the group has none to leave: check its name, or remove this `none`",
-                "neither the group `B` nor the api `Api` gives the route a header `X-Beta`, so it has none to leave: check its name, or remove this `none`",
+                "the group `B` already leaves every header of its api, `#[header(none)]`, so the route has none to leave: remove this `none`",
                 "neither the group `C` nor the api `Api` gives the route a header `X-Group`, so it has none to leave: check its name, or remove this `none`",
             ]
         );
@@ -2865,7 +2865,7 @@ mod tests {
 
         assert_eq!(
             refused.to_string(),
-            "neither the group `Gists` gives the route a header `X-Beta`, so it has none to leave: check its name, or remove this `none`"
+            "the group `Gists` already leaves the header `X-Beta`, so the route has none to leave: remove this `none`"
         );
     }
 

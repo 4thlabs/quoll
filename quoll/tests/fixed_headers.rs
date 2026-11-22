@@ -1,6 +1,7 @@
 //! The fixed headers of a contract, `#[header("name" = value)]` on an api, a group or a route: what its client sends,
 //! the nearest to the call winning, a caller's argument first and quoll's own `Accept` last, what `none` leaves, a
-//! `Content-Type` that keeps its body's media type, and a group of another block that takes its api's.
+//! `Content-Type` that keeps its body's media type, and a group of another block that takes its api's, listed by any
+//! api, whatever headers it fixes.
 
 #![cfg(all(feature = "server", feature = "client"))]
 
@@ -31,6 +32,9 @@ mod gists {
         #[header("X-Beta" = none)]
         pub group Gists {
             GET "/gists" => list() -> super::Echo;
+
+            #[header("X-Version" = none)]
+            GET "/gists/unversioned" => unversioned() -> super::Echo;
 
             #[header(none)]
             #[header("X-Route" = "bare")]
@@ -85,6 +89,13 @@ rest::api! {
         GET "/messages" => list() -> Echo;
         POST "/messages" => post(repo: Repo) -> Echo;
     }
+}
+
+rest::api! {
+    /// A third party that fixes neither `X-Beta` nor `X-Version`, which the group `Gists` and one of its routes leave.
+    #[openapi(none)]
+    #[header("X-Other" = "other")]
+    api Other = "" { gists::Gists };
 }
 
 /// The third party, which answers every request with the headers it received.
@@ -214,5 +225,27 @@ async fn a_group_of_another_block_takes_its_apis_headers() -> Result<()> {
     assert_eq!(sent(&bare, "x-route"), Some("bare"));
     assert_eq!(sent(&bare, "x-group"), None);
     assert_eq!(sent(&bare, "accept"), Some("application/json"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_group_of_another_block_leaves_nothing_where_its_api_fixes_nothing() -> Result<()> {
+    let hub = Hub::client(&serve(echo()).await)?;
+    let other = Other::client(&serve(echo()).await)?;
+
+    let at_hub = hub.gists().unversioned().await?;
+    let list = other.gists().list().await?;
+    let unversioned = other.gists().unversioned().await?;
+
+    assert_eq!(sent(&at_hub, "x-version"), None);
+    assert_eq!(sent(&at_hub, "x-beta"), None);
+    assert_eq!(sent(&at_hub, "accept"), Some("application/vnd.hub+json"));
+    assert_eq!(sent(&list, "x-other"), Some("other"));
+    assert_eq!(sent(&list, "x-group"), Some("gists"));
+    assert_eq!(sent(&list, "x-beta"), None);
+    assert_eq!(sent(&unversioned, "x-other"), Some("other"));
+    assert_eq!(sent(&unversioned, "x-version"), None);
+    assert_eq!(sent(&unversioned, "x-group"), Some("gists"));
+    assert_eq!(sent(&unversioned, "accept"), Some("application/json"));
     Ok(())
 }

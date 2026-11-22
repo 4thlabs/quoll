@@ -7,7 +7,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::{Ident, LitStr, ext::IdentExt};
 
-use crate::headers::{api_headers, api_leaves, route_headers};
+use crate::headers::{api_headers, route_headers};
 use crate::model::{Api, Group, Method, Route, Scheme, SchemeKind, reach, shown_vis, snake_case};
 use crate::scheme::scheme_type;
 
@@ -55,7 +55,6 @@ pub(crate) fn expand(cx: &Cx) -> TokenStream {
     let group_reach = reach(vis);
     let shown = shown_vis(vis);
     let error = group.error.is_some();
-    let leaves = group.headers.leaves.iter().map(LitStr::value);
     let routes = group.routes.iter().map(|route| route_info(group, route));
 
     quote! {
@@ -70,7 +69,6 @@ pub(crate) fn expand(cx: &Cx) -> TokenStream {
                 reach: #group_reach,
                 vis: #shown,
                 error: #error,
-                leaves: &[#(#leaves),*],
                 routes: &[#(#routes),*],
             };
         }
@@ -107,7 +105,6 @@ fn route_info(group: &Group, route: &Route) -> TokenStream {
         Some(None) => quote! { ::quoll::__private::group::BodyInfo::Bytes },
     };
     let fixed = route_headers(group, route);
-    let api_leaves = api_leaves(group, route);
 
     quote! {
         ::quoll::__private::group::RouteInfo {
@@ -123,7 +120,6 @@ fn route_info(group: &Group, route: &Route) -> TokenStream {
             streams: #streams,
             body: #body,
             fixed: #fixed,
-            api_leaves: &[#(#api_leaves),*],
         }
     }
 }
