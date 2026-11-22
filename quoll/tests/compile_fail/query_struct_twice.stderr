@@ -1,5 +1,0 @@
-error: a route has one query struct, and `filter` is already it: put the fields of `paging` in it
- --> tests/compile_fail/query_struct_twice.rs:7:58
-  |
-7 |         GET "/notes" => search(query filter: NoteFilter, query paging: Paging);
-  |                                                          ^^^^^

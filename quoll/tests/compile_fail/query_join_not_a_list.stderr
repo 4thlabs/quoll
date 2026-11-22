@@ -1,5 +1,0 @@
-error: `#[join]` writes a list, which `labels` is not: make it a `Vec`, as `labels: Vec<String>`
- --> tests/compile_fail/query_join_not_a_list.rs:8:5
-  |
-8 |     #[join(",")]
-  |     ^^^^^^^^^^^^

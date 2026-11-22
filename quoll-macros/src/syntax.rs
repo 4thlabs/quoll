@@ -630,7 +630,7 @@ fn parse_arg_attrs(input: ParseStream) -> Result<Option<JoinAttr>> {
 }
 
 /// `#[join(",")]`, `#[join(" ")]` or `#[join("|")]`.
-pub(crate) fn parse_join(attr: Attribute) -> Result<JoinAttr> {
+fn parse_join(attr: Attribute) -> Result<JoinAttr> {
     let expected = "`#[join]` takes the separator of one of the styles OpenAPI describes: `#[join(\",\")]`, `#[join(\" \")]` or `#[join(\"|\")]`";
     let separator: LitStr = attr
         .parse_args()

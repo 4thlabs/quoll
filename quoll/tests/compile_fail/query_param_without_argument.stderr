@@ -1,5 +1,0 @@
-error: the `page={page}` of the query has no argument named `page`: add `page: Type` to the arguments
- --> tests/compile_fail/query_param_without_argument.rs:7:13
-  |
-7 |         GET "/notes?page={page}" => list();
-  |             ^^^^^^^^^^^^^^^^^^^^

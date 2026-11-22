@@ -1,5 +1,0 @@
-error: `#[rest::query]` goes on a query struct, whose fields are named as its keys: write `struct Filter { labels: Vec<String> }`
- --> tests/compile_fail/query_tuple_struct.rs:7:12
-  |
-7 | pub struct Filter(#[join(",")] pub Vec<String>);
-  |            ^^^^^^

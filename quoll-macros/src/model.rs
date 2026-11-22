@@ -263,11 +263,10 @@ impl Join {
         }
     }
 
-    /// What serde's `with` names for a list of `element`s: `::quoll::__private::join::Comma::<u32>`, whose schema
-    /// schemars takes as the field's.
+    /// What serde's `with` names for a list of `element`s: `::quoll::rest::join::Comma::<u32>`.
     pub(crate) fn with(self, element: &Type) -> String {
         format!(
-            "::quoll::__private::join::{}::<{}>",
+            "::quoll::rest::join::{}::<{}>",
             self.variant(),
             quote::quote!(#element)
         )
@@ -607,8 +606,8 @@ fn check_join(attr: &JoinAttr, arg: &ArgDecl, template: &Template) -> Result<()>
     check_joined_type(attr, &key, ty)
 }
 
-/// The type of an argument or a field that `#[join(sep)]` writes, `what`, is a `Vec` of a type read from text.
-pub(crate) fn check_joined_type(attr: &JoinAttr, what: &str, ty: &Type) -> Result<()> {
+/// The type of an argument that `#[join(sep)]` writes, `what`, is a `Vec` of a type read from text.
+fn check_joined_type(attr: &JoinAttr, what: &str, ty: &Type) -> Result<()> {
     let Some(element) = vec_inner(ty) else {
         return Err(Error::new_spanned(
             &attr.attr,

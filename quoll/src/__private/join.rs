@@ -1,12 +1,5 @@
-//! A list written as the one value of a query key, as `#[join(sep)]` asks: `labels=bug,docs`.
-//!
-//! `Comma<T>`, `Space<T>` and `Pipe<T>` are what the code of `rest::api!` and `#[rest::query]` names in serde's
-//! `with`, on the field of a list: serde calls their `serialize` and `deserialize`, schemars takes them as the field's
-//! type. Their schema is what they write, a string or `null`, in JSON as in a form, with a mark that holds the
-//! separator and the list's own schema, which the document turns into a query parameter of its style.
-
-use std::borrow::Cow;
-use std::marker::PhantomData;
+//! A list written as the one value of a query key, as `#[join(sep)]` asks, `labels=bug,docs`: the separator, and
+//! what [`rest::join`](crate::rest::join)'s types do with it.
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::de::{self, Deserialize, DeserializeOwned, Deserializer};
@@ -113,7 +106,7 @@ pub(crate) fn each_text<T: Serialize>(
 
 /// `values` written as one value, joined with the separator, or as nothing, which leaves the key out, for an empty
 /// list.
-fn serialize<T: Serialize, S: Serializer>(
+pub(crate) fn serialize<T: Serialize, S: Serializer>(
     join: Join,
     values: &[T],
     serializer: S,
@@ -138,7 +131,7 @@ fn serialize<T: Serialize, S: Serializer>(
 /// before it is split, so that `bug%2Cdocs`, which a browser's `URLSearchParams` writes, is the two values too. An
 /// empty value is an empty list, as OpenAPI writes one, and so is a `null`, which `serialize` writes for one in a
 /// format other than a query, JSON.
-fn deserialize<'de, T: DeserializeOwned, D: Deserializer<'de>>(
+pub(crate) fn deserialize<'de, T: DeserializeOwned, D: Deserializer<'de>>(
     join: Join,
     deserializer: D,
 ) -> Result<Vec<T>, D::Error> {
@@ -159,71 +152,11 @@ fn deserialize<'de, T: DeserializeOwned, D: Deserializer<'de>>(
 
 /// The schema of what `serialize` writes, a string or `null` for an empty list, marked with the separator and the
 /// schema of the list itself.
-fn json_schema<T: JsonSchema>(join: Join, generator: &mut SchemaGenerator) -> Schema {
+pub(crate) fn json_schema<T: JsonSchema>(join: Join, generator: &mut SchemaGenerator) -> Schema {
     let list = Vec::<T>::json_schema(generator);
 
     json_schema!({
         "type": ["string", "null"],
         MARK: { "separator": join.separator().to_string(), "schema": list },
     })
-}
-
-/// Writes a type named in serde's `with` for each separator.
-macro_rules! joined {
-    ($($(#[$docs:meta])* $name:ident => $join:ident;)*) => {
-        $(
-            $(#[$docs])*
-            #[derive(Debug)]
-            pub struct $name<T>(PhantomData<fn() -> T>);
-
-            impl<T: Serialize> $name<T> {
-                /// Writes the list as one value, or as nothing when it is empty.
-                ///
-                /// # Errors
-                ///
-                /// When a value is not one piece of text, holds the separator, or is the list's one value and empty.
-                pub fn serialize<S: Serializer>(values: &[T], serializer: S) -> Result<S::Ok, S::Error> {
-                    serialize(Join::$join, values, serializer)
-                }
-            }
-
-            impl<T: DeserializeOwned> $name<T> {
-                /// Reads the list back from its one value.
-                ///
-                /// # Errors
-                ///
-                /// When the value is not a string, or one of its pieces is not a `T`.
-                pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<T>, D::Error> {
-                    deserialize(Join::$join, deserializer)
-                }
-            }
-
-            impl<T: JsonSchema> JsonSchema for $name<T> {
-                fn inline_schema() -> bool {
-                    true
-                }
-
-                fn schema_name() -> Cow<'static, str> {
-                    Vec::<T>::schema_name()
-                }
-
-                fn schema_id() -> Cow<'static, str> {
-                    format!(concat!("quoll::", stringify!($name), "<{}>"), T::schema_id()).into()
-                }
-
-                fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-                    json_schema::<T>(Join::$join, generator)
-                }
-            }
-        )*
-    };
-}
-
-joined! {
-    /// A list joined with `,`: `#[join(",")]`.
-    Comma => Comma;
-    /// A list joined with a space: `#[join(" ")]`.
-    Space => Space;
-    /// A list joined with `|`: `#[join("|")]`.
-    Pipe => Pipe;
 }
