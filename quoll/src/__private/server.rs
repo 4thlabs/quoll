@@ -83,8 +83,13 @@ impl Format {
     /// The text of the format's error when the body does not read as a struct or a map of its fields' types.
     fn holds(self, body: &[u8], fields: &'static [Field]) -> std::result::Result<bool, String> {
         match self {
-            Self::Json => fields::holds(&mut serde_json::Deserializer::from_slice(body), fields)
-                .map_err(|error| error.to_string()),
+            Self::Json => {
+                let mut deserializer = serde_json::Deserializer::from_slice(body);
+                let held = fields::holds(&mut deserializer, fields)
+                    .and_then(|held| deserializer.end().map(|()| held));
+
+                held.map_err(|error| error.to_string())
+            }
             // serde_html_form gathers a key given twice into one value, which no field's type reads.
             Self::Form if repeats_a_field(body, fields) => Ok(false),
             Self::Form => fields::holds(serde_html_form::Deserializer::from_bytes(body), fields)
