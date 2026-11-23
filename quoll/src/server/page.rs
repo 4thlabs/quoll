@@ -96,7 +96,16 @@ impl Service<Request> for Page {
     fn call(&mut self, request: Request) -> Self::Future {
         let page = self.clone();
 
-        Box::pin(async move { Ok(page.answer(request).await) })
+        Box::pin(async move {
+            let mut response = page.answer(request).await;
+
+            // Every answer of the page, its errors among them, leaves through here.
+            response.headers_mut().insert(
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            );
+            Ok(response)
+        })
     }
 }
 
@@ -162,31 +171,32 @@ impl Page {
             Err(refused) => return Error::not_found(refused.detail()).into_response(),
         };
         let relative = segments.join("/");
-        let directory = segments.is_empty() || path.ends_with('/');
-
-        if directory || segments.last().is_some_and(|last| last == INDEX) {
-            unconditional(request.headers_mut());
-        }
+        let slashed = path.ends_with('/');
 
         let dir = Arc::clone(&self.dir);
         let manifest = Arc::clone(&self.manifest);
         let checked = {
             let relative = relative.clone();
 
-            tokio::task::spawn_blocking(move || -> Result<Hashed, Refusal> {
-                filter(&dir, &relative, directory)?;
-
-                Ok(dir
+            tokio::task::spawn_blocking(move || -> Result<(Checked, Hashed), Refusal> {
+                let checked = filter(&dir, &relative, slashed)?;
+                let hashed = dir
                     .canonicalize()
-                    .map_or(Hashed::Named, |root| manifest.hashed(&root)))
+                    .map_or(Hashed::Named, |root| manifest.hashed(&root));
+
+                Ok((checked, hashed))
             })
             .await
         };
-        let hashed = match checked {
-            Ok(Ok(hashed)) => hashed,
+        let (checked, hashed) = match checked {
+            Ok(Ok(checked)) => checked,
             Ok(Err(refusal)) => return refusal.into_response(),
             Err(error) => return Error::internal(error).into_response(),
         };
+
+        if checked.index {
+            unconditional(request.headers_mut());
+        }
 
         // `ServeDir` is ready when its fallback is, which always is.
         let _ = poll_fn(|cx| self.files.poll_ready(cx)).await;
@@ -196,7 +206,7 @@ impl Page {
             Err(never) => match never {},
         };
 
-        dressed(served, &relative, &hashed)
+        dressed(served, &relative, &hashed, checked.copies)
     }
 }
 
@@ -221,10 +231,10 @@ fn unconditional(headers: &mut HeaderMap) {
     }
 }
 
-/// `served`, an answer of `ServeDir`, of the file at `relative`, with the headers of the page: `nosniff`, a `Vary`
-/// on a compressed copy, the `Cache-Control` of a file that `hashed` tells, and a problem for an error it answered
-/// with no body.
-fn dressed(served: Response, relative: &str, hashed: &Hashed) -> Response {
+/// `served`, an answer of `ServeDir`, of the file at `relative`, with the headers of the page: a `Vary` on a file
+/// with compressed `copies`, the `Cache-Control` of a file that `hashed` tells, and a problem for an error it
+/// answered with no body.
+fn dressed(served: Response, relative: &str, hashed: &Hashed, copies: bool) -> Response {
     let status = served.status();
     let mut served = if status.is_server_error() {
         Error::internal("the page's file cannot be read").into_response()
@@ -238,18 +248,15 @@ fn dressed(served: Response, relative: &str, hashed: &Hashed) -> Response {
         served
     };
     let headers = served.headers_mut();
+    let file = status.is_success() || status == StatusCode::NOT_MODIFIED;
 
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-
-    if headers.contains_key(header::CONTENT_ENCODING) {
+    // The fallback says it of `index.html`.
+    if copies && file {
         headers.append(header::VARY, HeaderValue::from_static("accept-encoding"));
     }
 
     // The fallback gives its own; an error none.
-    let cached = status.is_success() || status == StatusCode::NOT_MODIFIED;
+    let cached = file;
 
     if cached && !headers.contains_key(header::CACHE_CONTROL) {
         let cache = if hashed.names(relative) {
@@ -289,13 +296,10 @@ impl Service<Request> for Fallback {
 
 /// The answer to `request`, of a path that is no file of `dir`.
 async fn fall_back(dir: Arc<Path>, mut request: Request) -> Response {
-    let well_known = request
-        .uri()
-        .path()
-        .trim_start_matches('/')
-        .split('/')
-        .next()
-        .is_some_and(|first| first == WELL_KNOWN);
+    // Told by the decoded segments, as `/%2Ewell-known/` and `/./.well-known/` are `/.well-known/` too.
+    let well_known = segments(request.uri().path()).map_or(true, |segments| {
+        segments.first().is_some_and(|first| first == WELL_KNOWN)
+    });
 
     // Programs read the files of `/.well-known/`, which are never a page.
     if well_known {
@@ -317,12 +321,11 @@ async fn fall_back(dir: Arc<Path>, mut request: Request) -> Response {
 
         tokio::task::spawn_blocking(move || filter(&dir, "", true)).await
     };
-
-    match checked {
-        Ok(Ok(())) => {}
+    let checked = match checked {
+        Ok(Ok(checked)) => checked,
         Ok(Err(refusal)) => return refusal.into_response(),
         Err(error) => return Error::internal(error).into_response(),
-    }
+    };
 
     unconditional(request.headers_mut());
 
@@ -343,6 +346,11 @@ async fn fall_back(dir: Arc<Path>, mut request: Request) -> Response {
 
     headers.insert(header::CACHE_CONTROL, NO_CACHE);
     headers.append(header::VARY, HeaderValue::from_static("accept"));
+
+    if checked.copies {
+        headers.append(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
+
     served
 }
 
@@ -408,6 +416,8 @@ enum Refusal {
     Refused(Refused),
     /// A file whose time no HTTP date holds, before 1970 or from the year 10000, which `ServeDir` cannot answer.
     Undated(PathBuf),
+    /// A file that is there but cannot be opened, which `ServeDir` takes for no file.
+    Unreadable(PathBuf),
 }
 
 impl IntoResponse for Refusal {
@@ -419,21 +429,43 @@ impl IntoResponse for Refusal {
                 file.display()
             ))
             .into_response(),
+            Self::Unreadable(file) => Error::internal(format!(
+                "the page's file `{}` is there but cannot be opened",
+                file.display()
+            ))
+            .into_response(),
         }
     }
 }
 
-/// The filter of a request of the file at `relative` under `dir`, or of its `index.html` when it asks for a
-/// `directory`: the file and each compressed copy of it that `ServeDir` may send, by their real paths, which must be
-/// under `dir`'s and not hidden, and each of a time an HTTP date holds. A file that is not there is left to
+/// What the filter found of the file `ServeDir` will send.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Checked {
+    /// Whether it is an `index.html` by its real name, which is always sent whole.
+    index: bool,
+    /// Whether it has compressed copies beside it, which its answer varies by.
+    copies: bool,
+}
+
+/// The filter of a request of the path of `relative`, the decoded segments joined by `/`, under `dir`, `slashed` when
+/// the request's path ends with a `/`: it finds the file `ServeDir` will open, as `ServeDir` does, then checks it and
+/// each compressed copy of it that `ServeDir` may send, by their real paths, which must be under `dir`'s and not
+/// hidden, each one that can be opened, and of a time an HTTP date holds.
+///
+/// As `ServeDir` does, a directory opens its `index.html` when the path ends with a `/`, and is redirected otherwise;
+/// any other path opens the file of its segments, whatever its final `/`. A file that is not there is left to
 /// `ServeDir`, which falls back.
-fn filter(dir: &Path, relative: &str, directory: bool) -> Result<(), Refusal> {
+fn filter(dir: &Path, relative: &str, slashed: bool) -> Result<Checked, Refusal> {
     let Ok(root) = dir.canonicalize() else {
-        return Ok(());
+        return Ok(Checked::default());
     };
     let mut target = root.join(relative);
 
-    if directory {
+    if std::fs::metadata(&target).is_ok_and(|metadata| metadata.is_dir()) {
+        if !slashed {
+            return Ok(Checked::default());
+        }
+
         target.push(INDEX);
     }
 
@@ -444,13 +476,18 @@ fn filter(dir: &Path, relative: &str, directory: bool) -> Result<(), Refusal> {
         copy.push(extension);
         PathBuf::from(copy)
     });
+    let mut checked = Checked::default();
 
-    for candidate in std::iter::once(target).chain(copies) {
+    for (at, candidate) in std::iter::once(target).chain(copies).enumerate() {
         let Ok(real) = candidate.canonicalize() else {
             continue;
         };
 
         under(&root, &real).map_err(Refusal::Refused)?;
+
+        if std::fs::File::open(&real).is_err() {
+            return Err(Refusal::Unreadable(candidate));
+        }
 
         let undated = std::fs::metadata(&real)
             .ok()
@@ -461,9 +498,18 @@ fn filter(dir: &Path, relative: &str, directory: bool) -> Result<(), Refusal> {
         if undated {
             return Err(Refusal::Undated(candidate));
         }
+
+        if at == 0 {
+            checked.index = real
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case(INDEX));
+        } else {
+            checked.copies = true;
+        }
     }
 
-    Ok(())
+    Ok(checked)
 }
 
 /// Whether `real`, a real path, is a file the page serves under `root`, its real path: under it, and with no hidden
@@ -891,7 +937,18 @@ mod tests {
             filter(&dist, "app.js", false),
             Err(Refusal::Refused(Refused::Outside))
         );
-        assert_eq!(filter(&dist, "", true), Ok(()));
-        assert_eq!(filter(&dist, "gone.js", false), Ok(()));
+        // `ServeDir` opens a file whatever its final `/`.
+        assert_eq!(
+            filter(&dist, "app.js", true),
+            Err(Refusal::Refused(Refused::Outside))
+        );
+        assert_eq!(
+            filter(&dist, "", true),
+            Ok(Checked {
+                index: true,
+                copies: false
+            })
+        );
+        assert_eq!(filter(&dist, "gone.js", false), Ok(Checked::default()));
     }
 }

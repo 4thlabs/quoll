@@ -189,7 +189,7 @@ fn router_fn(api: &Api) -> TokenStream {
             .to_owned()
     } else {
         format!(
-            " An axum router serving every route of the api under `{prefix}`, each by the service of its group, and a problem 404 for any other path under it."
+            " An axum router serving every route of the api under `{prefix}`, each by the service of its group, and a problem 404 for any other path under it.\n\n The 404 is a fallback nested at `{prefix}`. So the routers of two apis of the same prefix can no longer be merged with `Router::merge`, as they could before the 404: axum panics on their two fallbacks. Apis of different prefixes merge."
         )
     };
     let services = Ident::new("services", Span::mixed_site());
