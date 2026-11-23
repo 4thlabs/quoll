@@ -478,6 +478,6 @@ pub use created::Created;
 pub use error::{Error, Result};
 pub use problem::Problem;
 pub use quoll_macros::{api, group};
-pub use response::{InvalidStatus, Response, Status};
+pub use response::{InvalidStatus, NoContent, Response, Status, StatusOf};
 pub use route::Route;
 pub use stream::{ByteStream, Events, JsonLines};

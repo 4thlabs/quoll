@@ -718,9 +718,12 @@ impl<T: Send + 'static, E: Send + 'static> rest::Call<T, E> for Pending<'_, T, E
         let headers = response.headers().clone();
 
         let body = if status.is_success() {
-            Ok(read(Answer { response, route })
-                .await
-                .map_err(Error::cast)?)
+            match read(Answer { response, route }).await {
+                Ok(value) => Ok(value),
+                // An answer of no content that is not the route's result keeps its status and its headers.
+                Err(error) if no_content(status) => Err(error.cast()),
+                Err(error) => return Err(error.cast()),
+            }
         } else {
             Err(answered_error(response, route, shape).await?)
         };
@@ -774,11 +777,12 @@ impl fmt::Debug for Answer {
 
 impl Answer {
     /// The body, read as the JSON of `T`: what a route returning `T`, `Created<T>` or `Accepted<T>` gives. It is read
-    /// whole: it is the route's data.
+    /// whole: it is the route's data. A 204 or a 205, which has no body, is read as `null`: `None` for an `Option<T>`.
     ///
     /// # Errors
     ///
-    /// The read resolves to an error with no status when the body cannot be read, or is not the JSON of `T`.
+    /// The read resolves to an error with no status when the body cannot be read, or is not the JSON of `T`, as a 204
+    /// or a 205 of a route whose `T` is not an `Option`.
     pub fn json<T: Deserialized + Send + 'static>(self) -> Read<T> {
         Read::new(self.read_json())
     }
@@ -786,9 +790,11 @@ impl Answer {
     /// The body, read as JSON, as [`Answer::json`] reads it.
     async fn read_json<T: DeserializeOwned>(self) -> Result<T> {
         let route = self.route;
+        let empty = no_content(self.response.status());
         let body = self.read().await?;
+        let body: &[u8] = if empty { b"null" } else { &body };
 
-        serde_json::from_slice(&body).map_err(|error| no_answer(route, NOT_ITS_RESULT, error))
+        serde_json::from_slice(body).map_err(|error| no_answer(route, NOT_ITS_RESULT, error))
     }
 
     /// The body, read whole as UTF-8 text: what a route returning `Text` gives.
@@ -982,6 +988,11 @@ impl Answer {
             Ok(())
         })
     }
+}
+
+/// Whether `status` says there is no body, a 204 or a 205: what a route with no result or an `Option<T>` answers.
+fn no_content(status: StatusCode) -> bool {
+    matches!(status, StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT)
 }
 
 /// What the error of an answer that is not the route's result says.

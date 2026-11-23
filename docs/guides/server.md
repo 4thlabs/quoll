@@ -169,6 +169,9 @@ A handler returns a `rest::Response` of the route's value: `Note` for `-> Note`,
   answers 201 when it creates and 200 when it replaces, a 304 Not Modified, a 206. `rest::Status` holds a `2xx` or a
   `3xx` alone, so an error's status does not compile there: an error is an `Err(rest::Error)`, as
   [Errors](errors.md) says.
+- `Status::NO_CONTENT` and `Status::RESET_CONTENT`, a 204 and a 205, say there is no body: they go on a route with no
+  result, or on one that returns an `Option<T>`, `Response::new(None)`, which the client reads as `None`. On a route of
+  a value, `-> Note`, they do not compile: write `-> Option<Note>`.
 - A 204, a 205 or a 304 is sent without its body, which HTTP gives them none: the value of the `Response` is not sent.
 - A name or a value that is not a header's, or a `Content-Type`, a `Content-Length` or a `Transfer-Encoding`, which
   quoll writes from the route's result, answers 500, logged without the value.

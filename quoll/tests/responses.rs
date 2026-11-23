@@ -44,11 +44,13 @@ rest::api! {
         GET  "/slow"           => slow() -> u32;
         GET  "/events"         => events() -> Events<u32>;
         GET  "/logo"           => logo() -> Bytes;
+        GET  "/drafts/{id}"    => draft(id: i64) -> Option<Note>;
     }
 
     /// A route the server below answers with a page of HTML.
     group Pages {
         GET "/page" => page() -> Note;
+        GET "/empty" => empty() -> Note;
     }
 }
 
@@ -141,6 +143,21 @@ impl NotesServer for App {
         Ok(Response::new(events).header(CACHE_CONTROL, "no-store"))
     }
 
+    async fn draft(&self, id: i64) -> Result<Response<Option<Note>>> {
+        if id == 0 {
+            let missing = Response::new(None).header(ETAG, etag(id));
+
+            return Ok(missing.with_status(Status::NO_CONTENT));
+        }
+
+        let note = Note {
+            id,
+            title: "Draft".into(),
+        };
+
+        Ok(Response::new(Some(note)))
+    }
+
     async fn logo(&self) -> Result<Response<Bytes>> {
         let logo = Bytes::new(b"<svg/>".to_vec()).with_content_type("image/svg+xml");
 
@@ -151,6 +168,10 @@ impl NotesServer for App {
 impl PagesServer for App {
     async fn page(&self) -> Result<Response<Note>> {
         unreachable!("the page is served by a router of its own")
+    }
+
+    async fn empty(&self) -> Result<Response<Note>> {
+        unreachable!("the empty answer is served by a router of its own")
     }
 }
 
@@ -321,6 +342,47 @@ async fn a_success_that_is_not_the_result_is_no_answer() -> Result<()> {
 
     assert_eq!(error.status(), None);
     assert!(error.to_string().contains("not its result"), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_204_of_a_route_of_an_option_is_none() -> Result<()> {
+    let url = serve(&App::default()).await;
+    let api = Api::client(&url)?;
+
+    let response = api.notes().draft(0).response().await?;
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(response.headers()[ETAG], etag(0));
+    assert_eq!(response.into_value()?, None);
+    assert_eq!(api.notes().draft(0).await?, None);
+    assert_eq!(api.notes().draft(2).await?.map(|note| note.id), Some(2));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_204_of_another_api_on_a_route_of_a_value_keeps_its_status_and_its_headers() -> Result<()>
+{
+    let empty = axum::Router::new().route(
+        "/api/empty",
+        axum::routing::get(|| async { (StatusCode::NO_CONTENT, [(ETAG, "\"9\"")]) }),
+    );
+    let url = quoll::test::spawn(empty).await;
+    let api = Api::client(&url)?;
+
+    let response = api.pages().empty().response().await?;
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(response.headers()[ETAG], "\"9\"");
+
+    let error = response.into_value().expect_err("no note");
+
+    assert_eq!(error.status(), None);
+    assert!(error.to_string().contains("not its result"), "{error}");
+
+    let error = api.pages().empty().await.expect_err("no note");
+
+    assert_eq!(error.status(), None);
     Ok(())
 }
 

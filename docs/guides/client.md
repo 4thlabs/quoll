@@ -118,7 +118,9 @@ async fn find(api: &ApiClient, id: i64) -> rest::Result<Option<String>> {
 ```
 
 The `Err` of `.response()` is a call that got no answer it can read: a connection refused, a deadline passed, an
-answer with a success status that is not the route's result. A 304 Not Modified, which comes to a call that sent
+answer with a success status that is not the route's result. A 204 or a 205 is a success, `()` or `None` on a route
+of an `Option`; on a route of a value, as another API may answer it, the `.response()` keeps its status and its
+headers, and its value is the error of a body that is not the result. A 304 Not Modified, which comes to a call that sent
 `If-None-Match`, is an error of its own: its status and the headers of the `.response()`, with no
 [detail](errors.md#another-apis-errors), which `.into_value()` gives; `.await` gives that error too.
 
