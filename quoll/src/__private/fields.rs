@@ -318,6 +318,40 @@ mod tests {
     }
 
     #[test]
+    fn a_float_key_is_left_out_as_serde_json_writes_it() {
+        /// A map whose keys are floats, which no map of the standard library holds.
+        struct Floats;
+
+        impl Serialize for Floats {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                use serde::ser::SerializeMap;
+
+                let mut map = serializer.serialize_map(Some(3))?;
+                map.serialize_entry(&1.0_f64, &0)?;
+                map.serialize_entry(&1.1_f32, &0)?;
+                map.serialize_entry(&2.5_f64, &0)?;
+                map.end()
+            }
+        }
+
+        const FLOATS: &[Field] = &[
+            Field {
+                name: "1.0",
+                value: Value::Bool(true),
+            },
+            Field {
+                name: "1.1",
+                value: Value::Bool(false),
+            },
+        ];
+
+        assert_eq!(
+            json(&Floats, FLOATS).unwrap(),
+            r#"{"1.0":true,"1.1":false,"2.5":0}"#
+        );
+    }
+
+    #[test]
     fn a_body_that_is_no_struct_or_map_is_refused() {
         let error = json(&vec![1, 2], STREAM).unwrap_err().to_string();
 

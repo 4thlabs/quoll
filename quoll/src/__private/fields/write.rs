@@ -12,6 +12,9 @@ use super::Field;
 /// A body that serializes as `value` with `fields` added at its top: in the struct or the map `value` serializes
 /// as, or in what an `Option` or a newtype holds, a field of `value` of the same name left out, as the contract wins.
 /// Any other value is refused when it is written, with a message that says so.
+///
+/// `value` is serialized twice, once to count the fields the fixed ones replace, for the length the format is given,
+/// then to write it: its `Serialize` gives the same at each pass, as a derived one does.
 #[derive(Debug)]
 pub struct With<'a, T: ?Sized> {
     value: &'a T,
@@ -29,12 +32,18 @@ impl<T: Serialize + ?Sized> Serialize for With<'_, T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         // A first pass counts the fields of `value` that the fixed ones replace, for the length of the second. A value
         // it cannot count is no struct or map, which the second refuses with its message.
-        let replaced = self.value.serialize(Counter(self.fields)).unwrap_or(0);
+        let human = serializer.is_human_readable();
+        let counter = Counter {
+            fields: self.fields,
+            human,
+        };
+        let replaced = self.value.serialize(counter).unwrap_or(0);
 
         self.value.serialize(Adder {
             inner: serializer,
             fields: self.fields,
             replaced,
+            human,
         })
     }
 }
@@ -50,6 +59,8 @@ struct Adder<S> {
     inner: S,
     fields: &'static [Field],
     replaced: usize,
+    /// Whether the format is human readable, which the value may serialize otherwise for.
+    human: bool,
 }
 
 impl<S> Adder<S> {
@@ -88,6 +99,10 @@ impl<S: Serializer> Serializer for Adder<S> {
     type SerializeMap = AddMap<S::SerializeMap>;
     type SerializeStruct = AddStruct<S::SerializeStruct>;
     type SerializeStructVariant = Impossible<S::Ok, S::Error>;
+
+    fn is_human_readable(&self) -> bool {
+        self.human
+    }
 
     refuse! {
         serialize_bool(bool) "a bool";
@@ -172,6 +187,7 @@ impl<S: Serializer> Serializer for Adder<S> {
             inner,
             fields: self.fields,
             skipping: false,
+            human: self.human,
         })
     }
 
@@ -245,6 +261,8 @@ struct AddMap<S> {
     fields: &'static [Field],
     /// Whether the value to come is the one of a key left out.
     skipping: bool,
+    /// Whether the format is human readable.
+    human: bool,
 }
 
 impl<S: SerializeMap> SerializeMap for AddMap<S> {
@@ -252,7 +270,7 @@ impl<S: SerializeMap> SerializeMap for AddMap<S> {
     type Error = S::Error;
 
     fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), S::Error> {
-        self.skipping = is_fixed_key(self.fields, key);
+        self.skipping = is_fixed_key(self.fields, self.human, key);
         if self.skipping {
             return Ok(());
         }
@@ -273,7 +291,7 @@ impl<S: SerializeMap> SerializeMap for AddMap<S> {
         key: &K,
         value: &V,
     ) -> Result<(), S::Error> {
-        if is_fixed_key(self.fields, key) {
+        if is_fixed_key(self.fields, self.human, key) {
             return Ok(());
         }
 
@@ -357,7 +375,11 @@ macro_rules! not_read_compounds {
 
 /// A serializer that counts the fields at the top of a struct or a map, or of what an `Option` or a newtype holds,
 /// whose names are the fixed ones: what [`Adder`] leaves out. It serializes no value.
-struct Counter(&'static [Field]);
+struct Counter {
+    fields: &'static [Field],
+    /// Whether the format is human readable, as the value serializes for it.
+    human: bool,
+}
 
 impl Serializer for Counter {
     type Ok = usize;
@@ -369,6 +391,10 @@ impl Serializer for Counter {
     type SerializeMap = CountMap;
     type SerializeStruct = CountStruct;
     type SerializeStructVariant = Impossible<usize, NotRead>;
+
+    fn is_human_readable(&self) -> bool {
+        self.human
+    }
 
     not_read! {
         usize;
@@ -420,14 +446,15 @@ impl Serializer for Counter {
 
     fn serialize_map(self, _len: Option<usize>) -> Result<CountMap, NotRead> {
         Ok(CountMap {
-            fields: self.0,
+            fields: self.fields,
+            human: self.human,
             count: 0,
         })
     }
 
     fn serialize_struct(self, _name: &'static str, _len: usize) -> Result<CountStruct, NotRead> {
         Ok(CountStruct {
-            fields: self.0,
+            fields: self.fields,
             count: 0,
         })
     }
@@ -463,6 +490,7 @@ impl SerializeStruct for CountStruct {
 /// The entries of a map [`Counter`] counts.
 struct CountMap {
     fields: &'static [Field],
+    human: bool,
     count: usize,
 }
 
@@ -471,7 +499,7 @@ impl SerializeMap for CountMap {
     type Error = NotRead;
 
     fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), NotRead> {
-        if is_fixed_key(self.fields, key) {
+        if is_fixed_key(self.fields, self.human, key) {
             self.count += 1;
         }
 
@@ -487,21 +515,34 @@ impl SerializeMap for CountMap {
     }
 }
 
-/// Whether a map's `key` is the name of one of `fields`, as the format writes it as text.
-fn is_fixed_key<K: Serialize + ?Sized>(fields: &'static [Field], key: &K) -> bool {
-    key.serialize(KeyName(fields)).unwrap_or(false)
+/// Whether a map's `key` is the name of one of `fields`, as the format writes it as text, `human` when it is human
+/// readable.
+fn is_fixed_key<K: Serialize + ?Sized>(fields: &'static [Field], human: bool, key: &K) -> bool {
+    key.serialize(KeyName { fields, human }).unwrap_or(false)
 }
 
 /// A serializer that tells whether a map's key is the name of one of the fields, as serde_json writes a key: a
-/// string, a character, a unit variant, an integer or a bool, as text; any other key is not.
-struct KeyName(&'static [Field]);
+/// string, a character, a unit variant, an integer, a bool or a finite float, as text; any other key is not.
+struct KeyName {
+    fields: &'static [Field],
+    /// Whether the format is human readable, as the key serializes for it.
+    human: bool,
+}
+
+impl KeyName {
+    /// Whether a finite float is the name of one of the fields as serde_json writes it, `1.0`: a float that is not
+    /// finite is no key of serde_json's.
+    fn is_float<F: Serialize>(&self, value: &F) -> bool {
+        serde_json::to_string(value).is_ok_and(|text| is_fixed(self.fields, &text))
+    }
+}
 
 /// The methods of [`KeyName`] for a key written as its text, an integer or a bool.
 macro_rules! as_text {
     ($($method:ident($arg:ty);)*) => {
         $(
             fn $method(self, value: $arg) -> Result<bool, NotRead> {
-                Ok(is_fixed(self.0, &value.to_string()))
+                Ok(is_fixed(self.fields, &value.to_string()))
             }
         )*
     };
@@ -517,6 +558,10 @@ impl Serializer for KeyName {
     type SerializeMap = Impossible<bool, NotRead>;
     type SerializeStruct = Impossible<bool, NotRead>;
     type SerializeStructVariant = Impossible<bool, NotRead>;
+
+    fn is_human_readable(&self) -> bool {
+        self.human
+    }
 
     as_text! {
         serialize_bool(bool);
@@ -535,8 +580,6 @@ impl Serializer for KeyName {
 
     not_read! {
         bool;
-        serialize_f32(f32);
-        serialize_f64(f64);
         serialize_bytes(&[u8]);
         serialize_none();
         serialize_unit();
@@ -545,8 +588,16 @@ impl Serializer for KeyName {
 
     not_read_compounds!();
 
+    fn serialize_f32(self, value: f32) -> Result<bool, NotRead> {
+        Ok(value.is_finite() && self.is_float(&value))
+    }
+
+    fn serialize_f64(self, value: f64) -> Result<bool, NotRead> {
+        Ok(value.is_finite() && self.is_float(&value))
+    }
+
     fn serialize_str(self, value: &str) -> Result<bool, NotRead> {
-        Ok(is_fixed(self.0, value))
+        Ok(is_fixed(self.fields, value))
     }
 
     fn serialize_unit_variant(
@@ -555,7 +606,7 @@ impl Serializer for KeyName {
         _index: u32,
         variant: &'static str,
     ) -> Result<bool, NotRead> {
-        Ok(is_fixed(self.0, variant))
+        Ok(is_fixed(self.fields, variant))
     }
 
     fn serialize_some<T: Serialize + ?Sized>(self, value: &T) -> Result<bool, NotRead> {

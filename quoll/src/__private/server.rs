@@ -85,6 +85,8 @@ impl Format {
         match self {
             Self::Json => fields::holds(&mut serde_json::Deserializer::from_slice(body), fields)
                 .map_err(|error| error.to_string()),
+            // serde_html_form gathers a key given twice into one value, which no field's type reads.
+            Self::Form if repeats_a_field(body, fields) => Ok(false),
             Self::Form => fields::holds(serde_html_form::Deserializer::from_bytes(body), fields)
                 .map_err(|error| error.to_string()),
         }
@@ -165,7 +167,7 @@ impl Routes {
 
 /// Serves `request` by the one of `routes`, of one method and path, whose fields its body holds. The body is read
 /// first, within the limit axum sets, as it picks the route, which then authenticates the request and reads it: so
-/// what the answer says before, a body of no route's, says nothing of the routes.
+/// the answer of a body of no route's, before, says nothing of the routes nor of their fields.
 async fn pick(routes: Arc<[Fielded]>, request: axum::extract::Request) -> Response {
     let (parts, body) = request.into_parts();
     let named: Vec<&Fielded> = routes
@@ -204,27 +206,19 @@ async fn pick(routes: Arc<[Fielded]>, request: axum::extract::Request) -> Respon
             Err(error) => return body_rejected(error.status(), error.body_text()).into_response(),
         };
 
-    let mut unread = None;
-    for route in &named {
-        match route.format.holds(&bytes, route.fields) {
-            Ok(true) => {
-                return (route.endpoint)(http::Request::from_parts(parts, Body::from(bytes))).await;
-            }
-            Ok(false) => {}
-            Err(error) => {
-                unread.get_or_insert(error);
-            }
-        }
-    }
-
-    let error = match unread {
-        Some(error) => Error::bad_request(format!("the body is not valid: {error}")),
-        None => Error::bad_request(
+    // A body that does not read as a route's fields is one that does not hold them: told apart, they would say the
+    // types of the fields to a request that is not authenticated.
+    let picked = named
+        .iter()
+        .find(|route| route.format.holds(&bytes, route.fields) == Ok(true));
+    let Some(picked) = picked else {
+        return Error::bad_request(
             "the body does not hold the fixed fields of any route of this method and path",
-        ),
+        )
+        .into_response();
     };
 
-    error.into_response()
+    (picked.endpoint)(http::Request::from_parts(parts, Body::from(bytes))).await
 }
 
 /// The routes of one group, each served by the group's service.
@@ -573,9 +567,9 @@ impl Request {
     ///
     /// # Errors
     ///
-    /// The read resolves to a 400 when the body is not the JSON of `T` or does not hold the fields, a 415 when the
-    /// request does not say it sends JSON or names more than one content type, the status axum gives when the body
-    /// cannot be read, as a 413 for one too large, and a 500 when `T` refuses a field the contract fixes.
+    /// The read resolves to a 400 when the body does not hold the fields or is not the JSON of `T`, as a `T` with
+    /// `#[serde(deny_unknown_fields)]` refuses them, a 415 when the request does not say it sends JSON or names more
+    /// than one content type, and the status axum gives when the body cannot be read, as a 413 for one too large.
     pub fn json<T: Deserialized + Send + 'static>(self, fields: &'static [Field]) -> Read<T> {
         if fields.is_empty() {
             return Read::new(self.read_json());
@@ -783,6 +777,27 @@ fn check_utf8(form: &[u8], what: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Whether the form `body` gives one of `fields` more than once, its keys decoded as serde_html_form decodes them, a
+/// `+` a space.
+fn repeats_a_field(body: &[u8], fields: &[Field]) -> bool {
+    let mut counts = vec![0_usize; fields.len()];
+
+    for pair in body.split(|&byte| byte == b'&') {
+        let key = pair.split(|&byte| byte == b'=').next().unwrap_or_default();
+        let key: Vec<u8> = key
+            .iter()
+            .map(|&byte| if byte == b'+' { b' ' } else { byte })
+            .collect();
+        let key = percent_encoding::percent_decode(&key).collect::<Vec<u8>>();
+
+        if let Some(index) = fields.iter().position(|field| field.name.as_bytes() == key) {
+            counts[index] += 1;
+        }
+    }
+
+    counts.into_iter().any(|count| count > 1)
 }
 
 /// A 400 unless the body holds the route's fixed `fields`, as `holds` says, or when it does not read as them.
