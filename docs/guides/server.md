@@ -424,8 +424,9 @@ The headers of a file:
   checks them again before each use.
 - `Last-Modified` answers `If-Modified-Since` with a 304. `Range` gets a part of the file. There is no `ETag`.
 - `index.html` is checked again by its `Last-Modified`, as every other file. A build that fixes the times of its
-  files, with `SOURCE_DATE_EPOCH`, must give `index.html` a new time, or the server must restart: otherwise a
-  browser keeps the `index.html` of the last deployment.
+  files, with `SOURCE_DATE_EPOCH`, must give `index.html` a new time, `touch dist/index.html`. Otherwise a browser
+  keeps the `index.html` of the last deployment, as the server answers its `If-Modified-Since` with a 304. A restart
+  of the server does not change that.
 - A compressed copy beside a file, `app.js.br`, `app.js.gz` or `app.js.zst`, is sent in its place when the request
   accepts its coding. Vite does not write these copies by default.
 
