@@ -12,8 +12,10 @@ rest::api! {
     #[error(HubError)]
     pub api Hub = "";
 
+    // One error, on the attribute, whatever the routes that take it.
     pub group Repos {
         GET "/repos" => list();
+        GET "/repos/{name}" => get(name: String) -> String;
     }
 }
 

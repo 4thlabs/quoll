@@ -191,7 +191,8 @@ impl<T, E> Response<Result<T, E>> {
 }
 
 impl<T: Default> Default for Response<T> {
-    /// A 200 with the default of `T`: `Response::default()` for a route with no result.
+    /// A response with the default of `T` and the status the contract says, as [`Response::new`] gives it:
+    /// `Response::default()` for a route with no result, which answers 204.
     fn default() -> Self {
         Self::new(T::default())
     }

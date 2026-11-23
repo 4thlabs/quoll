@@ -128,7 +128,8 @@ async fn main() -> Result<()> {
 - `response()` is the answer with that detail, its status and its headers.
 - `body()` is the body as it came, its first 64 KiB.
 - The error's sources show the URL of the call by its origin and its path alone: never its credentials, nor its
-  query, where a query scheme sends its key.
+  query, where a query scheme sends its key. A middleware of another crate that wraps reqwest's error in a type of its
+  own, as reqwest-retry does, keeps the whole URL there: `client::retry` takes its place.
 
 A caller tells a status it expects from the others:
 
@@ -223,8 +224,9 @@ async fn main() -> rest::Result<()> {
 
 `#[error(E)]` goes on the api, a group or a route, the nearest to a route winning, as `#[auth]` does: a route that
 answers another shape, an OAuth endpoint, says its own, and `#[error(rest::Problem)]` gives a group problems again. A
-group of a `rest::group!` says its own: its trait is written before an api lists it, so it cannot take the api's, and
-an api with an `#[error]` that lists a group without one does not compile.
+group of a `rest::group!` says its own, on the group or on each route: its trait is written before an api lists it, so
+it cannot take the api's, and an api with an `#[error]` that lists a group with a route that has none does not
+compile, unless the api's is `rest::Problem`.
 
 ```rust,no_run
 use std::fmt;
@@ -285,7 +287,8 @@ async fn main() -> rest::Result<()> {
 ```
 
 A fake of such an api returns an `impl Call<T, E>`, and builds the error of an answer with
-`rest::Error::answered(status, e)`: its status, its detail, a `response()` with no headers, and no body.
+`rest::Error::answered(status, e)`: its status, its detail, a `response()` with no headers, and no body. An error of a
+status alone, with no detail, is `rest::Error::not_found(..).into_shape()`, and so are the others.
 
 ```rust
 use std::fmt;

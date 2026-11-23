@@ -105,7 +105,7 @@ mod trace;
 
 pub use builder::{Builder, Contract, builder};
 pub use redirects::redirects;
-pub(crate) use request::{CallTimeout, calls_timeout};
+pub(crate) use request::{CallTimeout, KeepsDeadline, calls_timeout};
 pub use request::{on_request, request_id, timeout, user_agent};
 pub use retry::{Attempt, Retry, Retrying, retry};
 pub use token::{TokenSource, bearer_from};

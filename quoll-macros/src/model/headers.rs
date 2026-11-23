@@ -342,10 +342,11 @@ fn check_leaves(
         };
 
         if blocked {
-            let what = if group.headers.leaves_all.is_some() {
-                "every header of its api, `#[header(none)]`".to_owned()
-            } else {
-                format!("the header `{text}`")
+            // A `rest::group!` has no api of its own: what it leaves is what any api that lists it would give.
+            let what = match (group.headers.leaves_all.is_some(), api) {
+                (true, Some(_)) => "every header of its api, `#[header(none)]`".to_owned(),
+                (true, None) => "every header it would take, `#[header(none)]`".to_owned(),
+                (false, _) => format!("the header `{text}`"),
             };
 
             errors.push(Error::new(
@@ -467,12 +468,8 @@ pub(crate) fn keeps_media_type(value: &str, media_type: &str) -> bool {
             return false;
         };
         let (name, value) = (name.trim(), value.trim());
-        let unquoted = match value.strip_prefix('"') {
-            Some(quoted) => match quoted.strip_suffix('"') {
-                Some(inner) => inner,
-                None => return false,
-            },
-            None => value,
+        let Some(unquoted) = unquoted(value) else {
+            return false;
         };
 
         !name.is_empty()
@@ -481,6 +478,30 @@ pub(crate) fn keeps_media_type(value: &str, media_type: &str) -> bool {
     };
 
     essence.eq_ignore_ascii_case(media_type) && parts[1..].iter().all(parameter)
+}
+
+/// The text of a parameter's value, as `quoll::__private::headers::unquoted` reads it: a token, which holds no quote,
+/// or what a quoted string holds, whose last quote closes it and whose quotes inside are escaped. `None` for any
+/// other, a quoted string left open or closed by an escaped quote, `"\"`, or a token with a quote in it.
+fn unquoted(value: &str) -> Option<&str> {
+    let Some(quoted) = value.strip_prefix('"') else {
+        return (!value.contains('"')).then_some(value);
+    };
+    let bytes = quoted.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            // A quoted pair, `\"`, is one character of the string.
+            b'\\' => i += 1,
+            b'"' if i == bytes.len() - 1 => return Some(&quoted[..i]),
+            b'"' => return None,
+            _ => {}
+        }
+        i += 1;
+    }
+
+    None
 }
 
 /// A content type cut at each `;` outside a quoted string, as in `profile="a;b"`: its media type, then its parameters.
@@ -581,6 +602,9 @@ mod tests {
             "application/json; charset",
             "application/json; =x",
             "application/json; profile=\"open",
+            r#"application/json; x="\""#,
+            r#"application/json; x=a"b"#,
+            r#"application/json; x="a"b""#,
         ];
 
         for value in kept {

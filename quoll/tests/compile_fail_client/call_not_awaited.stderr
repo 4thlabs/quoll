@@ -1,0 +1,12 @@
+error: unused implementer of `Call` that must be used
+  --> tests/compile_fail_client/call_not_awaited.rs:16:5
+   |
+16 |     api.notes().remove(3);
+   |     ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: a call does nothing until it is awaited
+note: the lint level is defined here
+  --> tests/compile_fail_client/call_not_awaited.rs:1:9
+   |
+ 1 | #![deny(unused_must_use)]
+   |         ^^^^^^^^^^^^^^^

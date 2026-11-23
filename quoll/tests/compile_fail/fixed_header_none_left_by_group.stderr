@@ -1,0 +1,5 @@
+error: the group `Status` already leaves every header of its api, `#[header(none)]`, so the route has none to leave: remove this `none`
+  --> tests/compile_fail/fixed_header_none_left_by_group.rs:10:18
+   |
+10 |         #[header("X-Version" = none)]
+   |                  ^^^^^^^^^^^

@@ -280,7 +280,7 @@ fn third_party(
         content_type: Option<&'static str>,
         chunks: &[&'static [u8]],
     ) -> Response {
-        let chunks: Vec<Result<&'static [u8], std::convert::Infallible>> =
+        let chunks: Vec<std::result::Result<&'static [u8], std::convert::Infallible>> =
             chunks.iter().copied().map(Ok).collect();
         let mut response = (status, Body::from_stream(stream::iter(chunks))).into_response();
 

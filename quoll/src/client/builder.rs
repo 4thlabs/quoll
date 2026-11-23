@@ -9,7 +9,7 @@ use reqwest::redirect::Policy;
 use reqwest_middleware::{ClientWithMiddleware, Middleware};
 use sync_wrapper::SyncWrapper;
 
-use super::{Helper, Rank, Retrying, calls_timeout, redirects};
+use super::{Helper, KeepsDeadline, Rank, Retrying, calls_timeout, redirects};
 use crate::order::arrange;
 use crate::rest::{Error, Result};
 
@@ -197,8 +197,11 @@ impl Builder {
         let http = http.build().map_err(|error| {
             Error::misuse("the http client cannot be built", Some(Box::new(error)))
         })?;
+        // The chain holds a `timeout`, given or added: a call's deadline is kept for each attempt, which the call
+        // knows before it is sent.
         let built = chain.into_iter().fold(
-            reqwest_middleware::ClientBuilder::new(http),
+            reqwest_middleware::ClientBuilder::new(http)
+                .with_init(reqwest_middleware::Extension(KeepsDeadline)),
             |built, (_, middleware)| built.with_arc(middleware),
         );
 
@@ -206,7 +209,6 @@ impl Builder {
     }
 }
 
-/// Shows how many middleware and settings it holds, which have no `Debug` of their own.
 /// A middleware in its place in the chain, with its rank when it is a helper of quoll's.
 type Placed = (Option<Rank>, Arc<dyn Middleware>);
 
@@ -223,6 +225,7 @@ fn added(chain: &mut Vec<Placed>, rank: Rank, middleware: Arc<dyn Middleware>) {
     chain.insert(at, (Some(rank), middleware));
 }
 
+/// Shows how many middleware and settings it holds, which have no `Debug` of their own.
 impl fmt::Debug for Builder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Builder")

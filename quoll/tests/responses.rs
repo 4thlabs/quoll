@@ -6,7 +6,8 @@
 
 use std::collections::HashSet;
 use std::error::Error as _;
-use std::future::IntoFuture;
+use std::future::{Future, IntoFuture};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -411,6 +412,49 @@ async fn a_calls_timeout_bounds_each_attempt_at_a_streams_head_which_retry_tries
 
     assert_eq!(events.next().await.expect("an event")?, 1);
     assert_eq!(app.attempts.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+/// What a middleware's call returns.
+type Handled<'a> =
+    Pin<Box<dyn Future<Output = reqwest_middleware::Result<reqwest::Response>> + Send + 'a>>;
+
+/// A middleware of the application's that waits `wait` before it sends each request, as a rate limiter does.
+fn waiting(wait: Duration) -> impl reqwest_middleware::Middleware {
+    fn middleware<F>(handle: F) -> F
+    where
+        F: for<'a> Fn(
+                reqwest::Request,
+                &'a mut http::Extensions,
+                reqwest_middleware::Next<'a>,
+            ) -> Handled<'a>
+            + Send
+            + Sync
+            + 'static,
+    {
+        handle
+    }
+
+    middleware(move |request, extensions, next| {
+        Box::pin(async move {
+            tokio::time::sleep(wait).await;
+            next.run(request, extensions).await
+        })
+    })
+}
+
+#[tokio::test]
+async fn a_calls_timeout_on_a_stream_starts_after_a_middleware_before_the_helpers() -> Result<()> {
+    let url = serve(&App::default()).await;
+    let api = client::builder()
+        .with(waiting(Duration::from_millis(400)))
+        .with(client::retry(2))
+        .build::<Api>(&url)?;
+
+    // The middleware waits past the call's deadline before the attempt starts: the deadline is the attempt's.
+    let mut events = guarded(api.notes().events().timeout(Duration::from_millis(100))).await?;
+
+    assert_eq!(events.next().await.expect("an event")?, 1);
     Ok(())
 }
 

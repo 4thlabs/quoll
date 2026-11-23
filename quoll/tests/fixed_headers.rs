@@ -229,7 +229,8 @@ async fn a_group_of_another_block_takes_its_apis_headers() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_group_of_another_block_leaves_nothing_where_its_api_fixes_nothing() -> Result<()> {
+async fn a_group_of_another_block_leaves_nothing_where_its_api_does_not_fix_the_header()
+-> Result<()> {
     let hub = Hub::client(&serve(echo()).await)?;
     let other = Other::client(&serve(echo()).await)?;
 

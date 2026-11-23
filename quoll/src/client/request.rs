@@ -194,6 +194,13 @@ fn deadline(default: Option<Duration>) -> Helper {
     })
 }
 
+/// The mark a chain that [`Builder`](super::Builder) builds puts on each of its requests, with a request initialiser:
+/// the chain holds a [`timeout`], which keeps the deadline a call gives itself for each attempt and each hop, so that
+/// the call need not bound itself. It is known before the request is sent, whatever the middleware before `timeout`
+/// wait for.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct KeepsDeadline;
+
 /// The deadline a call gives itself with [`rest::Call::timeout`](crate::rest::Call::timeout), in its request's
 /// extensions, which [`timeout`] takes in place of its own and marks kept. Its clones share the mark.
 #[derive(Debug, Clone)]
@@ -217,8 +224,10 @@ impl CallTimeout {
     }
 
     /// The answer `sent` gives, the head of a stream's, unless the deadline passes before it, in a chain where no
-    /// [`timeout`] has kept it: a client whose middleware were not built by [`Builder`](super::Builder), bounded so
-    /// for the whole call rather than for each attempt.
+    /// [`timeout`] has kept it by then: a client whose middleware were not built by [`Builder`](super::Builder),
+    /// bounded so for the whole call rather than for each attempt. In such a chain, a middleware before its `timeout`
+    /// that waits longer than the deadline, a rate limiter, fails the call: a chain of `Builder`'s is marked
+    /// [`KeepsDeadline`], and never comes here.
     pub(crate) async fn kept_or_bounding(
         &self,
         sent: impl Future<Output = reqwest_middleware::Result<Response>>,

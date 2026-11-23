@@ -1,0 +1,5 @@
+error: the group `Status` already leaves every header it would take, `#[header(none)]`, so the route has none to leave: remove this `none`
+ --> tests/compile_fail/group_macro_none_left_by_group.rs:7:18
+  |
+7 |         #[header("X-Version" = none)]
+  |                  ^^^^^^^^^^^

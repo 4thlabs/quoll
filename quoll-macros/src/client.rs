@@ -20,48 +20,50 @@ use crate::path::Segment;
 pub(crate) fn group(cx: &Cx) -> TokenStream {
     let group_trait = group_trait(cx);
     let group_client = group_client(cx);
-    let shapes = shape_checks(cx);
 
     quote! {
         ::quoll::__private::client! {
             #group_trait
             #group_client
-            #shapes
         }
     }
 }
 
-/// Checks that each type an `#[error(E)]` of the group's routes names is the shape of an api's errors, once per type,
-/// spanned on it: what the client reads in the body of an error answer.
-fn shape_checks(cx: &Cx) -> TokenStream {
-    let mut seen: Vec<String> = Vec::new();
-    let mut checks = Vec::new();
+/// The shapes of the errors of the group's routes, each once, in the order the routes first name them: the type each
+/// `#[error(E)]` the routes take names, or `rest::Problem`.
+fn shapes(cx: &Cx) -> Vec<TokenStream> {
+    let mut shapes: Vec<TokenStream> = Vec::new();
 
     for route in &cx.group.routes {
-        let Some(error) = cx.error(route) else {
-            continue;
-        };
-        let shown = quote! { #error }.to_string();
+        let shape = error_type(cx, route);
+        let shown = shape.to_string();
 
-        if seen.contains(&shown) {
-            continue;
+        if !shapes.iter().any(|seen| seen.to_string() == shown) {
+            shapes.push(shape);
         }
-
-        seen.push(shown);
-        checks.push(
-            quote_spanned! {error.span()=> ::quoll::__private::client::is_shape::<#error>(); },
-        );
     }
 
-    if checks.is_empty() {
-        return TokenStream::new();
-    }
+    shapes
+}
 
-    quote! {
-        const _: () = {
-            #(#checks)*
-        };
-    }
+/// `__QUOLL_SHAPE_0`, the constant of the group's client that reads the errors of the `index`-th of its [`shapes`].
+fn shape_const(index: usize) -> Ident {
+    Ident::new(&format!("__QUOLL_SHAPE_{index}"), Span::mixed_site())
+}
+
+/// The constants of the group's client that read the errors of each of its shapes, once per shape, spanned on the
+/// type an `#[error(E)]` names: a type that is not a shape is one error, there, whatever the routes that take it.
+fn shape_consts(cx: &Cx) -> TokenStream {
+    let consts = shapes(cx).into_iter().enumerate().map(|(index, shape)| {
+        let name = shape_const(index);
+        let of = quote_spanned! {shape.span()=> ::quoll::__private::client::shaped::<#shape>() };
+
+        quote! {
+            const #name: ::quoll::__private::client::Shaped<#shape> = #of;
+        }
+    });
+
+    quote! { #(#consts)* }
 }
 
 /// The shape of `route`'s errors, as the client's code names it: its `#[error(E)]`'s type, or `rest::Problem`.
@@ -163,11 +165,18 @@ fn group_client(cx: &Cx) -> TokenStream {
         given_by(cx),
         group.name.unraw(),
     );
-    let methods = group
-        .routes
-        .iter()
-        .enumerate()
-        .map(|(index, route)| method(cx, index, route));
+    let shapes = shapes(cx);
+    let methods = group.routes.iter().enumerate().map(|(index, route)| {
+        let shown = error_type(cx, route).to_string();
+        let shape = shapes
+            .iter()
+            .position(|shape| shape.to_string() == shown)
+            .map(shape_const)
+            .expect("each route's shape is among the group's");
+
+        method(cx, index, route, &shape)
+    });
+    let shape_consts = shape_consts(cx);
     let http = Ident::new("client", Span::mixed_site());
     let prefix = Ident::new("prefix", Span::mixed_site());
     let routes = Ident::new("routes", Span::mixed_site());
@@ -181,6 +190,10 @@ fn group_client(cx: &Cx) -> TokenStream {
             prefix: &'static str,
             routes: &'static [::quoll::rest::Route; #count],
             headers: &'static [::quoll::__private::headers::Fixed],
+        }
+
+        impl #client {
+            #shape_consts
         }
 
         impl #name for #client {
@@ -209,7 +222,7 @@ fn group_client(cx: &Cx) -> TokenStream {
 }
 
 /// A route's method on the group's client: the route, then its path, query and body written from the arguments.
-fn method(cx: &Cx, index: usize, route: &Route) -> TokenStream {
+fn method(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
     let signature = signature(cx, route);
     let error = error_type(cx, route);
 
@@ -277,7 +290,7 @@ fn method(cx: &Cx, index: usize, route: &Route) -> TokenStream {
                 ),
             );
 
-            ::quoll::__private::client::Pending::<_, #error>::new(#request, |#answer| #read)
+            ::quoll::__private::client::Pending::<_, #error>::new(#request, |#answer| #read, Self::#shape)
         }
     }
 }

@@ -402,7 +402,7 @@ fn third_party(accepts: Arc<Mutex<Vec<String>>>) -> axum::Router {
     use axum::routing::get;
 
     fn answer(content_type: &'static str, chunks: &[&'static str]) -> Response {
-        let chunks: Vec<Result<&'static str, std::convert::Infallible>> =
+        let chunks: Vec<std::result::Result<&'static str, std::convert::Infallible>> =
             chunks.iter().copied().map(Ok).collect();
 
         (
