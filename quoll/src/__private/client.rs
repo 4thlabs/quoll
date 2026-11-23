@@ -777,20 +777,21 @@ impl fmt::Debug for Answer {
 
 impl Answer {
     /// The body, read as the JSON of `T`: what a route returning `T`, `Created<T>` or `Accepted<T>` gives. It is read
-    /// whole: it is the route's data. A 204 or a 205, which has no body, is read as `null`: `()`, or `None` for an `Option<T>`.
+    /// whole: it is the route's data. A 204 or a 205, which has no body, is read as `null` when `nullable` says `T`
+    /// is `null` when empty, an `Option<T>` or `()`, as its type tells the generated code.
     ///
     /// # Errors
     ///
     /// The read resolves to an error with no status when the body cannot be read, or is not the JSON of `T`, as a 204
     /// or a 205 of a route whose `T` is not an `Option`.
-    pub fn json<T: Deserialized + Send + 'static>(self) -> Read<T> {
-        Read::new(self.read_json())
+    pub fn json<T: Deserialized + Send + 'static>(self, nullable: bool) -> Read<T> {
+        Read::new(self.read_json(nullable))
     }
 
     /// The body, read as JSON, as [`Answer::json`] reads it.
-    async fn read_json<T: DeserializeOwned>(self) -> Result<T> {
+    async fn read_json<T: DeserializeOwned>(self, nullable: bool) -> Result<T> {
         let route = self.route;
-        let empty = rest::no_content(self.response.status());
+        let empty = nullable && rest::no_content(self.response.status());
         let body = self.read().await?;
         let body: &[u8] = if empty { b"null" } else { &body };
 
@@ -971,9 +972,17 @@ impl Answer {
         Err(not_of_type(route, expected, false))
     }
 
-    /// The whole body.
+    /// The whole body, none for a 204 or a 205, whose body, a 205's that a server sends, is read and dropped up to 64
+    /// KiB, as [`Answer::none`] does.
     async fn read(self) -> Result<bytes::Bytes> {
         let Self { response, route } = self;
+
+        if rest::no_content(response.status()) {
+            // The call has its answer: a body past the limit only costs the connection.
+            let _ = read_up_to_limit(response).await;
+
+            return Ok(bytes::Bytes::new());
+        }
 
         response
             .bytes()

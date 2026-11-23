@@ -120,9 +120,14 @@ async function readEvents<T>(url: string, onItem: (item: T) => void, onOpen: () 
     throw await apiError(response, sent);
   }
 
+  // A 204 or a 205 has no body: a stream that ends at once.
+  if (response.body === null) {
+    return;
+  }
+
   onOpen();
 
-  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
 
   for (;;) {

@@ -7,7 +7,7 @@ error[E0277]: a 204 or a 205 says there is no body, and a `String` is a value th
    |                                         required by a bound introduced by this call
    |
    = help: the trait `Allows<String>` is not implemented for `rest::response::sealed::NoBody`
-   = note: a route that may answer no content returns an `Option`: write `-> Option<String>` in the contract, and `Response::new(None)` with this status in the handler
+   = note: a route that may answer no content returns an `Option`: in the contract, `-> Option<String>` in place of `-> String`, `-> Created<String>` or `-> Accepted<String>`, and in the handler, `Response::new(None)` with this status
    = help: `rest::response::sealed::NoBody` implements trait `Allows<T>`:
              Allows<()>
              Allows<ByteStream>

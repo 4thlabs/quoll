@@ -38,6 +38,14 @@ describe("readJsonLines", () => {
     await expect(readJsonLines(body(['{"id":1}\n{"id"'], true), (item) => items.push(item))).rejects.toThrow();
     expect(items).toEqual([{ id: 1 }]);
   });
+
+  it("reads no line of a 204, which has no body", async () => {
+    const items: unknown[] = [];
+
+    await readJsonLines(new Response(null, { status: 204 }), (item) => items.push(item));
+
+    expect(items).toEqual([]);
+  });
 });
 
 describe("readChunks", () => {
@@ -48,5 +56,13 @@ describe("readChunks", () => {
     await readChunks(body(["ab", "c"]), (chunk) => chunks.push(decoder.decode(chunk)));
 
     expect(chunks).toEqual(["ab", "c"]);
+  });
+
+  it("reads no chunk of a 205, which has no body", async () => {
+    const chunks: Uint8Array[] = [];
+
+    await readChunks(new Response(null, { status: 205 }), (chunk) => chunks.push(chunk));
+
+    expect(chunks).toEqual([]);
   });
 });

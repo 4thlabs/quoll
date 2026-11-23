@@ -145,6 +145,21 @@ describe("apiEvents", () => {
     await vi.waitFor(() => expect(heard).toEqual(["open", 1, ["end", undefined]]));
   });
 
+  it("ends at once, with no error, on a 204 or a 205, which has no body", async () => {
+    for (const status of [204, 205]) {
+      answer(() => new Response(null, { status }));
+      const heard: unknown[] = [];
+
+      apiEvents("/api/notes/1/events", {
+        onItem: (item) => heard.push(item),
+        onOpen: () => heard.push("open"),
+        onEnd: (error) => heard.push(["end", error]),
+      });
+
+      await vi.waitFor(() => expect(heard).toEqual([["end", undefined]]));
+    }
+  });
+
   it("skips comments and events with no data, and joins lines of data", async () => {
     answer(() => events(": ping\n\nevent: empty\n\ndata: [1,\ndata: 2]\n\n"));
     const items: unknown[] = [];

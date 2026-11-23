@@ -8,10 +8,36 @@
 //! built with neither feature checks them too.
 
 use std::borrow::Cow;
+use std::marker::PhantomData;
 
 use crate::rest::{Accepted, ByteStream, Bytes, Created, Events, Form, JsonLines, Text};
 
 pub use crate::rest::stream::Items;
+
+/// Whether a result's type `T` reads an empty answer, a 204 or a 205, as `null`: [`IS`](Nullable::IS) is `true` for
+/// an `Option<T>` and `()` alone, by their impls, and `false` for any other type, by [`NotNullable`], whose constant a
+/// path reaches only where no impl of the type's own has one. The client reads such an answer so, and the OpenAPI
+/// document lists a 204 for it.
+#[derive(Debug)]
+pub struct Nullable<T>(PhantomData<fn() -> T>);
+
+impl<T> Nullable<Option<T>> {
+    /// An `Option<T>`, `None` when empty.
+    pub const IS: bool = true;
+}
+
+impl Nullable<()> {
+    /// `()`, which `null` is.
+    pub const IS: bool = true;
+}
+
+/// The constant of any type but an `Option<T>` and `()`, which the code of a contract brings into scope.
+pub trait NotNullable {
+    /// A type that an empty answer is not.
+    const IS: bool = false;
+}
+
+impl<T> NotNullable for Nullable<T> {}
 
 /// The crate's [`Created`], whose `T` the server answers with a 201.
 #[diagnostic::on_unimplemented(

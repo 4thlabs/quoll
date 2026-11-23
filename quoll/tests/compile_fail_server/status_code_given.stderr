@@ -7,7 +7,7 @@ error[E0277]: `StatusCode` is not a status a handler gives
    |                              required by a bound introduced by this call
    |
    = help: the trait `IntoStatus` is not implemented for `StatusCode`
-   = note: a status is one of `rest::Status`'s, `Status::CREATED`, or `Status::try_from(status)?` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT` or `NoContent::try_from(status)?`
+   = note: a status is one of `rest::Status`'s, `Status::CREATED`, or `Status::try_from(status)` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT`, or `NoContent::try_from(status)`
 help: the following other types implement trait `IntoStatus`
   --> src/rest/response.rs
    |
@@ -33,7 +33,7 @@ error[E0277]: `StatusCode` is not a status a handler gives
    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a `rest::Status` or a `rest::NoContent`
    |
    = help: the trait `IntoStatus` is not implemented for `StatusCode`
-   = note: a status is one of `rest::Status`'s, `Status::CREATED`, or `Status::try_from(status)?` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT` or `NoContent::try_from(status)?`
+   = note: a status is one of `rest::Status`'s, `Status::CREATED`, or `Status::try_from(status)` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT`, or `NoContent::try_from(status)`
 help: the following other types implement trait `IntoStatus`
   --> src/rest/response.rs
    |

@@ -86,8 +86,10 @@ which runs the server and the page's dev server side by side.
   describes otherwise, and a header an argument of the route reads, which the argument describes.
 - **Bodies**: `application/json`, `application/x-www-form-urlencoded` for `Form<T>`, `text/plain` for `Text`,
   `application/octet-stream` for `Bytes`.
-- **Results**: 200, 201 with an optional `Location`, 202 or 204. `Text` is `text/plain`, `Bytes` and `ByteStream` are
-  `*/*`. An `Events` or a `JsonLines` result carries the schema of its items in the extension `x-item`.
+- **Results**: 200, 201 with an optional `Location`, 202 or 204, and a 204 beside the 200 of a result that may be
+  empty, an `Option<T>`, `Text`, `Bytes`, `Events`, `JsonLines` or `ByteStream`. `Text` is `text/plain`, `Bytes` and
+  `ByteStream` are `*/*`. An `Events` or a `JsonLines` result carries the schema of its items in the extension
+  `x-item`.
 - **Errors**: each route lists the statuses quoll answers itself, and a `default`, each an `application/problem+json`
   problem.
 - **Security**: each scheme under `components/securitySchemes`, by its name, and each route's requirement, with its

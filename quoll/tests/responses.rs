@@ -63,6 +63,9 @@ rest::api! {
     group Pages {
         GET "/page" => page() -> Note;
         GET "/empty" => empty() -> Note;
+        GET "/empty/value" => value() -> serde_json::Value;
+        GET "/reset/text" => reset_text() -> Text;
+        GET "/reset/events" => reset_events() -> Events<u32>;
     }
 }
 
@@ -213,6 +216,18 @@ impl PagesServer for App {
 
     async fn empty(&self) -> Result<Response<Note>> {
         unreachable!("the empty answer is served by a router of its own")
+    }
+
+    async fn value(&self) -> Result<Response<serde_json::Value>> {
+        unreachable!("the empty answer is served by a router of its own")
+    }
+
+    async fn reset_text(&self) -> Result<Response<Text>> {
+        unreachable!("the 205 is served by a router of its own")
+    }
+
+    async fn reset_events(&self) -> Result<Response<Events<u32>>> {
+        unreachable!("the 205 is served by a router of its own")
     }
 }
 
@@ -446,6 +461,63 @@ async fn a_204_of_another_api_on_a_route_of_a_value_keeps_its_status_and_its_hea
     let error = api.pages().empty().await.expect_err("no note");
 
     assert_eq!(error.status(), None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_204_is_null_for_an_option_alone_not_for_any_json() -> Result<()> {
+    let empty = axum::Router::new().route(
+        "/api/empty/value",
+        axum::routing::get(|| async { StatusCode::NO_CONTENT }),
+    );
+    let url = quoll::test::spawn(empty).await;
+
+    // A `Value` reads `null` as JSON, but a 204 is not the JSON `null`.
+    let response = Api::client(&url)?.pages().value().response().await?;
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let error = response.into_value().expect_err("no value");
+
+    assert!(error.to_string().contains("not its result"), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_body_another_api_sends_with_a_205_is_dropped() -> Result<()> {
+    let reset = axum::Router::new()
+        .route(
+            "/api/reset/text",
+            axum::routing::get(|| async {
+                (
+                    StatusCode::RESET_CONTENT,
+                    [(CONTENT_TYPE, "text/plain")],
+                    "unsent",
+                )
+            }),
+        )
+        .route(
+            "/api/reset/events",
+            axum::routing::get(|| async {
+                (
+                    StatusCode::RESET_CONTENT,
+                    [(CONTENT_TYPE, "text/event-stream")],
+                    "data: 1\n\n",
+                )
+            }),
+        );
+    let url = quoll::test::spawn(reset).await;
+    let pages = Api::client(&url)?.pages();
+
+    assert_eq!(&*pages.reset_text().await?, "");
+    assert!(
+        pages
+            .reset_events()
+            .await?
+            .collect::<Vec<_>>()
+            .await
+            .is_empty()
+    );
     Ok(())
 }
 

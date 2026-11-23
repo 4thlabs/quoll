@@ -266,8 +266,19 @@ fn method(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
             let value = &returned.value;
             // Spanned on the type, as a type that is not `Deserialize` is the mistake an error names then.
             let read = Ident::new(returned.kind().read, value.span());
+            // A JSON result reads a 204 as `null` when its type says it may: an `Option<T>` or `()`.
+            let nullable = (returned.kind().read == "json").then(|| {
+                quote! {
+                    {
+                        #[allow(unused_imports)]
+                        use ::quoll::__private::known::NotNullable as _;
 
-            quote_spanned! {value.span()=> #answer.#read::<#value>() }
+                        <::quoll::__private::known::Nullable<#value>>::IS
+                    }
+                }
+            });
+
+            quote_spanned! {value.span()=> #answer.#read::<#value>(#nullable) }
         }
     };
     let request = Ident::new("request", Span::mixed_site());
