@@ -295,10 +295,16 @@ async fn a_body_without_the_fields_of_any_route_is_a_bad_request_that_names_none
     let (twice, _) = post(&url, "/messages", json, r#"{"stream":true,"stream":true}"#).await;
     let (kind, kind_body) = post(&url, "/messages", json, r#"{"model":"m","stream":"yes"}"#).await;
     let (syntax, _) = post(&url, "/messages", json, r#"{"stream":tru"#).await;
+    let (trailing, trailing_body) =
+        post(&url, "/messages", json, r#"{"model":"m","stream":true}x"#).await;
     let (other, _) = post(&url, "/entries", form, "kind=note&n=3&title=t").await;
     let (form_twice, _) = post(&url, "/entries", form, "kind=note&kind=note&n=2&title=t").await;
 
-    for (status, body) in [(missing, missing_body), (kind, kind_body)] {
+    for (status, body) in [
+        (missing, missing_body),
+        (kind, kind_body),
+        (trailing, trailing_body),
+    ] {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(
             body.contains("does not hold the fixed fields of any route of this method and path"),
