@@ -393,7 +393,8 @@ What the server answers, for a path outside the api's prefix:
   sends that `Accept` when it loads a page, so the page's router shows the path: `/notes/3`, or `/users/jane.doe`
   after F5. A script, a style, an image or a `fetch` does not send it: `*/*` alone does not count.
 - Everything else is a problem 404. A missing script is a 404, not `index.html` read as a script.
-- Under `/.well-known/`, a missing file is always a 404: programs read those files, not browsers.
+- Under `/.well-known/`, a missing file is always a 404: programs read those files, not browsers. The path is decoded
+  first, so `/%2Ewell-known/` is the same directory.
 
 A path under the api's prefix that is no route answers a problem 404. It never reaches the page. `HEAD` gets the
 headers alone. A method other than `GET` and `HEAD` is a problem 405.
@@ -403,26 +404,31 @@ What the server never sends:
 - A hidden file or directory, whose name begins with a `.`: `/.env`, `/.git/config` or `/.vite/manifest.json`. Only
   `/.well-known/` is served.
 - A file outside the directory. A path with `..` answers a problem 404.
-- A symbolic link whose target is outside the directory, or hidden. Before `ServeDir` reads a file, the server checks
-  the real path of the file and of each compressed copy of it. A short name of Windows, `GIT~1`, is refused the same
-  way. A link swapped in between that check and the read is not seen. Only someone who can write in the directory
-  can do that.
+- A symbolic link whose target is outside the directory, or hidden. Before `ServeDir` reads a file, the server finds
+  the file `ServeDir` will open, as `ServeDir` does: a directory's `index.html`, or the file of the path whatever its
+  final `/`. It then checks the real path of that file and of each compressed copy of it. A short name of Windows,
+  `GIT~1`, is refused the same way. A link swapped in between that check and the read is not seen. Only someone who
+  can write in the directory can do that.
 - A path with an empty segment, `//evil.example`. `ServeDir` would redirect it to `//evil.example/`, which a browser
   reads as another host.
-- A file whose time no HTTP date holds, before 1970 or from the year 10000. It answers a problem 500, as `ServeDir`
-  cannot date it. Touch the file to fix it.
+- A file whose time no HTTP date holds, before 1970 or from the year 10000. It answers a problem 500 that names it,
+  as `ServeDir` cannot date it. Touch the file to fix it.
+- A file that is there but cannot be opened, as one of the wrong permissions. It answers a problem 500 that names
+  it, not `index.html`.
 
 The headers of a file:
 
-- `X-Content-Type-Options: nosniff` is always set.
+- `X-Content-Type-Options: nosniff` is set on every answer of the page, its errors too.
 - A file Vite names by its hash, like `assets/index-BXa3kD9f.js`, never changes under its name. It is
   `Cache-Control: public, max-age=31536000, immutable`. `index.html` and every other file are `no-cache`: the browser
   checks them again before each use.
 - `Last-Modified` answers `If-Modified-Since` with a 304. `Range` gets a part of the file. There is no `ETag`.
 - `index.html` is always sent whole. Its conditional headers and its `Range` are not read. So a new deployment is
-  never taken for the last one, even when it keeps the times of its files, with `SOURCE_DATE_EPOCH`.
+  never taken for the last one, even when it keeps the times of its files, with `SOURCE_DATE_EPOCH`. The server
+  tells it by the name of its real path, not by the request's.
 - A compressed copy beside a file, `app.js.br`, `app.js.gz` or `app.js.zst`, is sent in its place when the request
-  accepts its coding. It carries `Vary: Accept-Encoding`. Vite does not write these copies by default.
+  accepts its coding. Every answer of a file that has such copies carries `Vary: Accept-Encoding`, sent as a copy or
+  not. Vite does not write these copies by default.
 
 ### Vite's manifest
 
@@ -451,8 +457,9 @@ path that a route serves keeps axum's 405 for another method. A path outside the
 no page.
 
 - An api with no prefix, `""`, has no such 404. Every path that is no route goes to the page.
-- Two apis with the same prefix cannot be merged with `Router::merge`: axum panics on their two 404s. Two apis with
-  different prefixes merge.
+- Two apis with the same prefix can no longer be merged with `Router::merge`: axum panics on their two 404s. This
+  is a change: they merged before the api had its 404. Give each api its own prefix. Two apis with different
+  prefixes merge.
 - A router nested with `Router::nest` loses the 404 of its prefix. Its unknown paths get the outer router's fallback.
 
 ### A release

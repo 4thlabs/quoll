@@ -144,11 +144,17 @@ fn header(response: &reqwest::Response, name: impl reqwest::header::AsHeaderName
 /// The status line and the body of a request for `target` written by hand, as a client that does not resolve `..`
 /// sends it.
 async fn raw(url: &str, target: &str) -> String {
+    raw_with(url, target, "Accept: */*").await
+}
+
+/// The answer to a request for `target` written by hand, with one more header line.
+async fn raw_with(url: &str, target: &str, line: &str) -> String {
     let address = url.strip_prefix("http://").expect("an http URL");
     let mut stream = TcpStream::connect(address)
         .await
         .expect("the server accepts");
-    let request = format!("GET {target} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n");
+    let request =
+        format!("GET {target} HTTP/1.1\r\nHost: {address}\r\n{line}\r\nConnection: close\r\n\r\n");
     let mut answer = String::new();
 
     stream
@@ -296,10 +302,20 @@ async fn a_missing_file_of_the_well_known_directory_is_never_index_html() {
     let url = serve(dir.path()).await;
 
     let found = browse(&format!("{url}/.well-known/security.txt")).await;
-    let missing = browse(&format!("{url}/.well-known/change-password")).await;
 
     assert_eq!(found.text().await.expect("a text"), "Contact: ops");
-    not_found(missing, "the page has no file of this path").await;
+
+    // Told by the decoded segments: `/%2Ewell-known/` and `/./.well-known/` are `/.well-known/` too.
+    for target in [
+        "/.well-known/change-password",
+        "/%2Ewell-known/change-password",
+        "/./.well-known/change-password",
+    ] {
+        let answer = raw_with(&url, target, &format!("Accept: {BROWSER}")).await;
+
+        assert!(answer.starts_with("HTTP/1.1 404"), "{target}: {answer}");
+        assert!(!answer.contains(INDEX), "{target}: {answer}");
+    }
 }
 
 #[tokio::test]
@@ -309,7 +325,18 @@ async fn index_html_is_always_sent_whole() {
 
     let modified = header(&get(&format!("{url}/")).await, LAST_MODIFIED).to_owned();
 
-    for path in ["/", "/index.html", "/docs/", "/notes/3"] {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(dir.path().join("index.html"), dir.path().join("start.html"))
+        .expect("the link is made");
+
+    // `start.html` is `index.html` by its real path.
+    let paths: &[&str] = if cfg!(unix) {
+        &["/", "/index.html", "/docs/", "/notes/3", "/start.html"]
+    } else {
+        &["/", "/index.html", "/docs/", "/notes/3"]
+    };
+
+    for path in paths {
         let response = client()
             .get(format!("{url}{path}"))
             .header(ACCEPT, BROWSER)
@@ -422,14 +449,14 @@ async fn a_file_stored_compressed_is_sent_when_its_coding_is_accepted() {
         assert_eq!(header(&response, CONTENT_ENCODING), encoding, "{accepted}");
         assert_eq!(header(&response, CONTENT_TYPE), "text/javascript");
 
-        if encoding.is_empty() {
-            assert!(varies(&response).is_empty(), "{accepted}");
-        } else {
-            assert_eq!(varies(&response), ["accept-encoding"], "{accepted}");
-        }
+        // Sent as it is or as a copy, the file has copies: its answer varies by the coding.
+        assert_eq!(varies(&response), ["accept-encoding"], "{accepted}");
 
         assert_eq!(response.text().await.expect("a body"), body);
     }
+
+    // A file with no copy does not vary.
+    assert!(varies(&get(&format!("{url}/robots.txt")).await).is_empty());
 }
 
 #[tokio::test]
@@ -463,6 +490,7 @@ async fn another_method_is_a_problem_405() {
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(header(&response, "allow"), "GET, HEAD");
     assert_eq!(header(&response, CONTENT_TYPE), "application/problem+json");
+    assert_eq!(header(&response, "x-content-type-options"), "nosniff");
 }
 
 #[tokio::test]
@@ -522,12 +550,50 @@ async fn a_file_modified_before_1970_is_a_problem_500_not_a_panic() {
         .expect("the time is set");
 
     let url = serve(dir.path()).await;
-    let undated = get(&format!("{url}/robots.txt")).await;
-    let other = get(&format!("{url}/{HASHED}")).await;
 
-    assert_eq!(undated.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(header(&undated, CONTENT_TYPE), "application/problem+json");
-    assert_eq!(other.status(), StatusCode::OK);
+    // `ServeDir` opens a file whatever its final `/`.
+    for path in ["/robots.txt", "/robots.txt/"] {
+        let undated = get(&format!("{url}{path}")).await;
+
+        assert_eq!(
+            undated.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{path}"
+        );
+        assert_eq!(header(&undated, CONTENT_TYPE), "application/problem+json");
+        assert_eq!(header(&undated, "x-content-type-options"), "nosniff");
+    }
+
+    assert_eq!(
+        get(&format!("{url}/{HASHED}")).await.status(),
+        StatusCode::OK
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_file_there_but_unreadable_is_a_problem_500_that_names_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = page();
+    let locked = dir.path().join("locked.js");
+
+    write(dir.path(), "locked.js", b"locked");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("the mode is set");
+
+    // Run as root, the file reads all the same: there is nothing to test.
+    if fs::read(&locked).is_ok() {
+        return;
+    }
+
+    let url = serve(dir.path()).await;
+    let response = browse(&format!("{url}/locked.js")).await;
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(header(&response, CONTENT_TYPE), "application/problem+json");
+    assert!(!response.text().await.expect("a body").contains(INDEX));
+
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).expect("the mode is set");
 }
 
 #[tokio::test]
@@ -574,7 +640,13 @@ async fn a_symbolic_link_out_of_the_directory_is_refused() {
 
     let url = serve(&dir).await;
 
-    for path in ["/linked.txt", "/up/secret.txt", "/within.txt"] {
+    for path in [
+        "/linked.txt",
+        "/linked.txt/",
+        "/up/secret.txt",
+        "/within.txt",
+        "/within.txt/",
+    ] {
         let response = client()
             .get(format!("{url}{path}"))
             .header(ACCEPT_ENCODING, "gzip")
@@ -614,7 +686,7 @@ async fn a_symbolic_link_to_a_hidden_file_is_refused() {
 
     let url = serve(dir.path()).await;
 
-    for path in ["/config.txt", "/git/config"] {
+    for path in ["/config.txt", "/config.txt/", "/git/config"] {
         let response = browse(&format!("{url}{path}")).await;
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
