@@ -91,6 +91,37 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc ${{ matrix.packages }} --no-deps --features "${{ matrix.features }}"
 
+  # The crates on the oldest Rust they support, the `rust-version` of the root's Cargo.toml, with each feature
+  # combination as in the job test. The lints and the messages are those of the latest stable, which the jobs above
+  # check: warnings are not errors here, and trybuild writes the messages of this rustc instead of comparing them. It
+  # still fails when a mistake compiles or a valid contract does not.
+  msrv:
+    name: msrv (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+      RUSTDOCFLAGS: ""
+      TRYBUILD: overwrite
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: none, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: "" }
+          - { name: server, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: server }
+          - { name: client, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: client }
+          - { name: all, packages: "--workspace --exclude quoll-guides --exclude quoll-cli", features: "server,client" }
+          - { name: guides, packages: "--package quoll-guides", features: "" }
+          - { name: cli, packages: "--package quoll-cli", features: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test ${{ matrix.packages }} --features "${{ matrix.features }}" --locked
+
   # quoll-cli on macOS and Windows, where `cargo quoll dev` stops its children in other ways than on Linux: its lints,
   # which see the code of each OS, and its tests, which run a real server and stop it.
   cli:
@@ -171,7 +202,7 @@ jobs:
   # The one check branch protection requires: it fails when any job above failed or was skipped.
   ci:
     if: always()
-    needs: [fmt, clippy, test, doc, cli, examples, web]
+    needs: [fmt, clippy, test, doc, msrv, cli, examples, web]
     runs-on: ubuntu-latest
     steps:
       - run: |

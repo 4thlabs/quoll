@@ -3,6 +3,7 @@ name = "quoll-cli"
 description = "cargo quoll: the OpenAPI documents of a workspace's contracts, the commands that follow them, its web build, and its dev loop"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
