@@ -1,7 +1,7 @@
 # The client
 
-With the feature `client`, a contract gives a trait per group, which the client implements, and `ApiClient`, the
-client of the api. `quoll::client::builder()` builds it with its middleware, on reqwest-middleware.
+With the feature `client`, a contract gives one trait per group, which the client implements. It also gives
+`ApiClient`, the client of the api. `quoll::client::builder()` builds it with its middleware, on reqwest-middleware.
 
 ## A client
 
@@ -61,25 +61,25 @@ async fn main() -> quoll::Result<()> {
 
 ## Calls
 
-- `api.notes()` is the client of the group `Notes`, which implements the trait `Notes`: a method per route, its
-  arguments in the contract's order.
+- `api.notes()` is the client of the group `Notes`, which implements the trait `Notes`. It has one method per route,
+  with its arguments in the contract's order.
 - A route that returns `Created<T>` or `Accepted<T>` returns the `T` on the client.
 - A query parameter that is `None` is left out, and a header that is `None` is not sent.
 - Rust has no named arguments: a route with many optional keys takes a [query struct](contract.md#query-structs),
   which the caller fills with `..Default::default()`.
-- Each call returns a `quoll::Call`, which `.await` sends: it gives a `quoll::Result`.
+- Each call returns a `quoll::Call`. `.await` sends it and gives a `quoll::Result`.
   [Errors](errors.md#what-a-client-sees) says what its error holds.
 
 ## The whole answer
 
-Each method returns a `quoll::Call`, the call described and not sent yet: `.await` sends it and gives the route's
-value, or an error that goes up. Its methods change it before:
+Each method returns a `quoll::Call`: the call described, and not sent yet. `.await` sends it and gives the route's
+value, or an error that goes up. Before that, its methods change it:
 
-- `.response()` gives the whole answer, whatever its status: its `status()`, its `headers()`, a rate limit or a
-  `Retry-After`, and its body, the route's value on a success and the error of the answer otherwise, which
-  `.into_value()` gives to go up with `?`.
-- `.timeout(duration)` is a deadline for this call alone, in place of the client's `client::timeout`, as
-  [Retries, deadlines and redirects](#retries-deadlines-and-redirects) says.
+- `.response()` gives the whole answer, whatever its status. That is its `status()`, its `headers()` (for example a
+  rate limit or a `Retry-After`), and its body. The body is the route's value on a success, and the error of the
+  answer otherwise. `.into_value()` gives the body, to go up with `?`.
+- `.timeout(duration)` is a deadline for this call alone, in place of the client's `client::timeout`: see
+  [Retries, deadlines and redirects](#retries-deadlines-and-redirects).
 
 ```rust,no_run
 use std::time::Duration;
@@ -116,27 +116,27 @@ async fn find(api: &ApiClient, id: i64) -> quoll::Result<Option<String>> {
 # let _ = find;
 ```
 
-The `Err` of `.response()` is a call that got no answer it can read: a connection refused, a deadline passed, an
+The `Err` of `.response()` is a call that got no answer it can read: a connection refused, a deadline passed, or an
 answer with a success status that is not the route's result.
 
 - A 204 or a 205 is a success on a route whose value may be empty: `()`, `None`, an empty text or bytes, or a stream
-  that ends at once. On a route of a value that must be one, as another API may answer it, the `.response()` keeps
+  that ends at once. Another API may answer one on a route whose value must be there. Then the `.response()` keeps
   its status and its headers, and its value is the error of a body that is not the result.
-- A 304 Not Modified, which comes to a call that sent `If-None-Match`, is an error of its own: its status and the
-  headers of the `.response()`, with no [detail](errors.md#another-apis-errors), which `.into_value()` gives.
+- A 304 Not Modified, which answers a call that sent `If-None-Match`, is an error of its own. It holds the status and
+  the headers of the `.response()`, with no [detail](errors.md#another-apis-errors), and `.into_value()` gives it.
   `.await` gives that error too.
 
 ## Building a client
 
 - `Api::client(url)` makes a client with no middleware.
 - `client::builder()...build::<Api>(url)` makes one with middleware.
-- `Api::client_with(http, url)` takes a `reqwest_middleware::ClientWithMiddleware` built already.
+- `Api::client_with(http, url)` takes a `reqwest_middleware::ClientWithMiddleware` that is already built.
 
-`url` is the base of the server, `http://localhost:8080`: the client writes each route's path after it, the api's
-prefix included. Building fails on a URL that is not `http` or `https`, or that has a query.
+`url` is the base of the server, such as `http://localhost:8080`. The client writes each route's path after it,
+including the api's prefix. Building fails on a URL that is not `http` or `https`, or that has a query.
 
-`build_http()` gives the `ClientWithMiddleware` itself: one for the clients of several contracts, which then share
-their connections.
+`build_http()` gives the `ClientWithMiddleware` itself. One of them can serve the clients of several contracts, which
+then share their connections.
 
 ```rust,no_run
 use quoll::client;
@@ -185,21 +185,37 @@ fn clients() -> quoll::Result<(NotesClient, FilesClient)> {
 | `client::key::<K>(value)`   | the credential of a scheme `K` the contract declares, where it travels           |
 | `client::on_request(f)`     | a closure that changes each request before it leaves                             |
 
-The builder puts quoll's helpers in the order they work in, whatever the order they are given in, from the first,
-which sees the request first: `trace`, `user_agent`, `request_id`, `retry`, `timeout`, `redirects`, then the
-credentials and `on_request` in the order given. Any other middleware keeps the place it is given at. A middleware of
-the application's that adds a credential is given after `redirects`.
+The builder puts quoll's helpers in the order they work in, whatever order they are given in. From the first, which
+sees the request first:
 
-Each helper is a `reqwest_middleware::Middleware` too, for an application that builds its `ClientWithMiddleware`
-itself. There, they run in the order they are added: add them in the order above.
+1. `trace`;
+2. `user_agent`;
+3. `request_id`;
+4. `retry`;
+5. `timeout`;
+6. `redirects`;
+7. the credentials and `on_request`, in the order given.
 
-Each request of a contract carries its `quoll::Route` in its extensions, which a middleware of the application's
-reads: the operation id, the group, the method, the path as written, and the schemes it takes.
+Any other middleware keeps the place it is given. An application's own middleware that adds a credential is given
+after `redirects`.
+
+Each helper is also a `reqwest_middleware::Middleware`, for an application that builds its `ClientWithMiddleware`
+itself. There, the helpers run in the order they are added: add them in the order above.
+
+Each request of a contract carries its `quoll::Route` in its extensions, which an application's own middleware reads.
+The route holds:
+
+- the operation id;
+- the group;
+- the method;
+- the path as written;
+- the schemes it takes.
 
 ## Credentials
 
-The helpers of authentication send a credential on the routes that take its scheme, and on no other request: not on a
-route with `#[auth(none)]`, not on a request to another origin than the api's, nor on a redirect there.
+The helpers of authentication send a credential on the routes that take its scheme, and on no other request. So they
+do not send it on a route with `#[auth(none)]`, on a request to an origin other than the api's origin, or on a
+redirect there.
 
 ```rust,no_run
 use quoll::client;
@@ -231,17 +247,17 @@ fn client(token: &str, key: &str) -> quoll::Result<ApiClient> {
 
 - `bearer` and `basic` send `Authorization`, marked sensitive so that a log does not show it.
 - `key::<K>` sends the credential of a declared scheme where it travels: its header, its cookie, its query key, or
-  `Authorization: Bearer` for an `openid` scheme. A scheme is told by its type: two contracts that each declare a
-  `Key` each get their own.
-- A credential the server would not read, a token with a space or a key with a line break, fails each call that would
-  send it, with an error that does not show it.
+  `Authorization: Bearer` for an `openid` scheme. A scheme is told apart by its type: two contracts that each declare
+  a `Key` each get their own.
+- A credential that the server would not read, such as a token with a space or a key with a line break, fails each
+  call that would send it. The error does not show the credential.
 
 [Authentication](authentication.md) covers the schemes, and what the server does with each.
 
 ### Tokens that expire
 
 `bearer_from` asks a `client::TokenSource` for a token before each call. A call answered 401 is sent once more with
-the token `refresh` gives, and that second answer is the call's.
+the token that `refresh` gives, and the call returns that second answer.
 
 ```rust,no_run
 use quoll::client::{self, TokenSource};
@@ -283,13 +299,13 @@ fn http() -> quoll::Result<reqwest_middleware::ClientWithMiddleware> {
 }
 ```
 
-The call is not sent again when `refresh` gives back the token refused. An error of the source fails the call.
+The call is not sent again when `refresh` gives back the refused token. An error from the source fails the call.
 
 ### A header computed from the request
 
-`on_request` runs a closure on each request of a contract to its api's own origin, given the request and its
-`quoll::Route`: a signature, a header of the application's. A header of the same value on every request belongs to the
-api, and goes in its contract, `#[header("name" = value)]` (see
+`on_request` runs a closure on each request of a contract to its api's own origin. The closure is given the request
+and its `quoll::Route`, and adds, for example, a signature or an application's own header. A header with the same
+value on every request belongs to the api, and goes in its contract: `#[header("name" = value)]` (see
 [Fixed headers](contract.md#fixed-headers)).
 
 ```rust,no_run
@@ -317,13 +333,14 @@ fn http() -> quoll::Result<reqwest_middleware::ClientWithMiddleware> {
 ## Retries, deadlines and redirects
 
 - `retry(times)` tries a call again after a failure that may pass: no answer, an answer that did not begin before the
-  deadline of `timeout`, or a 502, 503 or 504. It waits a random backoff between attempts. It tries again `GET`,
-  `HEAD`, `PUT` and `DELETE` only: a `POST` may have been done before its connection was cut. `.when(..)` decides
-  otherwise, as [Deciding a retry](#deciding-a-retry) shows.
+  deadline of `timeout`, or a 502, 503 or 504. It waits a random backoff between attempts. It tries again only `GET`,
+  `HEAD`, `PUT` and `DELETE`: a `POST` may have been done before its connection was cut. `.when(..)` decides
+  otherwise: see [Deciding a retry](#deciding-a-retry).
 - `timeout(duration)` is a deadline per attempt and per hop, from the request to the end of the answer's body. On a
-  route whose result is a stream, it bounds the head of the answer alone.
-- A call's `.timeout(duration)` is a deadline for that call alone, in place of `timeout`'s, with the same meaning: a
-  long call, a slow export, waits longer than the others, and a client with no `timeout` takes it too.
+  route whose result is a stream, it bounds only the head of the answer.
+- A call's `.timeout(duration)` is a deadline for that call alone, in place of the deadline of `timeout`, with the
+  same meaning. A long call, such as a slow export, waits longer than the others. A client with no `timeout` takes
+  it too.
 
 ```rust,no_run
 use std::time::Duration;
@@ -349,19 +366,25 @@ async fn export(api: &ApiClient) -> quoll::Result<u64> {
 `redirects(hops)` follows up to `hops` redirects, each hop through the middleware after it. A hop to another origin
 carries no credential.
 
-Given a credential, `bearer`, `bearer_from`, `basic`, `key` or `on_request`, and no `redirects`, the builder adds
-`redirects(10)` itself, so that redirects are still followed, and no hop to another origin carries a credential.
-Without either, reqwest follows redirects as it does by default.
+Given a credential (`bearer`, `bearer_from`, `basic`, `key` or `on_request`) and no `redirects`, the builder adds
+`redirects(10)` itself. So redirects are still followed, and no hop to another origin carries a credential. With
+neither a credential nor `redirects`, reqwest follows redirects in its default way.
 
 The docs of `quoll::client::retry`, `timeout` and `redirects` say how each counts and what each follows.
 
 ### Deciding a retry
 
-`retry(times).when(..)` takes a closure given each `client::Attempt`: the call's `quoll::Route`, its request, then the
-answer's status and headers or the error, and the attempt's number. It returns `Retry::No` to keep the answer,
-`Retry::Backoff` to try again after the backoff of `retry`, or `Retry::After(duration)`. `attempt.transient()` is the
-rule of `retry(times)` alone, for the cases the closure leaves, and `attempt.retry_after()` the wait the answer's
-`Retry-After` asks, in seconds or as an HTTP date, a minute at most unless `.max_wait(..)` sets another.
+`retry(times).when(..)` takes a closure, which is given each `client::Attempt`. An attempt holds the call's
+`quoll::Route`, its request, then the answer's status and headers or the error, and the attempt's number. The closure
+returns one of these:
+
+- `Retry::No`, to keep the answer;
+- `Retry::Backoff`, to try again after the backoff of `retry`;
+- `Retry::After(duration)`, to try again after `duration`.
+
+`attempt.transient()` is the rule of `retry(times)` alone, for the cases that the closure leaves.
+`attempt.retry_after()` is the wait that the answer's `Retry-After` asks, in seconds or as an HTTP date. It is a minute
+at most, unless `.max_wait(..)` sets another.
 
 ```rust,no_run
 use std::time::Duration;
@@ -390,14 +413,15 @@ fn http() -> quoll::Result<reqwest_middleware::ClientWithMiddleware> {
 }
 ```
 
-The request is the one `retry` is given: the headers of its route are there, as an `Idempotency-Key` the route takes
-as an argument, but not those added after `retry`, the credentials and what `on_request` puts in. Whatever the closure
-decides, a call is tried `times` more at most, and a request whose body is a stream of the application's is sent once,
-without calling the closure.
+The request is the one that `retry` is given. The headers of its route are there, such as an `Idempotency-Key` that
+the route takes as an argument. The headers added after `retry` are not: the credentials, and what `on_request` puts
+in. Whatever the closure decides, a call is tried `times` more at most. A request whose body is a stream that the
+application gives is sent once, without calling the closure.
 
 ## reqwest's client
 
-`.http(|http| ...)` configures reqwest's own `ClientBuilder`, under the middleware: a proxy, TLS, a pool.
+`.http(|http| ...)` configures reqwest's own `ClientBuilder`, under the middleware: for example a proxy, TLS or a
+pool.
 
 ```rust,no_run
 use std::time::Duration;
@@ -420,7 +444,7 @@ With `redirects`, given or added, reqwest's client follows no redirect itself, w
 
 ### A Unix socket
 
-A server that listens on a Unix socket, as the Docker daemon does, is reached through reqwest's `unix_socket`. The
+A server that listens on a Unix socket, such as the Docker daemon, is reached through reqwest's `unix_socket`. The
 URL's host is then only the request's `Host`:
 
 ```rust,no_run
