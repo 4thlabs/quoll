@@ -47,8 +47,9 @@ quoll::api! {
 
 ## A client
 
-[The client](docs/guides/client.md) has a method per route, which takes the route's arguments and returns its
-result. A call that fails is a [`quoll::Error`](docs/guides/errors.md), with the status the server answered:
+[The client](docs/guides/client.md) has one method per route. Each method takes the route's arguments and returns
+its result. A call that fails returns a [`quoll::Error`](docs/guides/errors.md), which holds the status the server
+answered:
 
 <!-- doctest client: models.rs contract -->
 ```rust,no_run
@@ -73,9 +74,9 @@ async fn main() -> quoll::Result<()> {
 
 ## A server
 
-[The server](docs/guides/server.md) implements a trait per group, with a handler per route, and serves them on axum.
-A handler receives the caller, the `User` that `Authenticate<Bearer>` makes of the token, as
-[Authentication](docs/guides/authentication.md) shows:
+[The server](docs/guides/server.md) implements one trait per group, with one handler per route, and serves them on
+axum. A handler receives the caller: the `User` that `Authenticate<Bearer>` makes from the token.
+[Authentication](docs/guides/authentication.md) shows how:
 
 <!-- doctest server: models.rs contract server.rs -->
 ```rust,no_run
@@ -118,23 +119,23 @@ async fn main() -> std::io::Result<()> {
 
 ## The document
 
-[The OpenAPI 3.1 document](docs/guides/openapi.md) comes from the contract, with the schemas of its types and its
-`///` comments, and a frontend's client from the document, as [TypeScript](docs/guides/typescript.md) shows. A binary
-of the contract's crate prints it:
+[The OpenAPI 3.1 document](docs/guides/openapi.md) comes from the contract. It holds the schemas of the contract's
+types and the contract's `///` comments. A frontend gets its client from the document:
+[TypeScript](docs/guides/typescript.md) shows how. A binary of the contract's crate prints the document:
 
 <!-- doctest document: models.rs contract -->
 ```rust
 println!("{}", Api::openapi().to_json_pretty());
 ```
 
-Any OpenAPI generator reads it: orval, openapi-typescript, hey-api, Kiota... The notes example's is orval, which
-writes TanStack Query hooks. `cargo quoll gen` writes the document and runs the generator the workspace names, and
+Any OpenAPI generator reads it: orval, openapi-typescript, hey-api, Kiota... The notes example uses orval, which
+writes TanStack Query hooks. `cargo quoll gen` writes the document and runs the generator that the workspace names.
 `cargo quoll dev` runs the server and the page's dev server side by side.
 
 ## Quick start
 
 [Getting started](docs/guides/getting-started.md) goes through this crate step by step. quoll is used from git until
-it is published. A new crate, `cargo new notes`, takes it with both features in its `Cargo.toml`:
+it is published. Create a crate with `cargo new notes`, then add quoll with both features to its `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -240,7 +241,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`cargo run -- serve` serves it, on `127.0.0.1:8080`. `cargo run`, in another terminal, calls it, and prints
+`cargo run -- serve` serves it on `127.0.0.1:8080`. In another terminal, `cargo run` calls it and prints
 `note 1: Milk`. `cargo run -- openapi` prints its OpenAPI document.
 
 [The guides](docs/README.md) cover each part.
@@ -262,8 +263,8 @@ No Rust is generated on disk: the macro expands at compile time, and `cargo expa
 Each example is its own workspace, built and tested from its directory.
 
 [`examples/notes`](examples/notes) is the spec's [complete example](docs/spec.md#a-complete-example): a contract,
-its server, a command line, and a web page on the hooks orval writes. `cargo quoll dev` runs the server, orval and
-Vite, on `http://localhost:5173`:
+its server, a command line, and a web page built on the hooks that orval writes. `cargo quoll dev` runs the server,
+orval and Vite, on `http://localhost:5173`:
 
 ```bash
 cargo install --git https://github.com/4thlabs/quoll quoll-cli
@@ -272,8 +273,9 @@ npm ci --prefix web
 cargo quoll dev
 ```
 
-[`examples/docker`](examples/docker) is a client alone, of the Docker Engine API, and a command line on it: a
-contract of an API that quoll did not write, as [Another API](docs/guides/another-api.md) shows.
+[`examples/docker`](examples/docker) holds a client of the Docker Engine API, with no server, and a command line
+that uses it. Its contract describes an API that quoll did not write. [Another API](docs/guides/another-api.md) shows
+how to write such a contract.
 
 ```bash
 cd examples/docker
@@ -291,14 +293,19 @@ client in a few lines.
 
 ## Status
 
-quoll is used from git: it has no version yet, and the first release is
-[#21](https://github.com/4thlabs/quoll/issues/21). What [the spec](docs/spec.md) describes works, but its
-[Later](docs/spec.md#later): the contract, the server and the client, the OpenAPI document, `cargo quoll gen`,
-`build` and `dev`, and the notes page. What comes next is in the milestone
-[Later](https://github.com/4thlabs/quoll/milestone/5).
+quoll is used from git. It has no version yet, and the first release is
+[#21](https://github.com/4thlabs/quoll/issues/21). Everything [the spec](docs/spec.md) describes works, except its
+section [Later](docs/spec.md#later). What works:
 
-The guides are in [`docs/`](docs/README.md), and the API documentation is the crate's own, from `cargo doc -p quoll
---all-features --open`.
+- the contract, the server and the client;
+- the OpenAPI document;
+- `cargo quoll gen`, `build` and `dev`;
+- the notes page.
+
+What comes next is in the milestone [Later](https://github.com/4thlabs/quoll/milestone/5).
+
+The guides are in [`docs/`](docs/README.md). The API documentation is the crate's rustdoc: `cargo doc -p quoll
+--all-features --open` opens it.
 
 ## License
 
