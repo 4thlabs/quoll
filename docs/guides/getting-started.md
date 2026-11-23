@@ -206,5 +206,6 @@ line never links axum, nor the server reqwest.
 
 - [Authentication](authentication.md): routes that take a token, a key or a cookie.
 - [Testing](testing.md): a server and its client in a test.
+- [Another API](another-api.md): a contract of an API that quoll did not write, which the application calls.
 - [OpenAPI](openapi.md): what the document holds.
 - [TypeScript](typescript.md): the page, its hooks and its streams, from the document.

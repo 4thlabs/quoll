@@ -14,6 +14,7 @@ In reading order:
 | [Authentication](guides/authentication.md)   | schemes, alternatives, optional credentials, scopes, cookies and their origin            |
 | [Errors](guides/errors.md)                   | `rest::Error`, the problems a server answers, what a client sees                         |
 | [Testing](guides/testing.md)                 | a server and its client in a test, fakes, the OpenAPI snapshot                           |
+| [Another API](guides/another-api.md)         | a contract of an API quoll did not write: headers, errors, forms, two answers, pages     |
 | [OpenAPI](guides/openapi.md)                 | `Api::openapi()`, what the document holds, schema names, contracts that are only called  |
 | [TypeScript](guides/typescript.md)           | `cargo quoll gen`, `build` and `dev`, Vite and orval, the mutator, streams, Next.js, CI  |
 

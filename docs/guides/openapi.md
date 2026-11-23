@@ -165,3 +165,5 @@ rest::api! {
 
 A `rest::group!` of such a contract says `#[openapi(none)]` on its group. An api with a document lists only groups
 that have one.
+
+[Another API](another-api.md) goes through such a contract: its headers, its errors, its forms and its pages.
