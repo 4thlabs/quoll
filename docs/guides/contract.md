@@ -52,8 +52,8 @@ the api once, the groups of its routes, and the [schemes](authentication.md#sche
 
 The contract becomes items in the module that writes it:
 
-- `NotesServer`, the trait the server implements, with the feature `server`;
-- `ApiServices`, a field per group, and `Api::router`, which gives the `axum::Router`, with `server`;
+- `NotesServer`, the trait that the server implements, with the feature `server`;
+- `ApiServices`, with one field per group, and `Api::router`, which gives the `axum::Router`, with `server`;
 - `Notes`, the trait the client implements, `NotesClient`, `ApiClient` and `Api::client`, with the feature `client`;
 - `Api::openapi()`, the [OpenAPI document](openapi.md), whatever the features.
 
@@ -67,8 +67,8 @@ doc` shows the items with the contract's `///` comments.
 - Only the api has a prefix, `"/api"`, or `""` for none. The prefix has no parameter: a parameter that routes share is
   written in each path, `"/repos/{owner}/{repo}/issues"`.
 - A route with no `->` returns nothing.
-- The operation id of a route is its group in snake case and its function: `notes_get`. The OpenAPI document names the
-  operation so, and tags it with its group.
+- The operation id of a route is its group in snake case and its function: `notes_get`. The OpenAPI document gives
+  the operation that id, and tags it with its group.
 - The `///` comments of the api, its groups and its routes become the docs of the generated items, and the
   descriptions of the document.
 
@@ -121,16 +121,16 @@ quoll::api! {
 
 ### Path parameters
 
-A `{name}` of the path is read from its text: an integer, a string, a UUID, or an enum of unit variants. It fills a
-whole segment, `/notes/{id}`, never part of one.
+A `{name}` in the path is read from its text: an integer, a string, a UUID, or an enum of unit variants. It fills a
+whole segment, as in `/notes/{id}`, never part of one.
 
 ### Query parameters
 
-A `key={name}` of the query is a query parameter. An `Option` may be missing, and the client leaves out a `None`. A
-`Vec` repeats its key, `?tag=a&tag=b`, and is empty when the key is missing.
+A `key={name}` in the query is a query parameter. An `Option` may be missing, and the client leaves out a `None`. A
+`Vec` repeats its key, as in `?tag=a&tag=b`, and is empty when the key is missing.
 
-A key is ASCII letters, digits and `-._~`, and may end in brackets that hold the same or nothing, as many APIs name
-their keys:
+A key is made of ASCII letters, digits and `-._~`. It may end in brackets that hold the same characters, or nothing.
+Many APIs name their keys this way:
 
 ```rust
 use schemars::JsonSchema;
@@ -158,23 +158,23 @@ quoll::api! {
 }
 ```
 
-The client escapes the brackets, `?expand%5B%5D=sources&expand%5B%5D=invoice`, as a browser's form does, and the
-server reads them escaped or as they are. The document names each parameter by its key, `expand[]`. The field of a
-query struct takes such a key by its serde name, `#[serde(rename = "filter[name]")]`.
+The client escapes the brackets, like a browser's form: `?expand%5B%5D=sources&expand%5B%5D=invoice`. The server
+reads them escaped or unescaped. The document names each parameter by its key, `expand[]`. A field of a query struct
+takes such a key through its serde name: `#[serde(rename = "filter[name]")]`.
 
 ### Query structs
 
-A route with many optional keys takes a query struct, `query filter: NoteFilter`: its fields are the keys, as serde
-names them. A query struct is the whole query, so the route's string has no query beside it. A `Vec` field takes
-`#[serde(default)]`, so that a missing key reads as an empty list.
+A route with many optional keys takes a query struct, `query filter: NoteFilter`. Its fields are the keys, with the
+names that serde gives them. A query struct is the whole query, so the route's string has no query beside it. A `Vec`
+field takes `#[serde(default)]`, so that a missing key reads as an empty list.
 
-The struct needs no `Default`, but its callers like one: they fill the keys they need and leave the rest,
+The struct needs no `Default`, but its callers like one. They fill the keys they need and leave the rest:
 `NoteFilter { contains: Some("milk".into()), ..Default::default() }`.
 
 ### Joined lists
 
-An API that reads a list as one value, `labels=bug,docs`, says so with `#[join(sep)]` on an argument of the route,
-whose type stays a `Vec`:
+Some APIs read a list as one value, such as `labels=bug,docs`. A contract says so with `#[join(sep)]` on an argument
+of the route. The argument's type stays a `Vec`:
 
 ```rust
 use schemars::JsonSchema;
@@ -197,36 +197,38 @@ quoll::api! {
 }
 ```
 
-- `#[join(",")]` writes `labels=bug,docs`, `#[join(" ")]` `labels=bug%20docs`, `#[join("|")]` `labels=bug|docs`:
-  the three styles OpenAPI describes, and no other separator.
-- The values are read from text, as a path parameter is. An empty list leaves the key out, and a missing key is an
-  empty list, as `labels=` is.
-- The server decodes the value before it splits it: it reads `labels=bug%2Cdocs` too, which a browser's
-  `URLSearchParams` writes. So a value cannot hold the separator, and the client refuses one before sending.
+- `#[join(",")]` writes `labels=bug,docs`, `#[join(" ")]` writes `labels=bug%20docs`, and `#[join("|")]` writes
+  `labels=bug|docs`. These are the three styles that OpenAPI describes. There is no other separator.
+- The values are read from text, like a path parameter. An empty list leaves the key out. A missing key is an empty
+  list, and so is `labels=`.
+- The server decodes the value before it splits it. So it also reads `labels=bug%2Cdocs`, which a browser's
+  `URLSearchParams` writes. A value therefore cannot hold the separator, and the client refuses one before sending.
 - Only an argument is joined: a `Vec` field of a query struct repeats its key.
 
 ### Headers
 
-`header("If-Match") version: Option<String>` reads a header, from its text as a path parameter is. An `Option` is
-`None` when the header is missing; any other type answers 400 then. A header quoll or HTTP writes itself, as
-`Content-Type`, `Host` or `Authorization` on a route that takes a scheme, does not compile.
+`header("If-Match") version: Option<String>` reads a header from its text, like a path parameter. An `Option` is
+`None` when the header is missing. With any other type, a missing header is answered 400. An argument does not compile
+for a header that quoll or HTTP writes itself: for example `Content-Type`, `Host`, or `Authorization` on a route that
+takes a scheme.
 
 ### The body
 
-The one argument left is the body, on `POST`, `PUT`, `PATCH` and `DELETE` only. It is the JSON of its type, or one of:
+The one argument left is the body. Only `POST`, `PUT`, `PATCH` and `DELETE` take one. It is the JSON of its type, or
+one of these:
 
 - `Form<T>`, `application/x-www-form-urlencoded`;
 - `Text`, `text/plain` in UTF-8;
-- `Bytes`, bytes of the content type they carry, `application/octet-stream` unless they say another.
+- `Bytes`, bytes of the content type they carry: `application/octet-stream` unless they say another.
 
 The server answers 415 to a body without the content type it reads, and 400 to one that does not read as its type.
 
-The doc of the crate `quoll` gives the rules of each form in full: an empty query value, a header given twice, a path
-parameter whose type is a struct.
+The doc of the crate `quoll` gives the full rules of each form, such as an empty query value, a header given twice,
+or a path parameter whose type is a struct.
 
 ## Fixed headers
 
-An api that asks every request for headers of its own, a version or a media type, says them in the contract with
+Some APIs ask every request for headers of their own, such as a version or a media type. A contract says them with
 `#[header("name" = value)]`, on the api, a group or a route:
 
 ```rust
@@ -268,27 +270,29 @@ quoll::api! {
 ```
 
 - A value is a string or the name of a `&str` constant, checked at compile time. A value that changes from call to
-  call is an argument, `header("Stripe-Account") account: Option<String>`, and one of a deployment, a signature or a
-  tenant, goes through `client::on_request`.
-- A group or a route takes its parent's headers, and the nearest to the call wins: an argument of the same header the
-  caller gives, then the route, the group and the api. quoll's own `Accept` comes last: a route whose result is
-  `Text`, `Events` or `JsonLines` takes `#[header("Accept" = none)]` under an api that fixes one, as `/zen` does above,
-  or its answer, of the api's media type, is not its result.
-- `#[header("X" = none)]` leaves one header the group or the route would take, `#[header(none)]` all of them; the
-  headers written beside it are its own. A `none` never removes what quoll writes: `#[header("Accept" = none)]` gives
-  the route quoll's `Accept` back. In the api's block, a `none` on a header the parent does not fix does not compile,
-  and in any block, a route's `none` on a header its group already leaves.
-- A `Content-Type` keeps the media type of the body, adding a parameter: `application/json; charset=utf-8` on a JSON
-  body. A request with no body sends none.
-- A group of another block takes the headers of the api that lists it, and any api may list it: a `none` of the group
-  or of its routes leaves the header where the api fixes it, and does nothing elsewhere.
-- The server does not check them. The OpenAPI document describes each one as a header parameter of its value, which a
-  caller need not send.
+  call is an argument: `header("Stripe-Account") account: Option<String>`. A value that comes from a deployment, a
+  signature or a tenant goes through `client::on_request`.
+- A group or a route takes its parent's headers, and the one nearest to the call wins. The order is: an argument for
+  the same header, given by the caller, then the route, the group and the api. quoll's own `Accept` comes last. So
+  under an api that fixes an `Accept`, a route whose result is `Text`, `Events` or `JsonLines` takes
+  `#[header("Accept" = none)]`, like `/zen` above. Otherwise its answer comes in the api's media type, which is not its
+  result.
+- `#[header("X" = none)]` leaves out one header that the group or the route would take, and `#[header(none)]` leaves
+  out all of them. The headers written beside it are its own. A `none` never removes what quoll writes:
+  `#[header("Accept" = none)]` gives the route quoll's `Accept` back. In the api's block, a `none` does not compile on
+  a header that the parent does not fix. In any block, a route's `none` does not compile on a header that its group
+  already leaves out.
+- A `Content-Type` keeps the media type of the body, and adds a parameter: `application/json; charset=utf-8` on a
+  JSON body. A request with no body sends no `Content-Type`.
+- A group of another block takes the headers of the api that lists it, and any api may list it. So a `none` in the
+  group or in its routes leaves out the header where the api fixes it, and does nothing elsewhere.
+- The server does not check them. The OpenAPI document describes each one as a header parameter with its value, which
+  a caller need not send.
 
 ## Fixed fields of the body
 
-An API that tells two answers of one method and path apart by a field of the body, Anthropic's `"stream": true`,
-says it in the contract with `#[body("name" = value)]`, on each route:
+Some APIs tell two answers of one method and path apart by a field of the body, such as Anthropic's
+`"stream": true`. A contract says it with `#[body("name" = value)]`, on each route:
 
 ```rust
 use quoll::Events;
@@ -324,18 +328,21 @@ quoll::api! {
 }
 ```
 
-- A route takes one `#[body(...)]` per field, its value a bool, a number or a string. The client adds each field at
-  the top of the body, its JSON or a `Form<T>`, which serializes as a struct or a map; a field of the body's own of
-  that name is replaced. Another body is refused before it is sent, and a `Text` or `Bytes` body does not compile.
-- Two routes share a method and a path when a field both fix has two values of one kind. The server reads the body's
-  fields first, which pick the route, then its handler's type from the same bytes, which ignores them: a type with
-  `#[serde(deny_unknown_fields)]` refuses them, a 400 whose message names the field. A body that holds the fields of
-  no route answers 400, and a content type no route reads 415.
-- A route alone on its method and path checks its fields too, after it authenticates: a body that does not read as
-  them is a 400 of its own. Two routes that share them read the body first, within its limit, to pick one, then
-  authenticate: the 400 of a body of no route's, or that does not read, names none.
+- A route takes one `#[body(...)]` per field. Its value is a bool, a number or a string. The client adds each field
+  at the top of the body: its JSON, or a `Form<T>`, when it serializes as a struct or a map. If the body has its own
+  field of that name, the fixed value replaces it. Any other body is refused before it is sent, and a `Text` or
+  `Bytes` body does not compile.
+- Two routes share a method and a path when a field that both fix has two values of one kind. The server first reads
+  the body's fields, which pick the route. Then it reads the handler's type from the same bytes, and that type ignores
+  the fields. A type with `#[serde(deny_unknown_fields)]` refuses them: a 400 whose message names the field. A body
+  that holds the fields of no route is answered 400. A content type that no route reads is answered 415.
+- A route alone on its method and path checks its fields too, after it authenticates. A body that does not read as
+  those fields gets a 400 of its own. Two routes that share a method and path read the body first, within its limit,
+  to pick one, and then authenticate. So a body that matches no route, or that does not read, gets a 400 that names
+  neither a route nor a field.
 - The OpenAPI document describes a route's fields as `const` properties of its body. It does not describe two routes of
-  one method and path yet: they compile in an api `#[openapi(none)]`, a contract of another API.
+  one method and path yet. They compile only in an api `#[openapi(none)]`, which a contract of another API usually
+  is.
 
 ## Results
 
@@ -352,14 +359,18 @@ quoll::api! {
 | `JsonLines<T>`    | 200, one JSON value per line, or 204                             | a stream of `T`    |
 | `ByteStream`      | 200, bytes as they come, or 204                                  | a stream of bytes  |
 
-A 204 or a 205, `Status::NO_CONTENT` or `Status::RESET_CONTENT`, is the handler's to give, on a value that may be
-empty alone: no result, an `Option<T>`, a `Text`, `Bytes` or a stream; and in a `Created<T>` or an `Accepted<T>`, whose
-`T` is JSON, a `()` or an `Option<T>`, `-> Created<Option<Note>>` and `-> Accepted<()>`, but not the `Note` of
-`-> Created<Note>`. The client reads it as `()`, `None`, an empty text or bytes, or a stream that ends at once,
-and the document lists it. `NoContent::try_from(status)` gives one back from another API's answer.
+A handler may answer a 204 or a 205, with `Status::NO_CONTENT` or `Status::RESET_CONTENT`. It may do so only for a
+value that may be empty:
 
-A handler returns each of them in a `Response`, the `T` alone for a `Created<T>` or an `Accepted<T>`, whose status
-the contract gives, with the headers it sends:
+- no result, an `Option<T>`, a `Text`, `Bytes` or a stream;
+- a `Created<T>` or an `Accepted<T>` whose JSON `T` is a `()` or an `Option<T>`: `-> Created<Option<Note>>` and
+  `-> Accepted<()>`, but not the `Note` of `-> Created<Note>`.
+
+The client reads it as `()`, `None`, an empty text or bytes, or a stream that ends at once. The document lists it.
+`NoContent::try_from(status)` gives a `NoContent` from the status of another API's answer.
+
+A handler returns each of them in a `Response`, with the headers it sends. For a `Created<T>` or an `Accepted<T>`, the
+response holds the `T` alone, and the contract gives the status:
 
 ```rust
 use http::header::LOCATION;
@@ -376,8 +387,13 @@ assert_eq!(&*readme, "# Notes");
 assert_eq!(logo.content_type(), "image/png");
 ```
 
-The types a contract names, `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines` and `ByteStream`,
-are imported as any type is, `use quoll::Created;`, or named by their path, `quoll::Bytes`.
+A contract names these types of quoll:
+
+- `Created` and `Accepted`;
+- `Form`, `Text` and `Bytes`;
+- `Events`, `JsonLines` and `ByteStream`.
+
+They are imported like any other type, `use quoll::Created;`, or named by their path, `quoll::Bytes`.
 
 ## Streams
 
@@ -385,10 +401,10 @@ A route streams its result with one of three types:
 
 - `Events<T>`: server-sent events, the JSON of a `T` in each;
 - `JsonLines<T>`: JSON Lines, the JSON of a `T` on each line;
-- `ByteStream`: bytes of one content type, as the output of a process.
+- `ByteStream`: bytes of one content type, such as the output of a process.
 
 Each is one type on both sides. The server builds it from a `Stream` and sends its items as they come. The client gets
-the same type, a `Stream` of `Result<T>`, or of `Result<Vec<u8>>` for a `ByteStream`.
+the same type: a `Stream` of `Result<T>`, or of `Result<Vec<u8>>` for a `ByteStream`.
 
 ```rust
 use futures::{StreamExt, stream};
@@ -446,24 +462,24 @@ async fn main() -> Result<()> {
 
 How a stream behaves:
 
-- The server asks its stream for an item only once the connection has taken the last one: a client that reads slowly
-  slows it down.
+- The server asks its stream for an item only once the connection has taken the last one. So a client that reads
+  slowly slows it down.
 - Dropping the client's stream closes its connection. The client does not call the route again when a stream ends.
 - `try_new` builds a stream from results. An error after the 200 ends an `Events` stream with a last event, `event:
   problem`, which the client reads as that error. JSON Lines and bytes have no way to say an error: the server cuts
   the answer short, and the client reads an error.
 - A server told to stop ends its `Events` streams cleanly: [Shutdown](server.md#shutdown) says what becomes of each
   stream.
-- `client::timeout` and `client::retry` treat a stream's answer apart, as
-  [Retries, deadlines and redirects](client.md#retries-deadlines-and-redirects) says, and `server::compression` leaves
+- `client::timeout` and `client::retry` treat a stream's answer differently:
+  [Retries, deadlines and redirects](client.md#retries-deadlines-and-redirects) says how. `server::compression` leaves
   streams out.
 
 The docs of `quoll::Events`, `JsonLines` and `ByteStream` say what each sends and reads on the wire.
 
 ## Groups across modules
 
-A large contract splits into `quoll::group!` blocks, one group in each, in a module of its own. The api lists them by
-their paths after its prefix.
+A large contract splits into `quoll::group!` blocks, each with one group, in a module of its own. The api lists them
+by their paths, after its prefix.
 
 ```rust
 mod notes {
@@ -502,26 +518,27 @@ fn main() {
 }
 ```
 
-- A `quoll::group!` holds one group, written as in an api. Its items, `NotesServer`, `Notes` and `NotesClient`, are in
-  its module.
+- A `quoll::group!` holds one group, written the same way as in an api. Its items (`NotesServer`, `Notes` and
+  `NotesClient`) are in its module.
 - The api serves, calls and describes the routes of its groups under its own prefix. The groups of the list come
   first, then the ones its block writes.
-- A group named alone, `{ Notes }`, is one in the api's module, or brought by a glob import, `use notes::*;`.
-- Schemes are declared in the api alone. A `quoll::group!` names one by its path, `#[auth(crate::Key)]`, or through an
+- A group named alone, as in `{ Notes }`, is one in the api's module, or one that a glob import brings:
+  `use notes::*;`.
+- Schemes are declared only in the api. A `quoll::group!` names one by its path, `#[auth(crate::Key)]`, or through an
   import.
-- A group takes the fixed headers of the api that lists it. Any api may list it: a `none` of the group's leaves a
-  header where that api fixes it, and does nothing elsewhere.
-- The api checks its groups against each other at compile time: one method and path twice, one operation id twice, a
-  group less visible than the api, do not compile, and the error points at the group in the list.
+- A group takes the fixed headers of the api that lists it. Any api may list it. So a `none` in the group leaves out
+  a header where that api fixes it, and does nothing elsewhere.
+- The api checks its groups against each other at compile time. These do not compile, and the error points at the
+  group in the list: one method and path twice, one operation id twice, or a group less visible than the api.
 - Two apis may list one group: each serves it under its own prefix.
 
 Two routes of one method and path compile when their [fixed fields](#fixed-fields-of-the-body) tell them apart, in an
-api with no document, whichever groups they are in.
+api with no document, whatever groups they are in.
 
 ## Mistakes
 
-A mistake in a contract is a compile error on the token at fault, which says what to write instead. Here `{id}` has no
-argument of its name:
+A mistake in a contract is a compile error on the token at fault, which says what to write instead. Here, no argument
+has the name of `{id}`:
 
 ```rust,compile_fail
 quoll::api! {
