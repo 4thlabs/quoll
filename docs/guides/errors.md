@@ -2,7 +2,7 @@
 
 Every route returns a `quoll::Result<T>`, whose error is `quoll::Error`: one error for the server and the client. A
 handler returns one, the server answers it as an RFC 9457 problem, and the client reads it back. The client of
-another API reads its errors in the shape the contract says, `#[error(E)]`.
+another API reads its errors in the shape that the contract says, with `#[error(E)]`.
 
 ## In a handler
 
@@ -56,8 +56,8 @@ fn store(id: i64, title: &str) -> std::io::Result<String> {
 - `Error::new` takes a client or a server error, `4xx` or `5xx`. Any other status is answered 500, and logged.
 - `Error::internal` takes any error. The server logs it through `tracing` and sends the status alone: the caller
   never sees the cause.
-- An error that a client received from another API, carried up with `?`, is answered 502: the other API's status is
-  not passed on as this one's.
+- An error that a client received from another API, carried up with `?`, is answered 502. The other API's status is
+  not passed on as the status of this API.
 
 ## What the server answers
 
@@ -80,7 +80,7 @@ The server answers some errors itself, before or around the handler, each as a p
 - 415, a body without the content type the route reads;
 - 413, a body past `server::body_limit`, and 503, a handler past `server::timeout`.
 
-The OpenAPI document lists, for each route, the errors quoll answers itself, and a `default` for any other.
+For each route, the OpenAPI document lists the errors that quoll answers itself, and a `default` for any other.
 
 ## What a client sees
 
@@ -122,15 +122,15 @@ async fn main() -> Result<()> {
 ```
 
 - `status()` is the status of the answer, or `None` for a call that got no answer to read: a connection refused, a
-  deadline passed, an error of a middleware, an answer that is not the route's result.
-- `detail()` is the RFC 9457 problem, when the body is one, `application/problem+json`.
-- `response()` is the answer with that detail, its status and its headers.
-- `body()` is the body as it came, its first 64 KiB.
-- The error's sources show the URL of the call by its origin and its path alone: never its credentials, nor its
-  query, where a query scheme sends its key. A middleware of another crate that wraps reqwest's error in a type of its
-  own, as reqwest-retry does, keeps the whole URL there: `client::retry` takes its place.
+  deadline passed, an error of a middleware, or an answer that is not the route's result.
+- `detail()` is the RFC 9457 problem, when the body is one (`application/problem+json`).
+- `response()` is the answer, with that detail, its status and its headers.
+- `body()` is the body as it came: its first 64 KiB.
+- The error's sources show the URL of the call by its origin and its path alone. They never show its credentials, or
+  its query, where a query scheme sends its key. A middleware of another crate may wrap reqwest's error in a type of
+  its own, like reqwest-retry does. That type keeps the whole URL: `client::retry` takes the place of reqwest-retry.
 
-A caller tells a status it expects from the others:
+A caller tells a status it expects apart from the others:
 
 ```rust,no_run
 use http::StatusCode;
@@ -156,13 +156,13 @@ async fn main() -> quoll::Result<()> {
 }
 ```
 
-The headers of an error's answer, a `Retry-After` or a rate limit, come with the whole answer, which a call's
-`.response()` gives: its body is then the error. [The whole answer](client.md#the-whole-answer) shows it.
+The headers of an error's answer, such as a `Retry-After` or a rate limit, come with the whole answer, which a call's
+`.response()` gives. Its body is then the error. [The whole answer](client.md#the-whole-answer) shows it.
 
 ## Another API's errors
 
-An API that quoll did not write answers its errors in a shape of its own. `#[error(E)]` on its api says which: each
-call's error is then a `quoll::Error<E>`, whose `detail()` is the body of the answer read as the JSON of `E`. `E`
+An API that quoll did not write answers its errors in a shape of its own. `#[error(E)]` on its api says which shape.
+Each call's error is then a `quoll::Error<E>`, whose `detail()` is the body of the answer, read as the JSON of `E`. `E`
 implements `Deserialize`, `Debug`, and `Display`, which gives the error's message.
 
 ```rust,no_run
@@ -210,20 +210,20 @@ async fn main() -> quoll::Result<()> {
 ```
 
 - The calls return `quoll::Result<T, E>`, an alias of `Result<T, quoll::Error<E>>`. `quoll::Error` is
-  `quoll::Error<quoll::Problem>`, what a route without `#[error]` has.
-- `detail()` is the `E`, `response()` the answer with it, its status and its headers, a rate limit or a
+  `quoll::Error<quoll::Problem>`, the error of a route without `#[error]`.
+- `detail()` is the `E`. `response()` is the answer with it, its status and its headers, such as a rate limit or a
   `Retry-After`.
-- A body that is not an `E`, a page of HTML from a proxy, or a 304, has no detail: the error keeps its status and its
-  `body()`, and says `another api answered 502`.
-- `?` carries a `quoll::Error<E>` up into a `quoll::Error`, a handler's or a `main`'s, with its status, its message and
-  its body; a handler that returns it answers 502.
-- `body_as::<T>()` reads the body as the JSON of another type: the extension members of a problem.
+- A body that is not an `E`, such as a page of HTML from a proxy, has no detail, and neither has a 304. The error keeps
+  its status and its `body()`, and says `another api answered 502`.
+- `?` carries a `quoll::Error<E>` up into a `quoll::Error`, such as the error of a handler or of `main`, with its
+  status, its message and its body. A handler that returns it answers 502.
+- `body_as::<T>()` reads the body as the JSON of another type, such as the extension members of a problem.
 
-`#[error(E)]` goes on the api, a group or a route, the nearest to a route winning, as `#[auth]` does: a route that
-answers another shape, an OAuth endpoint, says its own, and `#[error(quoll::Problem)]` gives a group problems again. A
-group of a `quoll::group!` says its own, on the group or on each route: its trait is written before an api lists it, so
-it cannot take the api's, and an api with an `#[error]` that lists a group with a route that has none does not
-compile, unless the api's is `quoll::Problem`.
+`#[error(E)]` goes on the api, a group or a route, and the one nearest to a route wins, like `#[auth]`. A route that
+answers another shape, such as an OAuth endpoint, says its own. `#[error(quoll::Problem)]` gives a group problems
+again. A group of a `quoll::group!` says its own `#[error]`, on the group or on each route. Its trait is written before
+an api lists it, so it cannot take the `#[error]` of the api. So an api with an `#[error]` does not compile when it
+lists a group with a route that has none, unless the api says `#[error(quoll::Problem)]`.
 
 ```rust,no_run
 use std::fmt;
@@ -282,9 +282,10 @@ async fn main() -> quoll::Result<()> {
 }
 ```
 
-A fake of such an api returns an `impl Call<T, E>`, and builds the error of an answer with
-`quoll::Error::answered(status, e)`: its status, its detail, a `response()` with no headers, and no body. An error of a
-status alone, with no detail, is `quoll::Error::not_found(..).into_shape()`, and so are the others.
+A fake of such an api returns an `impl Call<T, E>`. It builds the error of an answer with
+`quoll::Error::answered(status, e)`. That error has its status, its detail, a `response()` with no headers, and no
+body. An error of a status alone, with no detail, is `quoll::Error::not_found(..).into_shape()`, and the same goes for
+the other constructors.
 
 ```rust
 use std::fmt;
@@ -341,5 +342,5 @@ attribute is for the contract of another API. The items of a stream keep `quoll:
 
 ## Errors in a stream
 
-Once a stream's 200 is sent, an error can no longer be its status: [Streams](contract.md#streams) says how each kind
+Once a stream's 200 is sent, an error can no longer be its status. [Streams](contract.md#streams) says how each kind
 of stream ends on an error, and what the client reads.
