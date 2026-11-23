@@ -178,18 +178,22 @@ impl Builder {
     /// The directory is read at each request, its path relative to the directory the server runs in: a page deployed
     /// anew is served at once, with no new build of the server.
     ///
-    /// - `/` answers `index.html`, and any other path the file of that path in `dir`. A path that is no file, and
-    ///   no route of the api, answers `index.html` too, so that the page's router takes it. The api's router answers
-    ///   a problem 404 for a path under its prefix that is no route: such a path never reaches the page.
+    /// - `/` answers `index.html`, any other path the file of that path in `dir`, and a directory its `index.html`.
+    ///   A path that is no file and looks like a route, `/notes/3`, answers `index.html` too, so that the page's
+    ///   router takes it. A path under `assets/`, or whose last segment has an extension, names a file: a problem 404
+    ///   when it is missing. The api's router answers a problem 404 for a path under its prefix that is no route:
+    ///   such a path never reaches the page.
     /// - A file is sent with the content type of its extension and `X-Content-Type-Options: nosniff`, as `Bytes`
     ///   are. Its `ETag` and `Last-Modified` answer a request's `If-None-Match` and `If-Modified-Since` with a 304.
     ///   `HEAD` gets the headers alone. Any other method is a problem 405.
     /// - A file Vite names by its hash, `assets/index-BXa3kD9f.js`, is `Cache-Control: public, max-age=31536000,
-    ///   immutable`; `index.html` and every other file `no-cache`.
+    ///   immutable`: under `assets/`, a `-`, eight characters of base64url with a digit, and a `.`. `index.html` and
+    ///   every other file are `no-cache`.
     /// - A file stored compressed beside itself, `app.js.br` or `app.js.gz`, is sent in its place when the request
     ///   accepts its coding, Brotli first. Every file carries `Vary: Accept-Encoding`.
     /// - No file out of `dir` is ever sent: a path with `..` and a symbolic link whose target is out of `dir`
-    ///   answer a problem 404.
+    ///   answer a problem 404. A hidden file, whose name begins with a `.`, is a problem 404 too, but those of
+    ///   `/.well-known/`.
     ///
     /// The page replaces any fallback of the router. [`serve`](Self::serve) and [`serve_on`](Self::serve_on) check
     /// that `dir` holds an `index.html` before they serve.

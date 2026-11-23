@@ -23,8 +23,9 @@ server = [
     "dep:mime_guess",
     "dep:serde_html_form",
     "dep:tokio",
-    # The files of a page.
+    # The files of a page, each sent up to its length.
     "tokio/fs",
+    "tokio/io-util",
     # The signals a server stops on, and the start of its grace.
     "tokio/signal",
     "tokio/sync",
