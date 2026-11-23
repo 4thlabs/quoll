@@ -174,14 +174,42 @@ fn parse_query_item(item: &str) -> std::result::Result<QueryItem, String> {
     if key.is_empty() || key.contains(['{', '}']) {
         return Err(expected());
     }
-    if let Some(problem) = literal_problem(key) {
-        return Err(problem.replace("segment", "key"));
+    if let Some(problem) = key_problem(key) {
+        return Err(problem);
     }
 
     Ok(QueryItem {
         key: key.into(),
         name: valid_name(name)?.into(),
     })
+}
+
+/// What is wrong with a literal key of the query, if anything. A key is what a literal segment holds, then brackets
+/// that hold the same or nothing, `expand[]`, `filter[name]`, `a[b][c]`: the keys of Rails, Stripe and JSON:API, which
+/// serde_html_form reads and writes as any other, escaped as `%5B` and `%5D`, as a browser's form writes them.
+fn key_problem(key: &str) -> Option<String> {
+    let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~');
+    let (base, mut brackets) = key.split_at(key.find('[').unwrap_or(key.len()));
+    let mut well_formed = !base.is_empty() && literal_problem(base).is_none();
+    while well_formed && !brackets.is_empty() {
+        let inner = brackets
+            .strip_prefix('[')
+            .and_then(|rest| rest.split_once(']'));
+        let Some((inside, rest)) = inner else {
+            well_formed = false;
+            break;
+        };
+
+        well_formed = inside.chars().all(plain);
+        brackets = rest;
+    }
+    if well_formed {
+        return None;
+    }
+
+    Some(format!(
+        "`{key}` is not a plain key: a literal key holds ASCII letters, digits, `-`, `_`, `.` and `~`, is not `.` or `..`, and may end in brackets that hold the same or nothing, as in `expand[]` or `filter[name]`"
+    ))
 }
 
 fn valid_name(name: &str) -> std::result::Result<&str, String> {
@@ -306,6 +334,54 @@ mod tests {
             assert!(parse(text).is_ok(), "{text}");
         }
         assert!(message("/notes?a%b={x}").contains("not a plain key"));
+    }
+
+    #[test]
+    fn a_literal_key_may_end_in_brackets() {
+        for (text, key) in [
+            ("/customers?expand[]={expand}", "expand[]"),
+            ("/articles?filter[name]={name}", "filter[name]"),
+            ("/articles?page[size]={size}", "page[size]"),
+            ("/a?a[b][c]={x}", "a[b][c]"),
+            ("/a?a[][b]={x}", "a[][b]"),
+            ("/a?v1.2[-_.~]={x}", "v1.2[-_.~]"),
+        ] {
+            let template = parse(text).unwrap_or_else(|error| panic!("{text}: {error}"));
+
+            assert_eq!(template.query[0].key, key);
+        }
+    }
+
+    #[test]
+    fn the_brackets_of_a_key_are_well_formed() {
+        for key in [
+            "filter[name",
+            "filter]",
+            "filter]name[",
+            "[name]",
+            "[]",
+            "a[b]c",
+            "a[[b]]",
+            "a[b[c]]",
+            "a[b c]",
+            "a[b%5D]",
+            "..[x]",
+            "a[b]]",
+        ] {
+            assert!(
+                message(&format!("/a?{key}={{x}}"))
+                    .contains("may end in brackets that hold the same or nothing"),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bracketed_key_is_taken_once() {
+        assert!(
+            message("/a?expand[]={a}&expand[]={b}").contains("query key `expand[]` appears twice")
+        );
+        assert!(parse("/a?page[size]={size}&page[number]={number}").is_ok());
     }
 
     #[test]

@@ -83,6 +83,11 @@
 //! its key, and is empty when the key is missing. The client writes it so: a `None` leaves its key out, and a `Vec`
 //! repeats it.
 //!
+//! A key of the route's string is ASCII letters, digits and `-._~`, and may end in brackets that hold the same or
+//! nothing, as other APIs name their keys: `"/customers/{id}?expand[]={expand}"`,
+//! `"/articles?filter[name]={name}&page[size]={size}"`. The client escapes them, `expand%5B%5D=sources`, as a
+//! browser's form does, and the server reads them escaped or as they are.
+//!
 //! A query struct is the whole query: its fields are the keys, as serde names them, read and written the same way. It
 //! does not go with a query in the route's string. A `Vec` field that may be missing takes `#[serde(default)]`, as
 //! serde_html_form asks. The struct needs no `Default`: an empty query reads when each of its keys may be missing.

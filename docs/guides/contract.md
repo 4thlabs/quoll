@@ -129,6 +129,40 @@ whole segment, `/notes/{id}`, never part of one.
 A `key={name}` of the query is a query parameter. An `Option` may be missing, and the client leaves out a `None`. A
 `Vec` repeats its key, `?tag=a&tag=b`, and is empty when the key is missing.
 
+A key is ASCII letters, digits and `-._~`, and may end in brackets that hold the same or nothing, as many APIs name
+their keys:
+
+```rust
+use quoll::rest;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Customer {
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Article {
+    pub title: String,
+}
+
+rest::api! {
+    pub api Api = "";
+
+    pub group Shop {
+        GET "/customers/{id}?expand[]={expand}"
+            => customer(id: String, expand: Vec<String>) -> Customer;
+        GET "/articles?filter[name]={name}&page[size]={size}"
+            => articles(name: Option<String>, size: Option<u32>) -> Vec<Article>;
+    }
+}
+```
+
+The client escapes the brackets, `?expand%5B%5D=sources&expand%5B%5D=invoice`, as a browser's form does, and the
+server reads them escaped or as they are. The document names each parameter by its key, `expand[]`. The field of a
+query struct takes such a key by its serde name, `#[serde(rename = "filter[name]")]`.
+
 ### Query structs
 
 A route with many optional keys takes a query struct, `query filter: NoteFilter`: its fields are the keys, as serde
