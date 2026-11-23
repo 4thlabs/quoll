@@ -657,7 +657,11 @@ fn a_builder_shows_what_it_holds() {
 
     assert_eq!(
         format!("{built:?}"),
-        "Builder { layers: 1, shutdown: \"Ctrl-C and SIGTERM\", grace: 100ms }"
+        "Builder { layers: 1, shutdown: \"Ctrl-C and SIGTERM\", grace: 100ms, page: None }"
+    );
+    assert_eq!(
+        format!("{:?}", server::builder().page("web/dist")),
+        "Builder { layers: 0, shutdown: \"Ctrl-C and SIGTERM\", grace: 5s, page: Some(\"web/dist\") }"
     );
     assert_eq!(
         format!("{:?}", client::builder().with(client::retry(1))),

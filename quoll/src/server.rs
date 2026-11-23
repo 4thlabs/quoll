@@ -50,11 +50,14 @@
 //!
 //! The answer of each route carries its [`Route`](crate::Route), which a layer of the application's reads, to
 //! count the answers of each operation.
+//!
+//! [`Builder::page`] serves the page a bundler builds beside the api, on the same origin.
 
 pub(crate) mod body_limit;
 mod builder;
 mod compression;
 mod cors;
+mod page;
 mod request_id;
 mod timeout;
 pub(crate) mod trace;

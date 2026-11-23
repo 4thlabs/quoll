@@ -11,8 +11,9 @@ use crate::Scheme;
 /// The client puts it in the extensions of each request it sends, where a reqwest-middleware middleware reads it, to
 /// name a span after the operation or to send a credential to the routes that take it. The server puts it in the
 /// extensions of each answer of a route, where a tower layer reads it, to count the answers of each operation. An
-/// answer no route made has none: axum's 404 and 405, and the answers a layer makes before the route or instead of
-/// it, as a 503 of `server::timeout` and an early 413 of `server::body_limit`.
+/// answer no route made has none: the 404 of a path that is no route, the 405 of a route's path with another method,
+/// a file of the page, and the answers a layer makes before the route or instead of it, as a 503 of
+/// `server::timeout` and an early 413 of `server::body_limit`.
 ///
 /// ```
 /// use quoll::Route;

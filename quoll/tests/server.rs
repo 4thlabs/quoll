@@ -468,3 +468,58 @@ async fn each_error_answers_its_problem() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_path_under_the_prefix_that_no_route_serves_is_a_problem_404() {
+    let url = serve().await;
+    let http = reqwest::Client::new();
+
+    for path in ["/nope", "/notes/1/title/more", "/notes/"] {
+        let detail = problem(
+            answer(http.get(format!("{url}{path}"))).await,
+            StatusCode::NOT_FOUND,
+        );
+
+        assert_eq!(
+            detail.as_deref(),
+            Some("no route of the api serves this path"),
+            "{path}"
+        );
+    }
+
+    let detail = problem(
+        answer(http.post(format!("{url}/nope"))).await,
+        StatusCode::NOT_FOUND,
+    );
+
+    assert!(detail.is_some());
+}
+
+#[tokio::test]
+async fn a_route_keeps_its_405_and_the_root_of_the_api_its_route() {
+    let url = serve().await;
+    let http = reqwest::Client::new();
+
+    let wrong_method = http
+        .patch(format!("{url}/notes/1"))
+        .send()
+        .await
+        .expect("the server answers");
+    let root = http.get(&url).send().await.expect("the server answers");
+
+    assert_eq!(wrong_method.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(root.status(), StatusCode::OK);
+    assert_eq!(root.json::<String>().await.expect("a string"), "up");
+}
+
+#[tokio::test]
+async fn a_path_out_of_the_prefix_keeps_the_404_of_axum() {
+    let url = quoll::test::spawn(router()).await;
+
+    let response = reqwest::get(format!("{url}/elsewhere"))
+        .await
+        .expect("the server answers");
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(response.headers().get("content-type").is_none());
+}

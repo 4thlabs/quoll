@@ -314,8 +314,8 @@ fn served(router: axum::Router) -> axum::Router {
 }
 ```
 
-An answer that no route made carries no `Route`: axum's 404 and 405, a 503 of `timeout`, or an early 413 of
-`body_limit`.
+An answer that no route made carries no `Route`: the 404 of a path that is no route, the 405 of a route's path with
+another method, a file of [the page](#the-page), a 503 of `timeout`, or an early 413 of `body_limit`.
 
 ### The request id
 
@@ -358,6 +358,70 @@ async fn main() -> std::io::Result<()> {
         .await
 }
 ```
+
+## The page
+
+`.page(dir)` serves the page that `cargo quoll build` bundles, from its directory. The page and the api then share
+one origin. The page calls `/api/...` with no CORS, and a cookie scheme works as it is.
+
+```rust,no_run
+use quoll::server;
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let router = axum::Router::new();
+
+    server::builder()
+        .page("web/dist")
+        .serve("0.0.0.0:8080", router)
+        .await
+}
+```
+
+The server reads the directory at each request. A relative path is relative to the directory the server runs in. A
+new page is deployed without a new build of the server. `serve` and `serve_on` refuse to start when the directory has
+no `index.html`. `.page(dir)` replaces any fallback the router has.
+
+What the server answers:
+
+- `/` answers `index.html`. Any other path answers the file of that path in the directory.
+- A path that is no file and no route answers `index.html` too. The page's router then shows that path.
+- A path under the api's prefix that is no route answers a problem 404. It never reaches the page.
+- `HEAD` gets the headers alone. A method other than `GET` and `HEAD` is a problem 405.
+- No file outside the directory is sent. A path with `..` answers a problem 404. So does a symbolic link whose target
+  is outside the directory.
+
+The headers of a file:
+
+- `Content-Type` comes from the file's extension, with `charset=utf-8` for text. `X-Content-Type-Options: nosniff` is
+  always set.
+- Vite names the files of `assets/` by their hash, like `assets/index-BXa3kD9f.js`. Their content never changes, so
+  they are `Cache-Control: public, max-age=31536000, immutable`. `index.html` and every other file are `no-cache`: the
+  browser checks them again before each use.
+- `ETag` and `Last-Modified` answer `If-None-Match` and `If-Modified-Since` with a 304.
+- A compressed copy beside a file, `app.js.br` or `app.js.gz`, is sent in its place when the request accepts its
+  coding. Brotli comes first. Vite does not write these copies by default. Every file carries
+  `Vary: Accept-Encoding`.
+
+### The api's 404
+
+The api's router answers a problem 404 for any path under its prefix that no route serves, with or without a page. A
+path that a route serves keeps axum's 405 for another method. A path outside the prefix gets axum's 404 when there is
+no page.
+
+- An api with no prefix, `""`, has no such 404. Every path that is no route goes to the page.
+- Two apis with the same prefix cannot be merged with `Router::merge`: axum panics on their two 404s. Two apis with
+  different prefixes merge.
+- A router nested with `Router::nest` loses the 404 of its prefix. Its unknown paths get the outer router's fallback.
+
+### A release
+
+A release is two things: the server's binary, from `cargo build --release`, and the page's directory, `web/dist`, from
+`cargo quoll build`. Deploy both. Run the server from the directory that holds `web/dist`, or give `.page` an absolute
+path.
+
+The notes server serves `web/dist` when it holds an `index.html`. Under `cargo quoll dev`, Vite serves the page and
+proxies `/api` to the server.
 
 ## Shutdown
 

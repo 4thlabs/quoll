@@ -7,6 +7,7 @@ use std::fmt;
 use std::future::{Future, IntoFuture};
 use std::io;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::pin::{Pin, pin};
 use std::time::Duration;
 
@@ -27,6 +28,7 @@ use tower_service::Service;
 use super::layer::{
     BodyLimitLayer, CompressionLayer, CorsLayer, RequestIdLayer, TimeoutLayer, TraceLayer,
 };
+use super::page::{self, Page};
 use crate::__private::server::ended_on_stop;
 use crate::order::arrange;
 
@@ -83,12 +85,15 @@ pub fn builder() -> Builder {
 /// A layer of the application's keeps its place: the layers of quoll are sorted into the places they were given at,
 /// and any other stays where it is. A layer of quoll's is told by its type.
 ///
+/// It serves the page a bundler builds beside the api, [`page`](Self::page), on the same origin.
+///
 /// It serves the router with [`serve`](Self::serve) or [`serve_on`](Self::serve_on), or gives it back with its
 /// layers, [`into_router`](Self::into_router), to be served otherwise, or by [`test::spawn`](crate::test::spawn).
 pub struct Builder {
     layers: Vec<(Option<Rank>, Box<Add>)>,
     shutdown: Option<SyncWrapper<Signal>>,
     grace: Duration,
+    page: Option<PathBuf>,
 }
 
 impl Default for Builder {
@@ -97,6 +102,7 @@ impl Default for Builder {
             layers: Vec::new(),
             shutdown: None,
             grace: GRACE,
+            page: None,
         }
     }
 }
@@ -166,9 +172,48 @@ impl Builder {
         self
     }
 
-    /// The router with the layers around it, for an application that serves it itself, or a test.
+    /// Serves the files of `dir`, the page a bundler builds, `web/dist`, at every path the router does not serve:
+    /// the page and its api on one origin.
+    ///
+    /// The directory is read at each request, its path relative to the directory the server runs in: a page deployed
+    /// anew is served at once, with no new build of the server.
+    ///
+    /// - `/` answers `index.html`, and any other path the file of that path in `dir`. A path that is no file, and
+    ///   no route of the api, answers `index.html` too, so that the page's router takes it. The api's router answers
+    ///   a problem 404 for a path under its prefix that is no route: such a path never reaches the page.
+    /// - A file is sent with the content type of its extension and `X-Content-Type-Options: nosniff`, as `Bytes`
+    ///   are. Its `ETag` and `Last-Modified` answer a request's `If-None-Match` and `If-Modified-Since` with a 304.
+    ///   `HEAD` gets the headers alone. Any other method is a problem 405.
+    /// - A file Vite names by its hash, `assets/index-BXa3kD9f.js`, is `Cache-Control: public, max-age=31536000,
+    ///   immutable`; `index.html` and every other file `no-cache`.
+    /// - A file stored compressed beside itself, `app.js.br` or `app.js.gz`, is sent in its place when the request
+    ///   accepts its coding, Brotli first. Every file carries `Vary: Accept-Encoding`.
+    /// - No file out of `dir` is ever sent: a path with `..` and a symbolic link whose target is out of `dir`
+    ///   answer a problem 404.
+    ///
+    /// The page replaces any fallback of the router. [`serve`](Self::serve) and [`serve_on`](Self::serve_on) check
+    /// that `dir` holds an `index.html` before they serve.
+    ///
+    /// ```no_run
+    /// use quoll::server;
+    ///
+    /// # fn api_router() -> axum::Router { axum::Router::new() }
+    /// # async fn run() -> std::io::Result<()> {
+    /// server::builder()
+    ///     .page("web/dist")
+    ///     .serve("0.0.0.0:8080", api_router())
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn page(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.page = Some(dir.into());
+        self
+    }
+
+    /// The router with the layers around it, and the page, for an application that serves it itself, or a test.
     pub fn into_router(self, router: Router) -> Router {
-        layered(self.layers, router)
+        layered(self.layers, with_page(self.page, router))
     }
 
     /// Binds `address`, as `"0.0.0.0:8080"`, then serves the router with the layers around it, as
@@ -176,7 +221,8 @@ impl Builder {
     ///
     /// # Errors
     ///
-    /// When `address` cannot be bound, or the signals of the system cannot be listened to.
+    /// When `address` cannot be bound, the signals of the system cannot be listened to, or the
+    /// [`page`](Self::page)'s directory holds no `index.html`.
     pub async fn serve(self, address: impl Address, router: Router) -> io::Result<()> {
         let listener = address.bind().await?;
 
@@ -221,7 +267,8 @@ impl Builder {
     ///
     /// # Errors
     ///
-    /// When the signals of the system cannot be listened to.
+    /// When the signals of the system cannot be listened to, or the [`page`](Self::page)'s directory holds no
+    /// `index.html`.
     pub async fn serve_on<L>(self, listener: L, router: Router) -> io::Result<()>
     where
         L: Listener,
@@ -231,7 +278,13 @@ impl Builder {
             layers,
             shutdown,
             grace,
+            page,
         } = self;
+
+        if let Some(dir) = &page {
+            page::check(dir).await?;
+        }
+
         let signals: Signals = match shutdown {
             Some(signal) => Box::pin(stream::once(signal.into_inner()).chain(stream::pending())),
             None => terminated()?,
@@ -240,7 +293,7 @@ impl Builder {
 
         // Around the router, inside every other layer: they see the events' body end as when its handler's stream
         // ends.
-        let router = router.layer(map_response(move |response: Response| {
+        let router = with_page(page, router).layer(map_response(move |response: Response| {
             let response = ended_on_stop(response, &told);
 
             async move { response }
@@ -359,6 +412,7 @@ impl fmt::Debug for Builder {
             .field("layers", &self.layers.len())
             .field("shutdown", &shutdown)
             .field("grace", &self.grace)
+            .field("page", &self.page)
             .finish()
     }
 }
@@ -398,6 +452,14 @@ fn layered(layers: Vec<(Option<Rank>, Box<Add>)>, router: Router) -> Router {
         .into_iter()
         .rev()
         .fold(router, |router, add| add(router))
+}
+
+/// `router`, falling back to the files of `page` when there is one.
+fn with_page(page: Option<PathBuf>, router: Router) -> Router {
+    match page {
+        Some(dir) => router.fallback_service(Page::new(dir)),
+        None => router,
+    }
 }
 
 /// Ctrl-C and `SIGTERM`, which `docker stop` and Kubernetes send, each time they come.

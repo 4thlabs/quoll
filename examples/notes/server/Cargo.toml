@@ -14,7 +14,7 @@ getrandom = "0.3"
 notes-api = { path = "../api", features = ["server"] }
 quoll.workspace = true
 sha2 = "0.11"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "sync"] }
 tracing-subscriber = "0.3"
 
 [dev-dependencies]
