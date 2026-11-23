@@ -1,18 +1,18 @@
 # TypeScript
 
 A web page calls a quoll server through TypeScript that a generator writes from the contract's
-[OpenAPI document](openapi.md): any generator of OpenAPI, orval, openapi-typescript, hey-api, Kiota... `cargo quoll`
-writes the document, runs the generator after it, and runs the server and the page's dev server side by side. It knows
-no bundler and no generator: the commands it runs are the project's, named in the workspace's `Cargo.toml`, and the
-web side follows conventions.
+[OpenAPI document](openapi.md). Any OpenAPI generator works: orval, openapi-typescript, hey-api, Kiota... `cargo quoll`
+writes the document and runs the generator after it. It also runs the server and the page's dev server side by side.
+It knows no bundler and no generator: the commands it runs are those of the project, named in the workspace's
+`Cargo.toml`, and the web side follows conventions.
 
-This guide follows the notes example, whose generator is orval, which writes TanStack Query hooks; another generator
-takes its place in the same config, as [Another generator](#another-generator) shows.
+This guide follows the notes example. Its generator is orval, which writes TanStack Query hooks. Another generator
+takes its place in the same config: [Another generator](#another-generator) shows how.
 
 The TypeScript and TOML blocks of this guide are excerpts of [the notes example](../../examples/notes), under the
-name of their file; the code that the page does not use, `EventSource` and the reading of `JsonLines` and
-`ByteStream`, is in its `web/src/guide/`. The blocks of Next.js and of another generator are of another app, checked
-with Next.js 16 and openapi-typescript 7.
+name of their file. The code that the page does not use is in its `web/src/guide/`: `EventSource`, and the reading of
+`JsonLines` and `ByteStream`. The blocks of Next.js and of another generator belong to other apps, checked with
+Next.js 16 and openapi-typescript 7.
 
 ## The chain
 
@@ -37,8 +37,8 @@ cargo install --git https://github.com/4thlabs/quoll quoll-cli
 
 ## The config
 
-The config of `cargo quoll` is the workspace's `[workspace.metadata.quoll]`, in its `Cargo.toml`, where `cargo quoll`
-runs.
+The config of `cargo quoll` is under `[workspace.metadata.quoll]`, in the `Cargo.toml` of the workspace where
+`cargo quoll` runs.
 
 [`examples/notes/Cargo.toml`](../../examples/notes/Cargo.toml)
 
@@ -65,34 +65,42 @@ dev = ["npm", "run", "dev"]
 build = ["npm", "run", "build"]
 ```
 
-- `api`, one per contract: its `package`, the `bin` that prints its document, the `output` it is written to, from the
-  workspace's root, and `after`, the commands run after it, in order, in the directory of `output`. A command that
-  fails stops those after it.
-- `server`, one per server: its `package`, whose binary is the one `cargo run` would run, its only one or its
-  `default-run`, and the `url` it answers on.
-- `web`, once: its `dir`, from the workspace's root, `dev`, run beside the servers by `cargo quoll dev`, and `build`,
-  run after the documents by `cargo quoll build`, both in `dir`.
+- `api`, one per contract:
+  - its `package`;
+  - the `bin` that prints its document;
+  - the `output` it is written to, from the workspace's root;
+  - `after`, the commands run after it, in order, in the directory of `output`. A command that fails stops those
+    after it.
+- `server`, one per server: its `package`, and the `url` it answers on. Its binary is the one that `cargo run` would
+  run: the package's only binary, or its `default-run`.
+- `web`, once:
+  - its `dir`, from the workspace's root;
+  - `dev`, which `cargo quoll dev` runs beside the servers;
+  - `build`, which `cargo quoll build` runs after the documents.
 
-A command is a list of words, run with no shell: its program is found on the `PATH` as the OS does, so that `npm` is
-`npm.cmd` on Windows. A command that needs a shell, a pipe or a `&&`, is a script of the page's `package.json`, run as
-`["npm", "run", "<script>"]`. `npx --no` runs the generator that `npm ci` installs, at the version the
-`package-lock.json` pins, and fails rather than download one when it is missing.
+  Both commands run in `dir`.
+
+A command is a list of words, run with no shell. Its program is found on the `PATH` the way the OS finds it, so that
+`npm` is `npm.cmd` on Windows. A command that needs a shell, such as a pipe or a `&&`, is a script of the page's
+`package.json`, run as `["npm", "run", "<script>"]`. `npx --no` runs the generator that `npm ci` installs, at the
+version that `package-lock.json` pins. It fails rather than download one when the generator is missing.
 
 A config that cannot be read is an error that names the key at fault:
-`workspace.metadata.quoll.api[0].output: missing`. Each command that fails shows its output, as does a cargo build.
+`workspace.metadata.quoll.api[0].output: missing`. Each command that fails shows its output, the same way a cargo
+build does.
 
 ## `cargo quoll gen`
 
-`cargo quoll gen` builds and runs each api's binary, and writes its `output` when its content changed: a document
-that did not change is left as it is, so that the bundler reloads nothing. Then it runs the api's `after` commands,
+`cargo quoll gen` builds and runs each api's binary, and writes its `output` when its content changed. A document
+that did not change is left unchanged, so that the bundler reloads nothing. Then it runs the api's `after` commands,
 whether the document changed or not, so that a checkout whose document is committed gets its TypeScript too.
 
 `cargo quoll gen --check` writes nothing and runs nothing: it fails when a document on disk is not the one its
-contract prints, or is missing. It is the check of a project that commits its document. Cargo builds the contract
+contract prints, or is missing. It is the check for a project that commits its document. Cargo builds the contract
 with `--locked`, so that the check does not update the `Cargo.lock` either.
 
-A document compares with its line endings read as LF, so that a checkout with `core.autocrlf` is not stale. A
-committed document is best kept as the contract prints it, with LF, in `.gitattributes`:
+A document is compared with its line endings read as LF, so that a checkout with `core.autocrlf` is not stale. A
+committed document is best kept as the contract prints it, with LF, set in `.gitattributes`:
 
 ```text
 web/openapi.json text eol=lf
@@ -101,13 +109,13 @@ web/openapi.json text eol=lf
 ## `cargo quoll build`
 
 `cargo quoll build` runs `gen`, then `web.build` in `web.dir`, and fails when either fails. It is the build of the
-page in CI, and before a release: the TypeScript is written from the contract of the commit, then type-checked and
+page in CI, and before a release. The TypeScript is written from the contract of the commit, then type-checked and
 bundled with the page.
 
 ## `cargo quoll dev`
 
-`cargo quoll dev` runs `gen`, builds and starts the servers, then `web.dev`, and makes again what a change of a file
-touches, until Ctrl-C.
+`cargo quoll dev` runs `gen`, builds and starts the servers, then starts `web.dev`. Until Ctrl-C, it makes again what
+a change of a file touches.
 
 ```bash
 cd examples/notes
@@ -118,22 +126,31 @@ cargo quoll dev
 In the notes example it runs the notes server, orval and Vite, on `http://localhost:5173`. The server prints the
 demo's password when it starts.
 
-- A change to a contract, or to a crate it is built with, writes its document when its content changed, runs its
-  `after` commands then, or until they succeeded once, and restarts the servers built with it.
-- A change to a server restarts that server alone. The one that runs stops only once the new one has compiled: a
-  server that does not compile prints cargo's errors, and the last one that compiled keeps answering.
+- A change to a contract, or to a crate it is built with, writes its document when its content changed. It runs its
+  `after` commands when the document changed, or until they have succeeded once. It also restarts the servers built
+  with it.
+- A change to a server restarts only that server. The running one stops only once the new one has compiled. A server
+  that does not compile prints cargo's errors, and the last one that compiled keeps answering.
 - A server is ready when its `url` accepts a connection. `web.dev` starts once every server is ready or has failed,
-  and runs until the end: the bundler watches its own files, the TypeScript that `after` writes among them, and
+  and runs until the end. The bundler watches its own files, including the TypeScript that `after` writes, and
   reloads the page itself. A cargo error shows in the terminal of `cargo quoll dev`, not in the bundler's overlay.
-- Ctrl-C, or `SIGTERM`, stops `web.dev`, then the servers, each with what it started, on Linux, macOS and Windows.
+- Ctrl-C, or `SIGTERM`, stops `web.dev`, then the servers. Each one is stopped with what it started. This works on
+  Linux, macOS and Windows.
 
-The workspace's `Cargo.toml` and `Cargo.lock` are watched too, and the path dependencies outside the workspace. A
-package's own `target/`, hidden files, `node_modules`, the documents and `web.dir`, but the crates inside it, are not.
-On Linux, a package at the workspace's root that holds the web side's `node_modules` may use up inotify's watches,
-which a warning names: raise `fs.inotify.max_user_watches`, or keep the web side out of that package.
+The workspace's `Cargo.toml` and `Cargo.lock` are watched too, and so are the path dependencies outside the
+workspace. These are not watched:
 
-`cargo quoll dev --json` prints one JSON line per event on stdout, for a tool that reads them, an editor or a script
-that waits for the server, and its output for a person on stderr:
+- a package's own `target/`;
+- hidden files;
+- `node_modules`;
+- the documents;
+- `web.dir`, except the crates inside it.
+
+On Linux, a package at the workspace's root that holds the web side's `node_modules` may use up inotify's watches, and
+a warning names it. Raise `fs.inotify.max_user_watches`, or keep the web side out of that package.
+
+`cargo quoll dev --json` prints one JSON line per event on stdout, for a tool that reads them, such as an editor or a
+script that waits for the server. It prints its output for a person on stderr:
 
 ```text
 {"event":"document","package":"notes-api","path":"web/openapi.json","changed":true}
@@ -150,8 +167,8 @@ The [dev loop of the spec](../spec.md#the-dev-loop) lists every event and its fi
 
 ### The proxy
 
-The page calls the api on its own origin, `/api/...`, and Vite's own proxy sends it to the server's `url`. The two
-are written twice, in the workspace's `Cargo.toml` and in `vite.config.ts`, and change together.
+The page calls the api on its own origin, `/api/...`, and Vite's own proxy sends the call to the server's `url`. That
+`url` is written twice: in the workspace's `Cargo.toml` and in `vite.config.ts`. The two change together.
 
 [`examples/notes/web/vite.config.ts`](../../examples/notes/web/vite.config.ts)
 
@@ -170,14 +187,15 @@ export default defineConfig({
 });
 ```
 
-The proxy needs nothing else for streams. An `Events` answer opens with a comment, which Vite's proxy, holding the
-head of an answer until its first bytes, lets through at once: the page sees the stream open before its first event.
+The proxy needs nothing else for streams. An `Events` answer opens with a comment. Vite's proxy holds the head of an
+answer until its first bytes, so it lets that comment through at once: the page sees the stream open before its first
+event.
 A `JsonLines` or a `ByteStream` is seen to open with its first line or chunk.
 
 ### orval
 
-The notes example's generator is orval. Its config reads the document, `input: "./openapi.json"`, the api's `output`
-seen from `web/`, and `after` runs it; another generator's config reads it the same way.
+The notes example's generator is orval. Its config reads the document, `input: "./openapi.json"`, which is the api's
+`output` seen from `web/`. `after` runs orval. Another generator's config reads the document the same way.
 
 [`examples/notes/web/orval.config.ts`](../../examples/notes/web/orval.config.ts)
 
@@ -201,17 +219,17 @@ export default defineConfig({
 });
 ```
 
-- `client: "react-query"` writes a hook per route, `useNotesGet`, `useNotesUpdate`, and its query key,
-  `getNotesGetQueryKey`; `vue-query`, `svelte-query`, `swr` or a plain client come from the same document.
+- `client: "react-query"` writes one hook per route, such as `useNotesGet` or `useNotesUpdate`, and its query key,
+  `getNotesGetQueryKey`. `vue-query`, `svelte-query`, `swr` or a plain client come from the same document.
 - `httpClient: "fetch"` with the mutator: every request goes through one function of the page, `apiFetch`.
 - `includeHttpResponseReturnType: false` makes a hook's data the body that `apiFetch` returns.
 
 ### The mutator
 
-The mutator adds the credential, here the bearer token the page holds, and throws an `ApiError` for an error: its
-message is the problem's detail, which the page shows. Every error of a quoll server is an `application/problem+json`
-problem, the `Problem` type orval writes; a proxy that cannot reach the server answers with none, and the status alone
-is the error. `ErrorType` is the error type of the hooks, which orval imports from the mutator's file.
+The mutator adds the credential: here, the bearer token that the page holds. It throws an `ApiError` for an error.
+The error's message is the problem's detail, which the page shows. Every error of a quoll server is an
+`application/problem+json` problem: the `Problem` type that orval writes. A proxy that cannot reach the server answers
+with no problem, and the status alone is the error. `ErrorType` is the error type of the hooks, which orval imports from the mutator's file.
 
 [`examples/notes/web/src/api/fetch.ts`](../../examples/notes/web/src/api/fetch.ts)
 
@@ -302,7 +320,8 @@ The [authentication guide](authentication.md) says what a cookie scheme asks of 
 
 ### Hooks in a component
 
-A query hook takes the route's parameters, its query struct as an object, and TanStack Query's options under `query`:
+A query hook takes the route's parameters, with its query struct as an object, and TanStack Query's options under
+`query`:
 
 [`examples/notes/web/src/notes/NoteList.tsx`](../../examples/notes/web/src/notes/NoteList.tsx)
 
@@ -318,8 +337,8 @@ export function NoteList({ selected, onSelect, onNew }: Props) {
   const notes = data ?? [];
 ```
 
-A mutation hook takes its options under `mutation`, and `mutate` the route's parameters, its body as `data`. The
-page reads again what a change touches, through the query keys orval writes:
+A mutation hook takes its options under `mutation`. Its `mutate` takes the route's parameters, with its body as
+`data`. The page reads again what a change touches, through the query keys that orval writes:
 
 [`examples/notes/web/src/notes/NoteView.tsx`](../../examples/notes/web/src/notes/NoteView.tsx)
 
@@ -348,8 +367,8 @@ export function NoteView({ id, onClosed, onExpired }: Props) {
 ### The query client
 
 The page's query client does not try again an error below 500, which answers the same when asked again: a missing
-note, a refused token. A refusal of the token the page holds, which `ApiError` says `expired`, signs the
-page out, whichever query or mutation hears of it.
+note, a refused token. When the token that the page holds is refused, `ApiError` says `expired`, and the page signs
+out, whichever query or mutation hears of it.
 
 [`examples/notes/web/src/queryClient.ts`](../../examples/notes/web/src/queryClient.ts)
 
@@ -401,10 +420,10 @@ export function App() {
 
 ## Streams
 
-The routes whose result is a stream are read with the browser's own APIs: quoll has no helper on the web side for
-now, [Later](../spec.md#later) says what comes.
-orval writes a hook for such a route too, which would wait for the whole body as one JSON value: the page takes its
-url instead, `getNotesEventsUrl(id)`, which orval writes beside it.
+The routes whose result is a stream are read with the browser's own APIs. quoll has no helper on the web side for
+now: [Later](../spec.md#later) says what comes. orval writes a hook for such a route too, but that hook would wait for
+the whole body as one JSON value. So the page takes the route's url instead, `getNotesEventsUrl(id)`, which orval
+writes beside the hook.
 
 | The route returns | On the wire                                | Read with                                         |
 | ----------------- | ------------------------------------------ | ------------------------------------------------- |
@@ -414,9 +433,9 @@ url instead, `getNotesEventsUrl(id)`, which orval writes beside it.
 
 ### The types of the items
 
-OpenAPI 3.1 cannot type the items of a stream: the document names them in the extension `x-item` of the answer's
-media type, a `$ref` to the item's schema. The schema is under `components/schemas`, which a generator writes as a type
-like any other, and the page names it. A tagged enum's variant that holds a struct is an
+OpenAPI 3.1 cannot type the items of a stream. So the document names them in the extension `x-item` of the answer's
+media type: a `$ref` to the item's schema. The schema is under `components/schemas`. A generator writes it as a type
+like any other, and the page names that type. A variant of a tagged enum that holds a struct is an
 [`allOf`](openapi.md#what-it-holds) of that struct and of its tag, so that its type keeps the tag:
 
 ```rust
@@ -465,15 +484,15 @@ export type NoteEvent = Note & {
 };
 ```
 
-An `i64` is a `number`, exact up to 2^53: an id or a count stays below it, and a value that may go beyond it is a
+An `i64` is a `number`, exact up to 2^53. An id or a count stays below that. A value that may go beyond it is a
 `String` in its Rust type.
 
 ### `Events` with a header credential
 
-`EventSource` cannot send a header: a page whose scheme is a bearer token, or any header, reads an `Events` route with
-`fetch`, and splits the events itself, as quoll's server writes them, each line ended by `\n`. The notes page's
-`apiEvents` does, with the token of its mutator. Every event that has data is an item, an event with no data and a
-comment are skipped, and an `event: problem` ends the stream with its problem.
+`EventSource` cannot send a header. So a page whose scheme is a bearer token, or any other header, reads an `Events`
+route with `fetch`. It splits the events itself, the way quoll's server writes them, each line ended by `\n`. The
+notes page's `apiEvents` does this, with the token of its mutator. Every event that has data is an item. An event with
+no data, and a comment, are skipped. An `event: problem` ends the stream with its problem.
 
 [`examples/notes/web/src/api/fetch.ts`](../../examples/notes/web/src/api/fetch.ts)
 
@@ -620,13 +639,13 @@ in it: the page reads the note again once it is open. The `allOf` of the documen
 ### `Events` with a cookie
 
 A same-origin page whose scheme is a cookie, which the browser sends itself, may read an `Events` route with
-`EventSource`. Two of its ways are to be known:
+`EventSource`. Two of its behaviours matter here:
 
-- `onmessage` sees only the events with no name, the items: the `event: problem` that ends a stream which failed
-  after its 200 is seen by `source.addEventListener("problem", ...)`, its `data` the problem.
-- After a clean end of the stream, `EventSource` connects again on its own, unless it is closed, and goes on only when
+- `onmessage` sees only the events with no name, which are the items. A stream that fails after its 200 ends with an
+  `event: problem`. `source.addEventListener("problem", ...)` sees that event, and its `data` is the problem.
+- After a clean end of the stream, `EventSource` connects again on its own, unless it is closed. It goes on only when
   that request is answered with a 200. Any other answer closes it for good: a refused cookie, a missing note, or a 5xx
-  of a proxy while the server restarts. It sees no status: `onerror` alone says it failed.
+  of a proxy while the server restarts. It sees no status: only `onerror` says it failed.
 
 [`examples/notes/web/src/guide/cookieEvents.ts`](../../examples/notes/web/src/guide/cookieEvents.ts)
 
@@ -675,13 +694,13 @@ export function followEvents<T>(
 }
 ```
 
-An item that ends its stream, such as `removed`, closes the source in `onItem`, with the function
-`followEvents` returns: otherwise the clean end that follows it connects again.
+An item that ends its stream, such as `removed`, closes the source in `onItem`, with the function that
+`followEvents` returns. Otherwise the clean end that follows it connects again.
 
 ### `JsonLines` and `ByteStream`
 
-A `JsonLines` or a `ByteStream` route is read with `fetch` and `response.body.getReader()`, from an answer fetched as
-`readEvents` fetches its own: with the credential, and with its `ApiError` when it is not a 200.
+A `JsonLines` or a `ByteStream` route is read with `fetch` and `response.body.getReader()`. The answer is fetched the
+same way `readEvents` fetches its own: with the credential, and with its `ApiError` when it is not a 200.
 
 [`examples/notes/web/src/guide/streams.ts`](../../examples/notes/web/src/guide/streams.ts)
 
@@ -747,16 +766,20 @@ export async function readChunks(response: Response, onChunk: (chunk: Uint8Array
 A clean end is no failure: the page may follow the stream again, and reads again what changed meanwhile.
 [Shutdown](server.md#shutdown) says what a server told to stop does with each stream.
 
-In `cargo quoll dev`, a server that restarts is sent `SIGTERM` on Linux and macOS, and ends its `Events` cleanly,
-which Vite's proxy passes on. A stream the server cuts rather than ends is not: Vite's proxy keeps the page's side
-open, and the page does not see it end. That is a `JsonLines` or a `ByteStream` at a restart, any stream on Windows,
-where the server's job is terminated, and any stream of a server that crashes.
+In `cargo quoll dev`, a server that restarts is sent `SIGTERM` on Linux and macOS, and ends its `Events` streams
+cleanly. Vite's proxy passes that end on. It does not pass on a stream that the server cuts rather than ends: Vite's
+proxy keeps the page's side open, and the page does not see the stream end. This happens to:
+
+- a `JsonLines` or a `ByteStream` at a restart;
+- any stream on Windows, where the server's job is terminated;
+- any stream of a server that crashes.
 
 ## Next.js
 
-The config of `cargo quoll` names no bundler: a Next.js app takes the same `web`, whose `npm run dev` is `next dev`.
+The config of `cargo quoll` names no bundler. A Next.js app takes the same `web` table, whose `npm run dev` is
+`next dev`.
 
-`package.json`, its scripts:
+The scripts of `package.json`:
 
 ```json
 {
@@ -767,7 +790,7 @@ The config of `cargo quoll` names no bundler: a Next.js app takes the same `web`
 }
 ```
 
-The proxy is Next's `rewrites`, to the server's `url`, which changes with it:
+The proxy is Next's `rewrites`, to the server's `url`. The two change together:
 
 `next.config.ts`
 
@@ -789,8 +812,8 @@ const config: NextConfig = {
 export default config;
 ```
 
-orval's config and the mutator are the Vite page's. The hooks run in the browser: the components that use them are
-client components.
+orval's config and the mutator are the same as for the Vite page. The hooks run in the browser, so the components
+that use them are client components.
 
 `app/page.tsx`
 
@@ -819,14 +842,15 @@ export default function Page() {
 }
 ```
 
-With `next dev`, the rewrites pass an `Events` stream on as it comes, its opening comment first, and its clean end
-when `cargo quoll dev` restarts the server. A static export, `output: "export"`, has no rewrites: what serves its
+With `next dev`, the rewrites pass an `Events` stream on as it comes: its opening comment first, and its clean end
+when `cargo quoll dev` restarts the server. A static export, `output: "export"`, has no rewrites: whatever serves its
 files sends `/api` to the server.
 
 ## Another generator
 
-`after` runs the generator the page depends on, whichever it is, pinned by its lock file, which `npx --no` runs. A
-page that takes the types alone, written by `openapi-typescript`, and calls `fetch` itself names it in place of orval:
+`after` runs the generator that the page depends on, whichever it is, pinned by its lock file: `npx --no` runs it. A
+page may take only the types, written by `openapi-typescript`, and call `fetch` itself. It names that generator in
+place of orval:
 
 ```toml
 [[workspace.metadata.quoll.api]]
@@ -836,7 +860,7 @@ output = "web/openapi.json"
 after = [["npx", "--no", "openapi-typescript", "openapi.json", "-o", "src/api/schema.d.ts"]]
 ```
 
-`after` is a list: a second generator runs after the first, in the same directory, as `openapi-typescript` writing
+`after` is a list: a second generator runs after the first, in the same directory. Here `openapi-typescript` writes
 the types beside orval's hooks:
 
 ```toml
@@ -850,26 +874,26 @@ after = [
 ]
 ```
 
-A command that needs more than its arguments, an environment variable or a second step, is a script of the page's
-`package.json`, which `after` runs as `["npm", "run", "<script>"]`.
+A command that needs more than its arguments, such as an environment variable or a second step, is a script of the
+page's `package.json`. `after` runs it as `["npm", "run", "<script>"]`.
 
 ## What is committed
 
 The notes example commits neither the document nor the TypeScript: `cargo quoll gen` writes them, in development and
 in a build. They are generated code on disk, which `tsc` and the editor need.
 
-- Committed: the contract, the page's code, its mutator among it, `orval.config.ts`, `package.json` and
+- Committed: the contract, the page's code including its mutator, `orval.config.ts`, `package.json` and
   `package-lock.json`.
-- Ignored: `openapi.json`, `**/openapi.json` in the root's `.gitignore`, and orval's `src/api/generated.ts`, `dist` and
-  `node_modules`, in the page's.
+- Ignored: `openapi.json`, through `**/openapi.json` in the root `.gitignore`; orval's `src/api/generated.ts`, `dist`
+  and `node_modules`, in the page's `.gitignore`.
 
-A project that wants a CI of its JavaScript alone, with no cargo, commits its document, with LF in `.gitattributes`,
-and runs `cargo quoll gen --check` in its Rust CI: the JavaScript CI runs the generator on the committed document.
+A project that wants a CI of its JavaScript alone, with no cargo, commits its document, with LF in `.gitattributes`.
+It runs `cargo quoll gen --check` in its Rust CI, and the JavaScript CI runs the generator on the committed document.
 
 ## CI
 
-The `web` job of quoll's CI is the model: it installs the page's dependencies, then `cargo quoll build` writes the
-document and the TypeScript and builds the page, then the page's tests run. A change of the contract that breaks the
+The `web` job of quoll's CI is the model. It installs the page's dependencies. Then `cargo quoll build` writes the
+document and the TypeScript and builds the page. Then the page's tests run. A change of the contract that breaks the
 page breaks the pull request. For an application, with its page in `web/`:
 
 ```yaml
