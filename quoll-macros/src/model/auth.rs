@@ -335,7 +335,8 @@ pub(crate) fn resolve(api: &mut Api, errors: &mut ErrorList) {
 
                 // A path that ends with a declared scheme's name, or goes through `quoll` to the crate's, would be
                 // a second name for one scheme: `Key | self::Key` would take it twice. An application's own type
-                // of the name of a declared scheme takes another name.
+                // of the name of a declared scheme takes another name. The crate is told by its name alone: one
+                // imported under another, `use quoll as q;` then `q::Bearer`, which the macro cannot see, passes.
                 let segments: Vec<String> = scheme
                     .path
                     .segments
