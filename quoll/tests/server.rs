@@ -5,7 +5,7 @@
 use std::sync::Mutex;
 
 use http::header::LOCATION;
-use quoll::rest::{self, Created, Error, Response, Result};
+use quoll::{Created, Error, Response, Result};
 use reqwest::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,7 +38,7 @@ struct Found {
     tags: Vec<String>,
 }
 
-rest::api! {
+quoll::api! {
     /// Notes, to test the server with.
     api Api = "/api";
 

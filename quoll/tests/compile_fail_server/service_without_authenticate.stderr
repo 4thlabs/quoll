@@ -9,7 +9,7 @@ help: the trait `Authenticate<Bearer>` is not implemented for `App`
    |
 12 | struct App;
    | ^^^^^^^^^^
-   = note: a group or a route with `#[auth(Bearer)]` gives each handler its caller: implement `quoll::rest::Authenticate<Bearer>` for `App`, with its `type Caller` and its `async fn authenticate`
+   = note: a group or a route with `#[auth(Bearer)]` gives each handler its caller: implement `quoll::Authenticate<Bearer>` for `App`, with its `type Caller` and its `async fn authenticate`
 
 error[E0277]: `App` does not implement `Authenticate<Bearer>`, which a group it serves takes
   --> tests/compile_fail_server/service_without_authenticate.rs:6:12
@@ -22,7 +22,7 @@ help: the trait `Authenticate<Bearer>` is not implemented for `App`
    |
 12 | struct App;
    | ^^^^^^^^^^
-   = note: a group or a route with `#[auth(Bearer)]` gives each handler its caller: implement `quoll::rest::Authenticate<Bearer>` for `App`, with its `type Caller` and its `async fn authenticate`
+   = note: a group or a route with `#[auth(Bearer)]` gives each handler its caller: implement `quoll::Authenticate<Bearer>` for `App`, with its `type Caller` and its `async fn authenticate`
 
 error[E0277]: `App` does not implement `Authenticate<Bearer>`, which a group it serves takes
   --> tests/compile_fail_server/service_without_authenticate.rs:14:22
@@ -35,7 +35,7 @@ help: the trait `Authenticate<Bearer>` is not implemented for `App`
    |
 12 | struct App;
    | ^^^^^^^^^^
-   = note: a group or a route with `#[auth(Bearer)]` gives each handler its caller: implement `quoll::rest::Authenticate<Bearer>` for `App`, with its `type Caller` and its `async fn authenticate`
+   = note: a group or a route with `#[auth(Bearer)]` gives each handler its caller: implement `quoll::Authenticate<Bearer>` for `App`, with its `type Caller` and its `async fn authenticate`
 note: required by a bound in `NotesServer`
   --> tests/compile_fail_server/service_without_authenticate.rs:6:12
    |

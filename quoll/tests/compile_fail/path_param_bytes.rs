@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A type of quoll's that the contract reads otherwise: a body or a result.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Files {

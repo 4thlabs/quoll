@@ -1,5 +1,3 @@
-use quoll::rest;
-
-rest::group! {}
+quoll::group! {}
 
 fn main() {}

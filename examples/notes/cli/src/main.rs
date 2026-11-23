@@ -1,7 +1,6 @@
 use futures::StreamExt;
 use notes_api::{Api, Auth, Login, NewNote, NoteFilter, Notes};
-use quoll::client;
-use quoll::rest::Form;
+use quoll::{Form, client};
 use reqwest::StatusCode;
 
 #[tokio::main]

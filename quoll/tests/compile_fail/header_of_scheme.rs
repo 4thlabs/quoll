@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // An argument that reads the header of a scheme the route takes.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Key = header "X-Api-Key";

@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A `Vec`, which is not a struct.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

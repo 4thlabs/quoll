@@ -1,5 +1,5 @@
 use futures_util::{StreamExt, stream};
-use quoll::rest::{self, ByteStream, Call, Events, JsonLines, Result};
+use quoll::{ByteStream, Call, Events, JsonLines, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,7 @@ pub struct Change {
     pub id: i64,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Feeds {

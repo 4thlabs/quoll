@@ -1,5 +1,5 @@
 error: expected a method, one of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS
- --> tests/compile_fail/route_method_unknown.rs:7:9
+ --> tests/compile_fail/route_method_unknown.rs:5:9
   |
-7 |         FETCH "/notes" => list();
+5 |         FETCH "/notes" => list();
   |         ^^^^^

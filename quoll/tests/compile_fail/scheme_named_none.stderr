@@ -1,5 +1,5 @@
 error: `none` is a word `#[auth(...)]` already takes: name the scheme otherwise, as `Key`
- --> tests/compile_fail/scheme_named_none.rs:7:16
+ --> tests/compile_fail/scheme_named_none.rs:5:16
   |
-7 |     pub scheme none = header "X-Token";
+5 |     pub scheme none = header "X-Token";
   |                ^^^^

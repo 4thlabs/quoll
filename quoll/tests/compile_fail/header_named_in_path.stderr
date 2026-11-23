@@ -1,5 +1,5 @@
 error: `id` is a header, and the path's `{id}` names it too: an argument comes from one place, so rename one of them
- --> tests/compile_fail/header_named_in_path.rs:7:51
+ --> tests/compile_fail/header_named_in_path.rs:5:51
   |
-7 |         GET "/notes/{id}" => get(header("X-Note") id: i64);
+5 |         GET "/notes/{id}" => get(header("X-Note") id: i64);
   |                                                   ^^

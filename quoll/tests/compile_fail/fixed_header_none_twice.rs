@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     pub api Api = "";
 

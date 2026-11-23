@@ -1,16 +1,12 @@
-use quoll::rest;
-
 mod archive {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         pub group Archive {
             GET "/notes/{id}" => get(id: i64);
         }
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api" { archive::Archive };
 
     pub group Notes {

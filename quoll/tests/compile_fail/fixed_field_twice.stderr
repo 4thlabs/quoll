@@ -1,5 +1,5 @@
 error: the field `stream` is already fixed here: a route fixes a field once
-  --> tests/compile_fail/fixed_field_twice.rs:15:16
+  --> tests/compile_fail/fixed_field_twice.rs:14:16
    |
-15 |         #[body("stream" = false)]
+14 |         #[body("stream" = false)]
    |                ^^^^^^^^

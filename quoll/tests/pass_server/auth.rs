@@ -1,6 +1,6 @@
-use quoll::rest::{self, Authenticate, Bearer, Error, Response, Result};
+use quoll::{Authenticate, Bearer, Error, Response, Result};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Auth {

@@ -1,5 +1,5 @@
 error: a header is named by a string: write `header("Last-Event-ID") last: Option<String>`
- --> tests/compile_fail/header_name_not_a_string.rs:7:37
+ --> tests/compile_fail/header_name_not_a_string.rs:5:37
   |
-7 |         GET "/notes" => list(header(X-Page) page: u32);
+5 |         GET "/notes" => list(header(X-Page) page: u32);
   |                                     ^

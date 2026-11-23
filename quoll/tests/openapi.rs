@@ -4,9 +4,9 @@
 use std::sync::LazyLock;
 
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{
-    self, Accepted, ByteStream, Bytes, Created, Events, Form, JsonLines, Result, Scheme, Text,
+use quoll::{
+    Accepted, ByteStream, Bytes, Created, Events, Form, JsonLines, Result, Scheme, Text,
+    openapi::SecurityScheme,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -153,7 +153,7 @@ mod auth {
     pub(crate) use super::Hmac;
 }
 
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     ///
     /// Each user sees their own.

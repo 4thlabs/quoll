@@ -7,9 +7,9 @@ use base64::engine::general_purpose::STANDARD;
 use http::HeaderValue;
 use http::request::Parts;
 
-use crate::rest::auth::bearer::authorization;
-use crate::rest::openapi::SecurityScheme;
-use crate::rest::{Error, Result, Scheme};
+use crate::auth::bearer::authorization;
+use crate::openapi::SecurityScheme;
+use crate::{Error, Result, Scheme};
 
 /// A user and a password in the `Authorization` header: `Authorization: Basic <base64 of user:password>`, as RFC 7617
 /// sends them. Its credential is a [`BasicCredential`].
@@ -19,7 +19,7 @@ use crate::rest::{Error, Result, Scheme};
 /// a route that the web page calls had better take another scheme.
 ///
 /// ```
-/// use quoll::rest::{Basic, Scheme};
+/// use quoll::{Basic, Scheme};
 ///
 /// let request = http::Request::get("/api/stats")
 ///     .header("Authorization", "Basic YW5hOnNlY3JldA==")

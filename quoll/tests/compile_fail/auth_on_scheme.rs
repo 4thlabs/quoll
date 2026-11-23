@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // `#[auth]` on a scheme.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer)]

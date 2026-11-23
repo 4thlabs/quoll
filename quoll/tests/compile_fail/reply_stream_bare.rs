@@ -1,11 +1,9 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
         GET "/events" => events() -> Events;
-        GET "/lines"  => lines() -> rest::JsonLines<Note, Job>;
+        GET "/lines"  => lines() -> quoll::JsonLines<Note, Job>;
     }
 }
 

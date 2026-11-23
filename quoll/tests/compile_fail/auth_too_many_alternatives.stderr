@@ -1,5 +1,5 @@
 error: an alternative takes up to 4 schemes: remove one, or give the route a scheme of its own that reads them all
-  --> tests/compile_fail/auth_too_many_alternatives.rs:12:31
+  --> tests/compile_fail/auth_too_many_alternatives.rs:10:31
    |
-12 |     #[auth(Bearer | A | B | C | D)]
+10 |     #[auth(Bearer | A | B | C | D)]
    |                               ^

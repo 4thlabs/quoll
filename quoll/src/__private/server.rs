@@ -1,4 +1,4 @@
-//! The server side of what `rest::api!` writes: the routes of a group on an axum router, the caller authenticated and
+//! The server side of what `quoll::api!` writes: the routes of a group on an axum router, the caller authenticated and
 //! the arguments read from a request, and the answers, streams among them, an error answered as an RFC 9457
 //! problem.
 
@@ -25,9 +25,9 @@ use crate::__private::fields::{self, Field};
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
 use crate::__private::read::{Deserialized, Read};
 use crate::__private::text;
-use crate::rest::error::Repr;
-use crate::rest::{self, Authenticate, Error, Result, Route, Scheme, Scoped};
+use crate::error::Repr;
 use crate::server::{body_limit, trace};
+use crate::{Authenticate, Error, Result, Route, Scheme, Scoped};
 
 mod stream;
 
@@ -853,7 +853,7 @@ fn rejected(status: StatusCode, text: String) -> Error {
 /// # Errors
 ///
 /// The handler's error, or a 500 when its value cannot be written as JSON or a header it gave cannot be sent.
-pub fn ok<T: Serialize>(result: Result<rest::Response<T>>) -> Result<Response> {
+pub fn ok<T: Serialize>(result: Result<crate::Response<T>>) -> Result<Response> {
     let (given, value) = parts(result)?;
 
     with_headers(json(StatusCode::OK, &value)?, given)
@@ -865,7 +865,7 @@ pub fn ok<T: Serialize>(result: Result<rest::Response<T>>) -> Result<Response> {
 /// # Errors
 ///
 /// The handler's error, or a 500 when its value cannot be written as JSON or a header it gave cannot be sent.
-pub fn created<C>(result: Result<rest::Response<C::Value>>) -> Result<Response>
+pub fn created<C>(result: Result<crate::Response<C::Value>>) -> Result<Response>
 where
     C: IsCreated,
     C::Value: Serialize,
@@ -880,7 +880,7 @@ where
 /// # Errors
 ///
 /// The handler's error, or a 500 when its value cannot be written as JSON or a header it gave cannot be sent.
-pub fn accepted<A>(result: Result<rest::Response<A::Value>>) -> Result<Response>
+pub fn accepted<A>(result: Result<crate::Response<A::Value>>) -> Result<Response>
 where
     A: IsAccepted,
     A::Value: Serialize,
@@ -895,7 +895,7 @@ where
 /// # Errors
 ///
 /// The handler's error, or a 500 when a header it gave cannot be sent.
-pub fn ok_text<T: IsText>(result: Result<rest::Response<T>>) -> Result<Response> {
+pub fn ok_text<T: IsText>(result: Result<crate::Response<T>>) -> Result<Response> {
     let (given, text) = parts(result)?;
     let content_type = HeaderValue::from_static(TEXT_UTF8);
 
@@ -912,7 +912,7 @@ pub fn ok_text<T: IsText>(result: Result<rest::Response<T>>) -> Result<Response>
 /// # Errors
 ///
 /// The handler's error, or a 500 when their content type is not a media type or a header it gave cannot be sent.
-pub fn ok_bytes<B: IsBytes>(result: Result<rest::Response<B>>) -> Result<Response> {
+pub fn ok_bytes<B: IsBytes>(result: Result<crate::Response<B>>) -> Result<Response> {
     let (given, bytes) = parts(result)?;
     let (bytes, content_type) = bytes.into_parts();
     let content_type = media_type_value(content_type).map_err(|content_type| {
@@ -935,7 +935,7 @@ pub fn ok_bytes<B: IsBytes>(result: Result<rest::Response<B>>) -> Result<Respons
 /// # Errors
 ///
 /// The handler's error, or a 500 when a header it gave cannot be sent.
-pub fn no_content(result: Result<rest::Response<()>>) -> Result<Response> {
+pub fn no_content(result: Result<crate::Response<()>>) -> Result<Response> {
     let (given, ()) = parts(result)?;
 
     with_headers(StatusCode::NO_CONTENT.into_response(), given)
@@ -946,7 +946,7 @@ pub fn no_content(result: Result<rest::Response<()>>) -> Result<Response> {
 /// # Errors
 ///
 /// The handler's error, or a 500 when a header it gave was not one, which says which without its value.
-pub(crate) fn parts<T>(result: Result<rest::Response<T>>) -> Result<(Given, T)> {
+pub(crate) fn parts<T>(result: Result<crate::Response<T>>) -> Result<(Given, T)> {
     let response = result?;
 
     if let Some(invalid) = response.invalid() {
@@ -1025,7 +1025,7 @@ pub(crate) fn with_headers(mut response: Response, given: Given) -> Result<Respo
 
     *response.status_mut() = status;
 
-    if rest::no_content(status) || status == StatusCode::NOT_MODIFIED {
+    if crate::no_content(status) || status == StatusCode::NOT_MODIFIED {
         for written in &WRITTEN {
             response.headers_mut().remove(written);
         }

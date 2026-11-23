@@ -1,9 +1,8 @@
 //! The groups of another block an api with an `#[error(E)]` lists: one whose routes each name their shape, and any
-//! group under an api whose shape is the default, `rest::Problem`.
+//! group under an api whose shape is the default, `quoll::Problem`.
 
 use std::fmt;
 
-use quoll::rest;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -18,20 +17,18 @@ impl fmt::Display for HubError {
 }
 
 mod gists {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         // No `#[error]` of the group's: each route names its own.
         #[openapi(none)]
         pub group Gists {
             #[error(super::HubError)]
             GET "/gists" => list();
-            #[error(rest::Problem)]
+            #[error(quoll::Problem)]
             GET "/gists/{id}" => get(id: String) -> String;
         }
     }
 
-    rest::group! {
+    quoll::group! {
         #[openapi(none)]
         pub group Stars {
             GET "/stars" => list();
@@ -39,15 +36,15 @@ mod gists {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[error(HubError)]
     pub api Hub = "" { gists::Gists };
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
-    #[error(rest::Problem)]
+    #[error(quoll::Problem)]
     pub api Mirror = "/mirror" { gists::Stars };
 }
 

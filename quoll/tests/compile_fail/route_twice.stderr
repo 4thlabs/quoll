@@ -1,5 +1,5 @@
 error: GET on this path is already the route `Notes::get`: a method and a path belong to one route
- --> tests/compile_fail/route_twice.rs:8:13
+ --> tests/compile_fail/route_twice.rs:6:13
   |
-8 |         GET "/notes/{note}" => get_again(note: i64);
+6 |         GET "/notes/{note}" => get_again(note: i64);
   |             ^^^^^^^^^^^^^^^

@@ -1,13 +1,13 @@
 error[E0277]: `HubError` is not the shape of an api's errors
-  --> tests/compile_fail_client/error_not_a_shape.rs:12:13
+  --> tests/compile_fail_client/error_not_a_shape.rs:11:13
    |
-12 |     #[error(HubError)]
+11 |     #[error(HubError)]
    |             ^^^^^^^^ `#[error(...)]` names a type that implements `Deserialize`, `Display` and `Debug`, and is `Send`, `Sync` and `'static`
    |
 help: the trait `std::fmt::Display` is not implemented for `HubError`
-  --> tests/compile_fail_client/error_not_a_shape.rs:6:1
+  --> tests/compile_fail_client/error_not_a_shape.rs:5:1
    |
- 6 | pub struct HubError {
+ 5 | pub struct HubError {
    | ^^^^^^^^^^^^^^^^^^^
    = note: the client reads the body of an error answer as the JSON of the type, and its `Display` gives the error's message
 help: the trait `quoll::__private::client::Shape` is implemented for `Problem`

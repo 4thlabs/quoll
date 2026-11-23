@@ -1,5 +1,5 @@
 error: the header `Authorization` carries the credential of `Bearer`, which the route takes: the handler receives its caller, and the client's middleware sends it
- --> tests/compile_fail/header_authorization_on_bearer.rs:8:50
+ --> tests/compile_fail/header_authorization_on_bearer.rs:6:50
   |
-8 |         GET "/notes/{id}" => get(id: i64, header("Authorization") token: String);
+6 |         GET "/notes/{id}" => get(id: i64, header("Authorization") token: String);
   |                                                  ^^^^^^^^^^^^^^^

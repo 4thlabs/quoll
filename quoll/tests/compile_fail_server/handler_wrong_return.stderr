@@ -9,7 +9,7 @@ error[E0271]: expected `impl Future<Output = Result<Response<i64>, Error>>` to b
 note: required by a bound in `NotesServer::get::{anon_assoc#0}`
   --> tests/compile_fail_server/handler_wrong_return.rs:7:30
    |
- 3 | rest::api! {
+ 3 | quoll::api! {
 ...
  7 |         GET "/notes/{id}" => get(id: i64) -> String;
    |                              ^^^ required by this bound in `NotesServer::get::{anon_assoc#0}`

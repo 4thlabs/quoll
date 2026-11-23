@@ -1,4 +1,4 @@
-use quoll::rest::{self, Created};
+use quoll::Created;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,7 @@ pub struct Note {
 }
 
 // Whatever the features, a contract with authentication compiles: each side writes what it needs of it.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Auth {

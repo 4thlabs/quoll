@@ -1,5 +1,5 @@
 error: the path parameter `tags` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants
- --> tests/compile_fail/path_param_map.rs:7:42
+ --> tests/compile_fail/path_param_map.rs:5:42
   |
-7 |         GET "/notes/{tags}" => get(tags: std::collections::HashMap<String, String>);
+5 |         GET "/notes/{tags}" => get(tags: std::collections::HashMap<String, String>);
   |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

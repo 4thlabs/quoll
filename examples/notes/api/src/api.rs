@@ -1,8 +1,8 @@
-use quoll::rest::{self, Created, Events, Form};
+use quoll::{Created, Events, Form};
 
 use crate::{Login, NewNote, Note, NoteEvent, NoteFilter, Stats, TokenResponse};
 
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     pub api Api = "/api";
 

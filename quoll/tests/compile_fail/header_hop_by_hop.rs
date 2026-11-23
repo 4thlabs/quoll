@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A header that HTTP keeps to one connection.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

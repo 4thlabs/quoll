@@ -1,9 +1,5 @@
-use quoll::rest;
-
 mod other {
-    use quoll::rest;
-
-    rest::api! {
+    quoll::api! {
         #[openapi(none)]
         pub api Other = "";
 
@@ -11,7 +7,7 @@ mod other {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     pub api Api = "";
 

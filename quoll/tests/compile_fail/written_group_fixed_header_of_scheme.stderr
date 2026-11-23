@@ -1,5 +1,5 @@
 error[E0080]: evaluation panicked: the route `Admin::stats` fixes the header `X-Api-Key`, which carries the credential of `Key`, a scheme it takes: the client's middleware sends it, so the contract does not fix it
-  --> tests/compile_fail/written_group_fixed_header_of_scheme.rs:21:15
+  --> tests/compile_fail/written_group_fixed_header_of_scheme.rs:17:15
    |
-21 |     pub group Admin {
+17 |     pub group Admin {
    |               ^^^^^ evaluation of `_::_` failed here

@@ -1,11 +1,11 @@
-use quoll::rest::{self, ByteStream, JsonLines};
+use quoll::{ByteStream, JsonLines};
 
 use crate::{
     ContainerInspect, ContainerSummary, CreatedContainer, DockerError, Event, NewContainer,
     PullProgress, Version,
 };
 
-rest::api! {
+quoll::api! {
     /// The Docker Engine API, version 1.47, which Docker 27.3 and later serve.
     #[openapi(none)]
     #[error(DockerError)]

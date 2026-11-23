@@ -1,5 +1,5 @@
 error: an api takes no `#[auth(...)]`: put it on a group, or on a route
- --> tests/compile_fail/auth_on_api.rs:4:5
+ --> tests/compile_fail/auth_on_api.rs:2:5
   |
-4 |     #[auth(Bearer)]
+2 |     #[auth(Bearer)]
   |     ^^^^^^^^^^^^^^^

@@ -1,5 +1,5 @@
 error: a route that returns nothing has no `->`: remove `-> ()`
- --> tests/compile_fail/reply_unit.rs:7:35
+ --> tests/compile_fail/reply_unit.rs:5:35
   |
-7 |         GET "/notes" => list() -> ();
+5 |         GET "/notes" => list() -> ();
   |                                   ^^

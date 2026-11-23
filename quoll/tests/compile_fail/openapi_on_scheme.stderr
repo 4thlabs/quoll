@@ -1,5 +1,5 @@
 error: a scheme takes no `#[openapi(...)]`: `#[openapi(none)]` goes on the api, whose whole document it leaves out
- --> tests/compile_fail/openapi_on_scheme.rs:7:5
+ --> tests/compile_fail/openapi_on_scheme.rs:5:5
   |
-7 |     #[openapi(none)]
+5 |     #[openapi(none)]
   |     ^^^^^^^^^^^^^^^^

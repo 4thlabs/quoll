@@ -1,4 +1,3 @@
-use quoll::rest;
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -8,7 +7,7 @@ pub struct NewNote {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

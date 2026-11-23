@@ -16,7 +16,7 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use super::{Failure, Helper, Rank, helper, own_route};
-use crate::rest::Route;
+use crate::Route;
 
 /// The header of [`request_id`].
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
@@ -32,12 +32,12 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 /// hop; added before, what it puts in goes along to another origin, unless it is a header marked sensitive.
 ///
 /// ```no_run
-/// # use quoll::{client, rest};
+/// # use quoll::client;
 /// use reqwest::Request;
 ///
 /// # fn sign(_: &http::Method, _: &str, _: &[u8]) -> http::HeaderValue { http::HeaderValue::from_static("") }
-/// # fn run() -> rest::Result<()> {
-/// let sign = client::on_request(|request: &mut Request, route: &rest::Route| {
+/// # fn run() -> quoll::Result<()> {
+/// let sign = client::on_request(|request: &mut Request, route: &quoll::Route| {
 ///     let body = request.body().and_then(|body| body.as_bytes()).unwrap_or_default();
 ///     let signature = sign(request.method(), request.url().path(), body);
 ///
@@ -70,11 +70,11 @@ where
 /// A name that cannot be a header's value, as one with a line break, fails each call that would send it.
 ///
 /// ```no_run
-/// # use quoll::{client, rest};
+/// # use quoll::client;
 /// let http = client::builder()
 ///     .with(client::user_agent("notes-cli/0.1"))
 ///     .build_http()?;
-/// # Ok::<(), quoll::rest::Error>(())
+/// # Ok::<(), quoll::Error>(())
 /// ```
 pub fn user_agent(name: impl Into<String>) -> impl Middleware {
     let value = HeaderValue::try_from(name.into()).ok();
@@ -104,12 +104,12 @@ pub fn user_agent(name: impl Into<String>) -> impl Middleware {
 /// own. A route that sends an `X-Request-Id` of its own keeps it.
 ///
 /// ```no_run
-/// # use quoll::{client, rest};
+/// # use quoll::client;
 /// let http = client::builder()
 ///     .with(client::request_id())
 ///     .with(client::retry(3))
 ///     .build_http()?;
-/// # Ok::<(), quoll::rest::Error>(())
+/// # Ok::<(), quoll::Error>(())
 /// ```
 pub fn request_id() -> impl Middleware {
     helper(Rank::RequestId, |mut request, extensions, next| {
@@ -140,17 +140,17 @@ pub fn request_id() -> impl Middleware {
 /// hop of `redirects`; it is an error with no status that `retry` tries again. A request that did not come from the
 /// client of a contract has a deadline, its body included.
 ///
-/// A call given a deadline of its own, with [`rest::Call::timeout`](crate::rest::Call::timeout), has it in place of
+/// A call given a deadline of its own, with [`quoll::Call::timeout`](crate::Call::timeout), has it in place of
 /// `duration`.
 ///
 /// ```no_run
 /// # use std::time::Duration;
-/// # use quoll::{client, rest};
+/// # use quoll::client;
 /// let http = client::builder()
 ///     .with(client::retry(3))
 ///     .with(client::timeout(Duration::from_secs(10)))
 ///     .build_http()?;
-/// # Ok::<(), quoll::rest::Error>(())
+/// # Ok::<(), quoll::Error>(())
 /// ```
 pub fn timeout(duration: Duration) -> impl Middleware {
     deadline(Some(duration))
@@ -201,7 +201,7 @@ fn deadline(default: Option<Duration>) -> Helper {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct KeepsDeadline;
 
-/// The deadline a call gives itself with [`rest::Call::timeout`](crate::rest::Call::timeout), in its request's
+/// The deadline a call gives itself with [`quoll::Call::timeout`](crate::Call::timeout), in its request's
 /// extensions, which [`timeout`] takes in place of its own and marks kept. Its clones share the mark.
 #[derive(Debug, Clone)]
 pub(crate) struct CallTimeout {

@@ -1,6 +1,5 @@
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{self, Result, Scheme};
+use quoll::{Result, Scheme, openapi::SecurityScheme};
 
 /// A scheme of the application's own that takes the name of the crate's `Bearer`.
 pub struct Token;
@@ -19,7 +18,7 @@ impl Scheme for Token {
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer | Token)]

@@ -1,5 +1,5 @@
 error: an item takes one `#[header(none)]`: remove this one
- --> tests/compile_fail/fixed_header_none_twice.rs:8:14
+ --> tests/compile_fail/fixed_header_none_twice.rs:6:14
   |
-8 |     #[header(none)]
+6 |     #[header(none)]
   |              ^^^^

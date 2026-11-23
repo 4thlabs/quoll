@@ -1,6 +1,5 @@
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{self, Result, Scheme};
+use quoll::{Result, Scheme, openapi::SecurityScheme};
 
 /// A scheme of the application's own whose name cannot be a component's: a space.
 pub struct Signature;
@@ -19,7 +18,7 @@ impl Scheme for Signature {
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Signature)]

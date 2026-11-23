@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // The query struct named by a key of the string's query too.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

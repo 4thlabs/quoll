@@ -1,6 +1,6 @@
 # Errors
 
-Every route returns a `rest::Result<T>`, whose error is `rest::Error`: one error for the server and the client. A
+Every route returns a `quoll::Result<T>`, whose error is `quoll::Error`: one error for the server and the client. A
 handler returns one, the server answers it as an RFC 9457 problem, and the client reads it back. The client of
 another API reads its errors in the shape the contract says, `#[error(E)]`.
 
@@ -8,9 +8,9 @@ another API reads its errors in the shape the contract says, `#[error(E)]`.
 
 ```rust
 use http::StatusCode;
-use quoll::rest::{self, Error, Response, Result};
+use quoll::{Error, Response, Result};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -84,15 +84,14 @@ The OpenAPI document lists, for each route, the errors quoll answers itself, and
 
 ## What a client sees
 
-On the client, an answer with an error status is a `rest::Error` with that status. A call that got no answer to read
+On the client, an answer with an error status is a `quoll::Error` with that status. A call that got no answer to read
 has none.
 
 ```rust
 use http::StatusCode;
-use quoll::rest::{self, Error, Response, Result};
-use quoll::{client, test};
+use quoll::{Error, Response, Result, client, test};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -135,9 +134,8 @@ A caller tells a status it expects from the others:
 
 ```rust,no_run
 use http::StatusCode;
-use quoll::rest;
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -146,7 +144,7 @@ rest::api! {
 }
 
 #[tokio::main]
-async fn main() -> rest::Result<()> {
+async fn main() -> quoll::Result<()> {
     let api = Api::client("http://localhost:8080")?;
 
     match api.notes().get(999).await {
@@ -164,13 +162,12 @@ The headers of an error's answer, a `Retry-After` or a rate limit, come with the
 ## Another API's errors
 
 An API that quoll did not write answers its errors in a shape of its own. `#[error(E)]` on its api says which: each
-call's error is then a `rest::Error<E>`, whose `detail()` is the body of the answer read as the JSON of `E`. `E`
+call's error is then a `quoll::Error<E>`, whose `detail()` is the body of the answer read as the JSON of `E`. `E`
 implements `Deserialize`, `Debug`, and `Display`, which gives the error's message.
 
 ```rust,no_run
 use std::fmt;
 
-use quoll::rest;
 use serde::Deserialize;
 
 /// The body of Docker's errors, which are not RFC 9457 problems.
@@ -185,7 +182,7 @@ impl fmt::Display for DockerError {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[error(DockerError)]
     pub api Docker = "/v1.47";
@@ -196,7 +193,7 @@ rest::api! {
 }
 
 #[tokio::main]
-async fn main() -> rest::Result<()> {
+async fn main() -> quoll::Result<()> {
     let docker = Docker::client("http://localhost:2375")?;
 
     if let Err(error) = docker.containers().start("web".into()).await {
@@ -212,26 +209,25 @@ async fn main() -> rest::Result<()> {
 }
 ```
 
-- The calls return `rest::Result<T, E>`, an alias of `Result<T, rest::Error<E>>`. `rest::Error` is
-  `rest::Error<rest::Problem>`, what a route without `#[error]` has.
+- The calls return `quoll::Result<T, E>`, an alias of `Result<T, quoll::Error<E>>`. `quoll::Error` is
+  `quoll::Error<quoll::Problem>`, what a route without `#[error]` has.
 - `detail()` is the `E`, `response()` the answer with it, its status and its headers, a rate limit or a
   `Retry-After`.
 - A body that is not an `E`, a page of HTML from a proxy, or a 304, has no detail: the error keeps its status and its
   `body()`, and says `another api answered 502`.
-- `?` carries a `rest::Error<E>` up into a `rest::Error`, a handler's or a `main`'s, with its status, its message and
+- `?` carries a `quoll::Error<E>` up into a `quoll::Error`, a handler's or a `main`'s, with its status, its message and
   its body; a handler that returns it answers 502.
 - `body_as::<T>()` reads the body as the JSON of another type: the extension members of a problem.
 
 `#[error(E)]` goes on the api, a group or a route, the nearest to a route winning, as `#[auth]` does: a route that
-answers another shape, an OAuth endpoint, says its own, and `#[error(rest::Problem)]` gives a group problems again. A
-group of a `rest::group!` says its own, on the group or on each route: its trait is written before an api lists it, so
+answers another shape, an OAuth endpoint, says its own, and `#[error(quoll::Problem)]` gives a group problems again. A
+group of a `quoll::group!` says its own, on the group or on each route: its trait is written before an api lists it, so
 it cannot take the api's, and an api with an `#[error]` that lists a group with a route that has none does not
-compile, unless the api's is `rest::Problem`.
+compile, unless the api's is `quoll::Problem`.
 
 ```rust,no_run
 use std::fmt;
 
-use quoll::rest;
 use serde::Deserialize;
 
 /// What GitHub answers on an error.
@@ -259,7 +255,7 @@ impl fmt::Display for OAuthError {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[error(GitHubError)]
     pub api GitHub = "";
@@ -273,12 +269,12 @@ rest::api! {
 }
 
 #[tokio::main]
-async fn main() -> rest::Result<()> {
+async fn main() -> quoll::Result<()> {
     let github = GitHub::client("https://github.com")?;
 
-    let topics: rest::Result<Vec<String>, GitHubError> =
+    let topics: quoll::Result<Vec<String>, GitHubError> =
         github.repos().topics("rust-lang".into(), "rust".into()).await;
-    let token: rest::Result<String, OAuthError> = github.repos().token("code".into()).await;
+    let token: quoll::Result<String, OAuthError> = github.repos().token("code".into()).await;
 
     println!("{:?}", topics?);
     println!("{}", token?);
@@ -287,14 +283,14 @@ async fn main() -> rest::Result<()> {
 ```
 
 A fake of such an api returns an `impl Call<T, E>`, and builds the error of an answer with
-`rest::Error::answered(status, e)`: its status, its detail, a `response()` with no headers, and no body. An error of a
-status alone, with no detail, is `rest::Error::not_found(..).into_shape()`, and so are the others.
+`quoll::Error::answered(status, e)`: its status, its detail, a `response()` with no headers, and no body. An error of a
+status alone, with no detail, is `quoll::Error::not_found(..).into_shape()`, and so are the others.
 
 ```rust
 use std::fmt;
 
 use http::StatusCode;
-use quoll::rest::{self, Call};
+use quoll::Call;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -308,7 +304,7 @@ impl fmt::Display for DockerError {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[error(DockerError)]
     pub api Docker = "/v1.47";
@@ -327,7 +323,7 @@ impl Containers for NoContainers {
                 message: format!("No such container: {id}"),
             };
 
-            Err(rest::Error::answered(StatusCode::NOT_FOUND, missing))
+            Err(quoll::Error::answered(StatusCode::NOT_FOUND, missing))
         }
     }
 }
@@ -341,7 +337,7 @@ async fn main() {
 ```
 
 Whatever `#[error]` says, quoll's own server answers problems, and the OpenAPI document describes them: the
-attribute is for the contract of another API. The items of a stream keep `rest::Error`.
+attribute is for the contract of another API. The items of a stream keep `quoll::Error`.
 
 ## Errors in a stream
 

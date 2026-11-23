@@ -1,16 +1,16 @@
 error[E0277]: `forms::Form<Login>` is not quoll's `Form`, which a body named `Form` is read as
-  --> tests/compile_fail_neither/foreign_form.rs:21:39
+  --> tests/compile_fail_neither/foreign_form.rs:20:39
    |
-21 |         POST "/token" => token(login: Form<Login>);
-   |                                       ^^^^^^^^^^^ not `quoll::rest::Form`
+20 |         POST "/token" => token(login: Form<Login>);
+   |                                       ^^^^^^^^^^^ not `quoll::Form`
    |
 help: the trait `quoll::__private::known::IsForm` is not implemented for `forms::Form<Login>`
-  --> tests/compile_fail_neither/foreign_form.rs:7:5
+  --> tests/compile_fail_neither/foreign_form.rs:6:5
    |
- 7 |     pub struct Form<T>(pub T);
+ 6 |     pub struct Form<T>(pub T);
    |     ^^^^^^^^^^^^^^^^^^
-   = note: bring quoll's into scope, `use quoll::rest::Form;`, or name a type of your own otherwise
-help: the trait `quoll::__private::known::IsForm` is implemented for `quoll::rest::Form<T>`
+   = note: bring quoll's into scope, `use quoll::Form;`, or name a type of your own otherwise
+help: the trait `quoll::__private::known::IsForm` is implemented for `quoll::Form<T>`
   --> src/__private/known.rs
    |
    | impl<T> IsForm for Form<T> {

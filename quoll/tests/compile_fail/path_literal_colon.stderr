@@ -1,5 +1,5 @@
 error: `:id` is not a plain segment: a literal segment holds ASCII letters, digits, `-`, `_`, `.` and `~`, and is not `.` or `..`
- --> tests/compile_fail/path_literal_colon.rs:7:13
+ --> tests/compile_fail/path_literal_colon.rs:5:13
   |
-7 |         GET "/:id" => get(id: i64);
+5 |         GET "/:id" => get(id: i64);
   |             ^^^^^^

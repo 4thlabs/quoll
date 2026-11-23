@@ -1,11 +1,11 @@
 error: the `{id}` of the path has no argument named `id`: add `id: Type` to the arguments
- --> tests/compile_fail/errors_kept_together.rs:7:13
+ --> tests/compile_fail/errors_kept_together.rs:5:13
   |
-7 |         GET "/notes/{id}" => get();
+5 |         GET "/notes/{id}" => get();
   |             ^^^^^^^^^^^^^
 
 error: the `page={page}` of the query has no argument named `page`: add `page: Type` to the arguments
- --> tests/compile_fail/errors_kept_together.rs:8:13
+ --> tests/compile_fail/errors_kept_together.rs:6:13
   |
-8 |         GET "/notes?page={page}" => list();
+6 |         GET "/notes?page={page}" => list();
   |             ^^^^^^^^^^^^^^^^^^^^

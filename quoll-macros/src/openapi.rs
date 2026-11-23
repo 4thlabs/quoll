@@ -61,7 +61,7 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
     let names = listed.iter().map(|scheme| {
         let ty = &scheme.ty;
 
-        quote_spanned! {scheme.span=> <#ty as ::quoll::rest::Scheme>::NAME }
+        quote_spanned! {scheme.span=> <#ty as ::quoll::Scheme>::NAME }
     });
     let checks = (!checks.is_empty()).then(|| {
         quote! {
@@ -83,7 +83,7 @@ pub(crate) fn expand(api: &Api) -> TokenStream {
             ///
             /// When two schemes of different types have one `NAME`, which names a scheme in the document: the
             /// macro refuses them within one block, and finds the schemes of the groups of other blocks only here.
-            #vis fn openapi() -> ::quoll::rest::openapi::Document {
+            #vis fn openapi() -> ::quoll::openapi::Document {
                 #checks
                 static API: ::quoll::__private::openapi::Api = ::quoll::__private::openapi::Api {
                     name: #shown,
@@ -117,8 +117,8 @@ fn scheme_ref(ty: &TokenStream, span: Span) -> TokenStream {
             use ::quoll::__private::group::Unknown as _;
 
             ::quoll::__private::openapi::SchemeRef {
-                name: <#ty as ::quoll::rest::Scheme>::NAME,
-                openapi: <#ty as ::quoll::rest::Scheme>::openapi,
+                name: <#ty as ::quoll::Scheme>::NAME,
+                openapi: <#ty as ::quoll::Scheme>::openapi,
                 checks_origin: <::quoll::__private::group::Probe<#ty>>::CHECKS_ORIGIN,
                 type_id: ::core::any::TypeId::of::<#ty>,
                 type_name: ::core::any::type_name::<#ty>,
@@ -488,7 +488,7 @@ mod tests {
 
         // Each scheme once, in the order: declared, then taken by the routes.
         assert!(
-            tokens.contains("const NAMES : & [& str] = & [< Key as :: quoll :: rest :: Scheme > :: NAME , < :: quoll :: rest :: Bearer as :: quoll :: rest :: Scheme > :: NAME , < crate :: auth :: Hmac as :: quoll :: rest :: Scheme > :: NAME]"),
+            tokens.contains("const NAMES : & [& str] = & [< Key as :: quoll :: Scheme > :: NAME , < :: quoll :: Bearer as :: quoll :: Scheme > :: NAME , < crate :: auth :: Hmac as :: quoll :: Scheme > :: NAME]"),
             "{tokens}"
         );
         assert!(

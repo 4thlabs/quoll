@@ -1,6 +1,5 @@
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{self, Result, Scheme};
+use quoll::{Result, Scheme, openapi::SecurityScheme};
 
 /// A scheme of the application's own, which takes the name of the crate's `Bearer`.
 pub struct Mine;
@@ -19,7 +18,7 @@ impl Scheme for Mine {
     }
 }
 
-rest::group! {
+quoll::group! {
     // The scheme of the application's first: the pair is checked whatever its order.
     #[auth(crate::Mine | Bearer)]
     pub group Notes {

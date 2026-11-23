@@ -1,6 +1,5 @@
 use std::fmt;
 
-use quoll::rest;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -15,10 +14,8 @@ impl fmt::Display for HubError {
 }
 
 mod gists {
-    use quoll::rest;
-
     // Its trait is written before the api lists it: its second route cannot take the api's `#[error]`.
-    rest::group! {
+    quoll::group! {
         #[openapi(none)]
         pub group Gists {
             #[error(super::HubError)]
@@ -28,7 +25,7 @@ mod gists {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[error(HubError)]
     pub api Hub = "" { gists::Gists };

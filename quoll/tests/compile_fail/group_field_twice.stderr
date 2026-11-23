@@ -1,5 +1,5 @@
 error: the groups `AdminTools` and `Admin_Tools` both become the field `admin_tools`: rename one of them
- --> tests/compile_fail/group_field_twice.rs:7:15
+ --> tests/compile_fail/group_field_twice.rs:5:15
   |
-7 |     pub group Admin_Tools {}
+5 |     pub group Admin_Tools {}
   |               ^^^^^^^^^^^

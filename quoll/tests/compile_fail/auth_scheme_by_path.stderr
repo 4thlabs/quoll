@@ -1,5 +1,5 @@
 error: `self::Key` names the scheme `Key`, which `#[auth(...)]` takes by its name alone: write `Key`, or give a type of your own another name than the contract's scheme
- --> tests/compile_fail/auth_scheme_by_path.rs:9:18
+ --> tests/compile_fail/auth_scheme_by_path.rs:7:18
   |
-9 |     #[auth(Key | self::Key)]
+7 |     #[auth(Key | self::Key)]
   |                  ^^^^^^^^^

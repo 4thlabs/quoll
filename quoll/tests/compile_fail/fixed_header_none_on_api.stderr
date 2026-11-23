@@ -1,5 +1,5 @@
 error: an api takes no header to leave: `none` goes on a group or a route, which leaves what its api or its group fixes
- --> tests/compile_fail/fixed_header_none_on_api.rs:6:14
+ --> tests/compile_fail/fixed_header_none_on_api.rs:4:14
   |
-6 |     #[header("Accept" = none)]
+4 |     #[header("Accept" = none)]
   |              ^^^^^^^^

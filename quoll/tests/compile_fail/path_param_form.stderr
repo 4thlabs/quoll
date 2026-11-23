@@ -1,5 +1,5 @@
 error: the path parameter `id` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants
- --> tests/compile_fail/path_param_form.rs:8:38
+ --> tests/compile_fail/path_param_form.rs:6:38
   |
-8 |         GET "/notes/{id}" => get(id: Form<Login>) -> String;
+6 |         GET "/notes/{id}" => get(id: Form<Login>) -> String;
   |                                      ^^^^^^^^^^^

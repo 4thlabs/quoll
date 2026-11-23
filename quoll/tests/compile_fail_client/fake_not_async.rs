@@ -1,6 +1,6 @@
-use quoll::rest::{self, Result};
+use quoll::Result;
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -10,7 +10,7 @@ rest::api! {
 
 struct Fake;
 
-// A fake's method returns a call: an `async move` block, or any future of a `rest::Result`.
+// A fake's method returns a call: an `async move` block, or any future of a `quoll::Result`.
 impl Notes for Fake {
     fn get(&self, id: i64) -> Result<String> {
         Ok(id.to_string())

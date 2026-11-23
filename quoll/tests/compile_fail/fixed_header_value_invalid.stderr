@@ -1,5 +1,5 @@
 error: a header's value is visible ASCII, with spaces and tabs inside it only, which HTTP drops at either end: give the value as it is sent
- --> tests/compile_fail/fixed_header_value_invalid.rs:5:28
+ --> tests/compile_fail/fixed_header_value_invalid.rs:3:28
   |
-5 |     #[header("X-Version" = "2022-11-28 ")]
+3 |     #[header("X-Version" = "2022-11-28 ")]
   |                            ^^^^^^^^^^^^^

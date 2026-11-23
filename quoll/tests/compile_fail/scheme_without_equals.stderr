@@ -1,5 +1,5 @@
 error: expected `=` after the scheme's name: write `pub scheme Key = header "X-Api-Key";`
- --> tests/compile_fail/scheme_without_equals.rs:7:20
+ --> tests/compile_fail/scheme_without_equals.rs:5:20
   |
-7 |     pub scheme Key header "X-Api-Key";
+5 |     pub scheme Key header "X-Api-Key";
   |                    ^^^^^^

@@ -5,13 +5,13 @@ use std::fmt;
 
 use http::{HeaderMap, StatusCode, Version};
 
-use crate::rest::{Problem, Response};
+use crate::{Problem, Response};
 
 #[cfg(feature = "client")]
 mod client;
 
-/// A result whose error is an [`Error`] of the shape `E`: what every route returns, `rest::Result<Note>` of the
-/// default shape, an RFC 9457 [`Problem`], and `rest::Result<Repository, GitHubError>` on the client of an api that
+/// A result whose error is an [`Error`] of the shape `E`: what every route returns, `quoll::Result<Note>` of the
+/// default shape, an RFC 9457 [`Problem`], and `quoll::Result<Repository, GitHubError>` on the client of an api that
 /// says `#[error(GitHubError)]`.
 pub type Result<T, E = Problem> = std::result::Result<T, Error<E>>;
 
@@ -20,7 +20,7 @@ pub type Result<T, E = Problem> = std::result::Result<T, Error<E>>;
 /// A handler builds one with a status and a detail, which the server answers as an RFC 9457 problem in JSON:
 ///
 /// ```
-/// use quoll::rest::{Error, Result};
+/// use quoll::{Error, Result};
 ///
 /// fn note(id: i64) -> Result<String> {
 ///     if id == 1 {
@@ -58,7 +58,7 @@ pub type Result<T, E = Problem> = std::result::Result<T, Error<E>>;
 ///
 /// A handler that returns an error its own client received answers 502, or 500 when it is the handler's own mistake,
 /// a URL that is not one: the status of another API is not passed on as this one's. An error of another shape goes up
-/// into a handler's `rest::Error` with `?`, which keeps its status, its message and its body, and leaves its detail.
+/// into a handler's `quoll::Error` with `?`, which keeps its status, its message and its body, and leaves its detail.
 pub struct Error<E = Problem>(pub(crate) Box<Repr<E>>);
 
 /// What an error holds, which the server reads to answer it.
@@ -125,7 +125,7 @@ impl Error {
     /// application's own is the application's to strip, with `reqwest::Error::without_url`.
     ///
     /// ```
-    /// use quoll::rest::Error;
+    /// use quoll::Error;
     ///
     /// let error = "x".parse::<u8>().map_err(Error::internal);
     ///
@@ -149,7 +149,6 @@ impl Error {
     /// use std::fmt;
     ///
     /// use http::StatusCode;
-    /// use quoll::rest;
     /// use serde::Deserialize;
     ///
     /// #[derive(Debug, Deserialize)]
@@ -163,12 +162,12 @@ impl Error {
     ///     }
     /// }
     ///
-    /// let error: rest::Error<GitHubError> = rest::Error::not_found("no such repository").into_shape();
+    /// let error: quoll::Error<GitHubError> = quoll::Error::not_found("no such repository").into_shape();
     ///
     /// assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     /// assert!(error.detail().is_none());
     ///
-    /// let failed: rest::Error<GitHubError> = rest::Error::internal("the fake is down").into_shape();
+    /// let failed: quoll::Error<GitHubError> = quoll::Error::internal("the fake is down").into_shape();
     ///
     /// assert_eq!(failed.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
     /// ```
@@ -218,7 +217,6 @@ impl<E> Error<E> {
     /// use std::fmt;
     ///
     /// use http::StatusCode;
-    /// use quoll::rest;
     /// use serde::Deserialize;
     ///
     /// #[derive(Debug, Deserialize)]
@@ -232,7 +230,7 @@ impl<E> Error<E> {
     ///     }
     /// }
     ///
-    /// let error = rest::Error::answered(StatusCode::NOT_FOUND, GitHubError { message: "Not Found".into() });
+    /// let error = quoll::Error::answered(StatusCode::NOT_FOUND, GitHubError { message: "Not Found".into() });
     ///
     /// assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     /// assert_eq!(error.detail().map(|detail| detail.message.as_str()), Some("Not Found"));
@@ -339,8 +337,8 @@ impl<E> Error<E> {
     }
 }
 
-/// An error of another shape, carried up into a `rest::Error`, a handler's: its status, its message and its body
-/// kept, its detail left, as a `rest::Error` holds a problem alone. A handler returning it answers as the error it
+/// An error of another shape, carried up into a `quoll::Error`, a handler's: its status, its message and its body
+/// kept, its detail left, as a `quoll::Error` holds a problem alone. A handler returning it answers as the error it
 /// comes from: 502 for an answer of another API.
 impl<E> From<Error<E>> for Error
 where

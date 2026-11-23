@@ -1,5 +1,5 @@
 error: `scopes` takes at least one scope: write `scopes("repo")`, or `scopes("repo", "admin")` for a caller that needs both
- --> tests/compile_fail/auth_scopes_empty.rs:8:30
+ --> tests/compile_fail/auth_scopes_empty.rs:6:30
   |
-8 |         #[auth(Bearer, scopes())]
+6 |         #[auth(Bearer, scopes())]
   |                              ^^

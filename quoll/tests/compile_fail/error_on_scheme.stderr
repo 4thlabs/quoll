@@ -1,5 +1,5 @@
 error: a scheme takes no `#[error(...)]`: put it on the api, a group or a route, whose errors it reads
- --> tests/compile_fail/error_on_scheme.rs:7:5
+ --> tests/compile_fail/error_on_scheme.rs:5:5
   |
-7 |     #[error(String)]
+5 |     #[error(String)]
   |     ^^^^^^^^^^^^^^^^

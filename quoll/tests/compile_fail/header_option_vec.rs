@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // An `Option` of a type that is not read from text either.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

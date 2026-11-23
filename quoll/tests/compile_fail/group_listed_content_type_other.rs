@@ -1,4 +1,4 @@
-use quoll::rest::{self, Form};
+use quoll::Form;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Login {
@@ -6,17 +6,15 @@ pub struct Login {
 }
 
 mod auth {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         #[openapi(none)]
         pub group Auth {
-            POST "/token" => token(login: rest::Form<super::Login>) -> String;
+            POST "/token" => token(login: quoll::Form<super::Login>) -> String;
         }
     }
 }
 
-rest::api! {
+quoll::api! {
     // A form is not JSON.
     #[openapi(none)]
     #[header("Content-Type" = "application/json; charset=utf-8")]

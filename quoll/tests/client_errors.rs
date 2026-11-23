@@ -10,13 +10,12 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use http::Extensions;
-use quoll::client::Attempt;
-use quoll::rest::{self, Error};
+use quoll::{Error, client::Attempt};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware, Next};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     /// A key in the query, which a URL shows.

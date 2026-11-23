@@ -1,6 +1,5 @@
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{self, Result, Scheme};
+use quoll::{Result, Scheme, openapi::SecurityScheme};
 
 /// A scheme of the application's own, whose name has a space.
 pub struct Signed;
@@ -19,7 +18,7 @@ impl Scheme for Signed {
     }
 }
 
-rest::group! {
+quoll::group! {
     #[auth(Signed)]
     pub group Notes {
         GET "/notes" => list();

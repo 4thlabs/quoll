@@ -1,5 +1,5 @@
 error: the header `Content-Type` is written by quoll or by HTTP itself, so no argument takes it: read what the route needs from another header
- --> tests/compile_fail/header_reserved.rs:7:53
+ --> tests/compile_fail/header_reserved.rs:5:53
   |
-7 |         PUT "/notes/{id}" => update(id: i64, header("content-type") kind: String, note: NewNote);
+5 |         PUT "/notes/{id}" => update(id: i64, header("content-type") kind: String, note: NewNote);
   |                                                     ^^^^^^^^^^^^^^

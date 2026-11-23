@@ -163,7 +163,7 @@ pub(crate) fn why_not_apart(first: &[BodyField], second: &[BodyField]) -> String
 }
 
 /// Two routes of one method and path, told apart by their fields, are not described by the OpenAPI document yet: in
-/// a block with a document, the api's or a `rest::group!`'s, the second of each pair does not compile.
+/// a block with a document, the api's or a `quoll::group!`'s, the second of each pair does not compile.
 pub(crate) fn check_document(api: &Api, what: &str, errors: &mut ErrorList) {
     if !api.openapi {
         return;

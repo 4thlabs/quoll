@@ -1,5 +1,5 @@
 error: a `Created<T>` answers the JSON of its `T`, which a `Text` is not: write the type of the JSON value, or return `-> Text` with the status its handler gives, `Status::CREATED`
- --> tests/compile_fail/created_of_text.rs:9:65
+ --> tests/compile_fail/created_of_text.rs:7:66
   |
-9 |         POST "/notes" => create(title: String) -> rest::Created<rest::Text>;
-  |                                                                 ^^^^^^^^^^
+7 |         POST "/notes" => create(title: String) -> quoll::Created<quoll::Text>;
+  |                                                                  ^^^^^^^^^^^

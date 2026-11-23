@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // An argument that reads the cookies, one of which a scheme of the route reads.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Session = cookie "session";

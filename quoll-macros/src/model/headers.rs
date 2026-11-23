@@ -246,7 +246,7 @@ impl<'a> RouteHeaders<'a> {
         taken.then(|| api.get(name)).flatten()
     }
 
-    /// The headers the route sends of `api`'s, which `None` is for a `rest::group!`, and its own: its own first.
+    /// The headers the route sends of `api`'s, which `None` is for a `quoll::group!`, and its own: its own first.
     pub(crate) fn sent<'b>(&'b self, api: Option<&'b Headers>) -> Vec<&'b Fixed> {
         let mut sent: Vec<&Fixed> = self.own.clone();
 
@@ -262,9 +262,9 @@ impl<'a> RouteHeaders<'a> {
     }
 }
 
-/// Checks the fixed headers of an api's block, or of a `rest::group!`, whose api is `None`: what each item leaves is
+/// Checks the fixed headers of an api's block, or of a `quoll::group!`, whose api is `None`: what each item leaves is
 /// set by its parent, a `Content-Type` keeps the media type of its route's body, and no header a route sends carries
-/// the credential of a scheme it takes. What depends on the api of a `rest::group!` is checked by that api, at compile
+/// the credential of a scheme it takes. What depends on the api of a `quoll::group!` is checked by that api, at compile
 /// time, but what the group leaves of the api's: any api may list it, and a `none` does nothing where the api does not
 /// fix the header.
 pub(crate) fn check(groups: &[Group], api: Option<(&Api, &Headers)>, errors: &mut ErrorList) {
@@ -320,7 +320,7 @@ pub(crate) fn check(groups: &[Group], api: Option<(&Api, &Headers)>, errors: &mu
 const NONE_ON_API: &str = "an api takes no header to leave: `none` goes on a group or a route, which leaves what its api or its group fixes";
 
 /// Each header a route leaves is one its group fixes, or one its api fixes that its group does not leave. In a
-/// `rest::group!`, whose api is not known, a header its group does not fix may be any api's.
+/// `quoll::group!`, whose api is not known, a header its group does not fix may be any api's.
 fn check_leaves(
     group: &Group,
     route: &Route,
@@ -337,12 +337,12 @@ fn check_leaves(
         let blocked = group.headers.leaves_all.is_some() || group.headers.leaves(&text);
         let set = match api {
             Some((_, headers)) => headers.get(&text).is_some(),
-            // Any api may list a `rest::group!`, which leaves nothing where the api does not fix the header.
+            // Any api may list a `quoll::group!`, which leaves nothing where the api does not fix the header.
             None => true,
         };
 
         if blocked {
-            // A `rest::group!` has no api of its own: what it leaves is what any api that lists it would give.
+            // A `quoll::group!` has no api of its own: what it leaves is what any api that lists it would give.
             let what = match (group.headers.leaves_all.is_some(), api) {
                 (true, Some(_)) => "every header of its api, `#[header(none)]`".to_owned(),
                 (true, None) => "every header it would take, `#[header(none)]`".to_owned(),

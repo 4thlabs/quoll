@@ -1,4 +1,3 @@
-use quoll::rest;
 use schemars::JsonSchema;
 
 // A `Text` of the application's own, which the contract reads as quoll's.
@@ -7,7 +6,7 @@ pub struct Text {
     pub body: String,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

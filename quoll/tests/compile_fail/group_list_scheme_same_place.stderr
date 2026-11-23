@@ -1,5 +1,5 @@
 error[E0080]: evaluation panicked: `Bearer` and `Login`, which the route `Notes::list` takes, both read the header `Authorization: Bearer`, so a request's credential would be both: take one of them
-  --> tests/compile_fail/group_list_scheme_same_place.rs:15:35
+  --> tests/compile_fail/group_list_scheme_same_place.rs:11:35
    |
-15 |     pub api Api = "/api" { notes::Notes };
+11 |     pub api Api = "/api" { notes::Notes };
    |                                   ^^^^^ evaluation of `_::_` failed here

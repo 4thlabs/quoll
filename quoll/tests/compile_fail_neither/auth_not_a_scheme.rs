@@ -1,9 +1,7 @@
-use quoll::rest;
-
-/// A type of the application's that does not implement `rest::Scheme`.
+/// A type of the application's that does not implement `quoll::Scheme`.
 pub struct Hmac;
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Hmac)]

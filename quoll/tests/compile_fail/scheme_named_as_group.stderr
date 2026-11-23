@@ -1,5 +1,5 @@
 error: `Admin`, the name of the group `Admin`, is already the scheme `Admin`: rename the group, as each item the contract writes has its own name
-  --> tests/compile_fail/scheme_named_as_group.rs:10:15
-   |
-10 |     pub group Admin {
-   |               ^^^^^
+ --> tests/compile_fail/scheme_named_as_group.rs:8:15
+  |
+8 |     pub group Admin {
+  |               ^^^^^

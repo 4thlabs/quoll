@@ -14,7 +14,7 @@ with Next.js 16 and openapi-typescript 7.
 ## The chain
 
 ```text
-notes-api                      the contract: rest::api! and its types
+notes-api                      the contract: quoll::api! and its types
   │  cargo quoll gen           builds and runs its binary `openapi`
   ▼
 web/openapi.json               the OpenAPI 3.1 document
@@ -417,7 +417,7 @@ any other, and the page names it. A tagged enum's variant that holds a struct is
 [`allOf`](openapi.md#what-it-holds) of that struct and of its tag, so that its type keeps the tag:
 
 ```rust
-use quoll::rest::{self, Events};
+use quoll::Events;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -436,7 +436,7 @@ pub enum NoteEvent {
     Removed { id: i64 },
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer)]

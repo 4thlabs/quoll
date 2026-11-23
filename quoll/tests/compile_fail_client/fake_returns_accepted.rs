@@ -1,6 +1,6 @@
-use quoll::rest::{self, Accepted, Call};
+use quoll::{Accepted, Call};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Exports {
@@ -13,7 +13,7 @@ struct Fake;
 
 impl Exports for Fake {
     fn export(&self, name: String) -> impl Call<Accepted<String>> {
-        async move { Err(rest::Error::not_found(name)) }
+        async move { Err(quoll::Error::not_found(name)) }
     }
 }
 

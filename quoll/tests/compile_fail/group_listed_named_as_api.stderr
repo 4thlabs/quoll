@@ -1,13 +1,13 @@
 error: the group `Api` is the name of the api, and both become types: each one has its own name
-  --> tests/compile_fail/group_listed_named_as_api.rs:16:28
+  --> tests/compile_fail/group_listed_named_as_api.rs:12:28
    |
-16 |     pub api Api = "/api" { Api };
+12 |     pub api Api = "/api" { Api };
    |                            ^^^
 
 warning: unused import: `other::*`
-  --> tests/compile_fail/group_listed_named_as_api.rs:13:5
-   |
-13 | use other::*;
-   |     ^^^^^^^^
-   |
-   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+ --> tests/compile_fail/group_listed_named_as_api.rs:9:5
+  |
+9 | use other::*;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

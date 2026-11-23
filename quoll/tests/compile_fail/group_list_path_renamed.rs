@@ -1,9 +1,5 @@
-use quoll::rest;
-
 mod notes {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         pub group Notes {
             GET "/notes/{id}" => get(id: i64);
         }
@@ -11,16 +7,14 @@ mod notes {
 }
 
 mod files {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         pub group Files {
             DELETE "/notes/{key}" => remove(key: String);
         }
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api" { notes::Notes, files::Files };
 }
 

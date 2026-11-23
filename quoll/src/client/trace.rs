@@ -13,7 +13,7 @@ use tracing::Span;
 
 use super::{Helper, Rank};
 use crate::__private::client::redacted;
-use crate::rest::Route;
+use crate::Route;
 
 /// Opens a tracing span around each call, named by its operation.
 ///
@@ -26,11 +26,11 @@ use crate::rest::Route;
 /// alone. Added first, it is one span around the whole call, its attempts and its redirects.
 ///
 /// ```no_run
-/// # use quoll::{client, rest};
+/// # use quoll::client;
 /// let http = client::builder()
 ///     .with(client::trace())
 ///     .build_http()?;
-/// # Ok::<(), quoll::rest::Error>(())
+/// # Ok::<(), quoll::Error>(())
 /// ```
 pub fn trace() -> impl Middleware {
     Helper::new(Rank::Trace, TracingMiddleware::<Operation>::new())

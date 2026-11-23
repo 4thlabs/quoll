@@ -1,8 +1,6 @@
 #![deny(unused_must_use)]
 
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     pub api Api = "";
 

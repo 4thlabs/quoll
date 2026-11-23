@@ -1,5 +1,5 @@
 use http::header::LOCATION;
-use quoll::rest::{self, Created, Error, Response, Result};
+use quoll::{Created, Error, Response, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ pub struct NewNote {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     pub api Api = "/api";
 

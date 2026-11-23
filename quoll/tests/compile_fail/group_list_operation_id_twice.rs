@@ -1,16 +1,12 @@
-use quoll::rest;
-
 mod tags {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         pub group NoteTags {
             GET "/tags" => list();
         }
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api" { tags::NoteTags };
 
     pub group Note {

@@ -3,7 +3,7 @@
 
 #![cfg(all(feature = "server", feature = "client"))]
 
-use quoll::rest::{self, Bytes, Form, Response, Result, Text};
+use quoll::{Bytes, Form, Response, Result, Text};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_TYPE, HeaderValue};
 use schemars::JsonSchema;
@@ -68,7 +68,7 @@ struct Mixed {
     text: String,
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Search {

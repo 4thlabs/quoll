@@ -1,5 +1,5 @@
-//! A contract split over modules, `rest::group!` blocks that an api lists, against the same contract written in one
-//! block: the same routes on the wire, the same `rest::Route` on each request, the same OpenAPI document; and a group
+//! A contract split over modules, `quoll::group!` blocks that an api lists, against the same contract written in one
+//! block: the same routes on the wire, the same `quoll::Route` on each request, the same OpenAPI document; and a group
 //! listed by two apis, each serving it under its own prefix.
 
 #![cfg(all(feature = "server", feature = "client"))]
@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 
 use http::header::LOCATION;
-use quoll::rest::{Authenticate, Error, Form, Response, Result, Route};
+use quoll::{Authenticate, Error, Form, Response, Result, Route};
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use schemars::JsonSchema;
@@ -39,11 +39,11 @@ pub struct Login {
 /// The contract in modules: a group in each, and the api, which declares the scheme, in its own.
 mod split {
     pub mod auth {
-        use quoll::rest::{self, Form};
+        use quoll::Form;
 
         use crate::Login;
 
-        rest::group! {
+        quoll::group! {
             /// Logins.
             pub group Auth {
                 /// Trades a login for a token.
@@ -53,11 +53,11 @@ mod split {
     }
 
     pub mod notes {
-        use quoll::rest::{self, Created};
+        use quoll::Created;
 
         use crate::{NewNote, Note};
 
-        rest::group! {
+        quoll::group! {
             /// The notes of an operator.
             #[auth(crate::split::Key)]
             pub group Notes {
@@ -70,9 +70,7 @@ mod split {
         }
     }
 
-    use quoll::rest;
-
-    rest::api! {
+    quoll::api! {
         /// Notes, in modules.
         pub api Api = "/api" { auth::Auth, notes::Notes };
 
@@ -86,9 +84,7 @@ mod split {
 
     /// The notes group again, under another prefix.
     pub mod other {
-        use quoll::rest;
-
-        rest::api! {
+        quoll::api! {
             pub api Other = "/other" { super::notes::Notes };
         }
     }
@@ -96,11 +92,11 @@ mod split {
 
 /// The same contract, in one block.
 mod whole {
-    use quoll::rest::{self, Created, Form};
+    use quoll::{Created, Form};
 
     use crate::{Login, NewNote, Note};
 
-    rest::api! {
+    quoll::api! {
         /// Notes, in modules.
         pub api Api = "/api";
 

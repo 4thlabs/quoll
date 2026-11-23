@@ -1,5 +1,5 @@
 error: `#[error]` names the type of the errors: write `#[error(GitHubError)]`, the type the body of an error answer reads as
- --> tests/compile_fail/error_without_type.rs:7:5
+ --> tests/compile_fail/error_without_type.rs:5:5
   |
-7 |     #[error]
+5 |     #[error]
   |     ^^^^^^^^

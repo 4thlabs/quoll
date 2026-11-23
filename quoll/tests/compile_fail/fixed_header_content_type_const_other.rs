@@ -1,5 +1,3 @@
-use quoll::rest;
-
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Message {
     pub text: String,
@@ -8,7 +6,7 @@ pub struct Message {
 /// Not the media type of a JSON body.
 const PLAIN: &str = "text/plain; charset=utf-8";
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[header("Content-Type" = PLAIN)]
     pub api Api = "";

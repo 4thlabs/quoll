@@ -1,11 +1,11 @@
 error: a scheme takes no `#[header(...)]`: put it on the api, a group or a route, whose requests send it
- --> tests/compile_fail/fixed_header_malformed_on_scheme.rs:9:9
+ --> tests/compile_fail/fixed_header_malformed_on_scheme.rs:7:9
   |
-9 |     pub scheme Key = header "X-Api-Key";
+7 |     pub scheme Key = header "X-Api-Key";
   |         ^^^^^^
 
 error: `#[header(...)]` takes a header: write `#[header("X-GitHub-Api-Version" = "2022-11-28")]`, with a string or a constant's name for the value, `#[header("Name" = none)]` to leave a header, or `#[header(none)]` to leave them all
- --> tests/compile_fail/fixed_header_malformed_on_scheme.rs:8:14
+ --> tests/compile_fail/fixed_header_malformed_on_scheme.rs:6:14
   |
-8 |     #[header("X-Client" => "cli")]
+6 |     #[header("X-Client" => "cli")]
   |              ^^^^^^^^^^^^^^^^^^^

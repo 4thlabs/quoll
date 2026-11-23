@@ -1,11 +1,11 @@
 error: the group `Notes` is less visible than the api `Api`, whose router and client name the group's items: write `pub group Notes`
- --> tests/compile_fail/group_less_visible.rs:6:11
+ --> tests/compile_fail/group_less_visible.rs:4:11
   |
-6 |     group Notes {
+4 |     group Notes {
   |           ^^^^^
 
 error: the group `Tags` is less visible than the api `Api`, whose router and client name the group's items: write `pub group Tags`
-  --> tests/compile_fail/group_less_visible.rs:10:22
-   |
-10 |     pub(crate) group Tags {
-   |                      ^^^^
+ --> tests/compile_fail/group_less_visible.rs:8:22
+  |
+8 |     pub(crate) group Tags {
+  |                      ^^^^

@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use gists::Gists as _;
-use quoll::rest::{self, Result};
+use quoll::Result;
 use serde::{Deserialize, Serialize};
 
 /// The headers the third party received, by their names in lowercase.
@@ -23,9 +23,7 @@ struct Repo {
 const VERSION: &str = "2022-11-28";
 
 mod gists {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         /// A group of another block, which takes the headers of the api that lists it.
         #[openapi(none)]
         #[header("X-Group" = "gists")]
@@ -43,7 +41,7 @@ mod gists {
     }
 }
 
-rest::api! {
+quoll::api! {
     /// A third party that asks for headers of its own on every request.
     #[openapi(none)]
     #[header("Accept" = "application/vnd.hub+json")]
@@ -79,7 +77,7 @@ rest::api! {
     }
 }
 
-rest::api! {
+quoll::api! {
     /// A third party whose JSON bodies say their charset, as Slack's do.
     #[openapi(none)]
     #[header("Content-Type" = "application/json; charset=utf-8")]
@@ -91,7 +89,7 @@ rest::api! {
     }
 }
 
-rest::api! {
+quoll::api! {
     /// A third party that fixes neither `X-Beta` nor `X-Version`, which the group `Gists` and one of its routes leave.
     #[openapi(none)]
     #[header("X-Other" = "other")]

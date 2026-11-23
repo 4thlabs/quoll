@@ -9,7 +9,7 @@ crate does. **What is to do, and in which order, is in the GitHub project
 
 Quoll is a REST contract for Rust, written once in a macro: an axum server, a reqwest client and an OpenAPI 3.1
 document come from it, and TypeScript generators such as orval turn the document into TanStack Query hooks. There is no
-UI. The crate is `quoll`, the contract its module `quoll::rest`.
+UI. The crate is `quoll`, the contract at its root.
 
 The maintainer writes in French. Code, comments, docs and commit messages are in English.
 
@@ -52,7 +52,7 @@ cargo quoll dev                                                    # the notes s
 ## Layout
 
 - `quoll/`: the crate users depend on. Its features `server` (axum) and `client` (reqwest) are each off by default.
-- `quoll-macros/`: the proc macro behind `quoll::rest::api!`, re-exported by `quoll`, which users never name.
+- `quoll-macros/`: the proc macro behind `quoll::api!`, re-exported by `quoll`, which users never name.
 - `quoll-cli/`: the binary `cargo-quoll`, `cargo quoll gen`, `build` and `dev`, configured in a workspace's
   `[workspace.metadata.quoll]`, as the notes example's is. It does not depend on `quoll`: it runs the contract's
   binary. Its tests run it on a small workspace under `tests/fixture/`, copied for each test, whose server and

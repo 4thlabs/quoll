@@ -14,7 +14,7 @@ use pin_project_lite::pin_project;
 use sync_wrapper::SyncWrapper;
 
 use crate::__private::content_type::{self, OCTET_STREAM};
-use crate::rest::Result;
+use crate::Result;
 
 /// The items of a stream result, as a handler gave them or as a client reads them: one box, polled through `&mut`
 /// alone, so that it is `Sync` whatever the stream it holds. It gives no size hint, which `&self` asks for: the box
@@ -74,10 +74,10 @@ impl<S: Stream> Stream for Oks<S> {
 ///
 /// ```
 /// use futures_util::{StreamExt, stream};
-/// use quoll::rest::Events;
+/// use quoll::Events;
 ///
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> quoll::rest::Result<()> {
+/// # async fn main() -> quoll::Result<()> {
 /// let mut events = Events::new(stream::iter(["milk", "eggs"]));
 ///
 /// while let Some(event) = events.next().await {
@@ -142,7 +142,7 @@ impl<T> Events<T> {
     ///
     /// ```
     /// use futures_util::stream;
-    /// use quoll::rest::{Error, Events};
+    /// use quoll::{Error, Events};
     ///
     /// let events = Events::try_new(stream::iter([Ok("milk"), Err(Error::internal("the store went away"))]));
     /// # let _ = events;
@@ -181,10 +181,10 @@ impl<T> fmt::Debug for Events<T> {
 ///
 /// ```
 /// use futures_util::{StreamExt, stream};
-/// use quoll::rest::JsonLines;
+/// use quoll::JsonLines;
 ///
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> quoll::rest::Result<()> {
+/// # async fn main() -> quoll::Result<()> {
 /// let mut lines = JsonLines::new(stream::iter(1..=3));
 ///
 /// while let Some(line) = lines.next().await {
@@ -243,7 +243,7 @@ impl<T> JsonLines<T> {
     ///
     /// ```
     /// use futures_util::stream;
-    /// use quoll::rest::{Error, JsonLines};
+    /// use quoll::{Error, JsonLines};
     ///
     /// let lines = JsonLines::try_new(stream::iter([Ok(1), Err(Error::internal("the store went away"))]));
     /// # let _ = lines;
@@ -284,10 +284,10 @@ impl<T> fmt::Debug for JsonLines<T> {
 ///
 /// ```
 /// use futures_util::{StreamExt, stream};
-/// use quoll::rest::ByteStream;
+/// use quoll::ByteStream;
 ///
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> quoll::rest::Result<()> {
+/// # async fn main() -> quoll::Result<()> {
 /// let chunks = vec![b"hello ".to_vec(), b"world\n".to_vec()];
 /// let mut output = ByteStream::new(stream::iter(chunks)).with_content_type("text/plain; charset=utf-8");
 ///
@@ -301,7 +301,7 @@ impl<T> fmt::Debug for JsonLines<T> {
 /// ```
 ///
 /// The server answers 200 with its content type, `X-Content-Type-Options: nosniff` as for
-/// [`Bytes`](crate::rest::Bytes), `Cache-Control: no-cache` and `X-Accel-Buffering: no`, so that neither a browser, a
+/// [`Bytes`](crate::Bytes), `Cache-Control: no-cache` and `X-Accel-Buffering: no`, so that neither a browser, a
 /// cache nor a proxy such as nginx reads it otherwise or holds it back. It sends each chunk as it comes, as it is. It
 /// asks the stream for a chunk only once the connection has taken the last one: a client that reads slowly slows it
 /// down, and one that goes away drops it, with the connection. Nothing goes out before the first chunk: a proxy that
@@ -313,7 +313,7 @@ impl<T> fmt::Debug for JsonLines<T> {
 /// [#70](https://github.com/4thlabs/quoll/issues/70).
 ///
 /// The client asks for any content type, `Accept: */*`, and reads an answer of any, as it reads
-/// [`Bytes`](crate::rest::Bytes): its content type, or `application/octet-stream` when it has none, or one that is not
+/// [`Bytes`](crate::Bytes): its content type, or `application/octet-stream` when it has none, or one that is not
 /// a media type. Each chunk is one the connection gave, of whatever size, never empty: what the bytes mean, their lines
 /// or their frames, is the caller's to read. A body that cannot be read is an error with no status, and the stream ends
 /// after it.
@@ -345,7 +345,7 @@ impl ByteStream {
     ///
     /// ```
     /// use futures_util::stream;
-    /// use quoll::rest::{ByteStream, Error};
+    /// use quoll::{ByteStream, Error};
     ///
     /// let output = ByteStream::try_new(stream::iter([Ok(b"a".to_vec()), Err(Error::internal("the process died"))]));
     /// # let _ = output;
@@ -364,7 +364,7 @@ impl ByteStream {
     /// `application/vnd.docker.multiplexed-stream`.
     ///
     /// It is checked when it is sent: a server answers a content type that is not a media type with a 500, logged,
-    /// before it sends any chunk. As for [`Bytes`](crate::rest::Bytes), a server never answers a content type a client
+    /// before it sends any chunk. As for [`Bytes`](crate::Bytes), a server never answers a content type a client
     /// gave as it is: a browser runs `text/html` on the API's own site.
     #[must_use]
     pub fn with_content_type(self, content_type: impl Into<String>) -> Self {
@@ -385,7 +385,7 @@ impl ByteStream {
     ///
     /// ```
     /// use futures_util::stream;
-    /// use quoll::rest::ByteStream;
+    /// use quoll::ByteStream;
     ///
     /// let logs = ByteStream::new(stream::empty()).with_content_type("Application/Vnd.Docker.Raw-Stream");
     ///

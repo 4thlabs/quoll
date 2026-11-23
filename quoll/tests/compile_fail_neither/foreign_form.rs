@@ -1,4 +1,3 @@
-use quoll::rest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +13,7 @@ pub struct Login {
     pub user: String,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Auth {

@@ -9,19 +9,19 @@ A REST contract written once in Rust, from which a macro generates a server on a
 Decided by the maintainer:
 
 - **2026-11-18**:
-  - the contract is one function-like macro, `rest::api! { ... }`;
+  - the contract is one function-like macro, `quoll::api! { ... }`;
   - the contract says which authentication a route takes, `#[auth(Bearer)]`, and the server's handler receives the authenticated caller as a typed argument;
   - authentication is generic, through schemes;
   - no generated Rust is written to disk;
   - the client is built on reqwest-middleware and is native only, with no wasm32 for now.
 - **2026-11-19**:
   - the crate is named `quoll`;
-  - errors stay one `rest::Error`, typed errors per route come later;
+  - errors stay one `quoll::Error`, typed errors per route come later;
   - the items of a stream are typed in TypeScript through an extension and a `subscribe` helper;
   - an `i64` is a TypeScript `number`;
   - pagination by header comes later;
   - the error of `authenticate` answers its own status, not always 401;
-  - a path parameter of a struct type is refused when it is called, until a `rest::PathValue` derive refuses it at compile time;
+  - a path parameter of a struct type is refused when it is called, until a `quoll::PathValue` derive refuses it at compile time;
   - a header read twice, an argument in two places, a query struct that is not a struct and a header that quoll or HTTP writes do not compile;
   - `Bytes` carries its content type;
   - a failure after the 200 ends an `Events` stream with an `event: problem`, and the client reads every event that has data, whatever its name;
@@ -37,8 +37,8 @@ Decided by the maintainer:
   - `bearer_from` takes a `client::TokenSource`, whose `token` it asks before each call and whose `refresh` once after a 401, the 401 answering when the token is the same or the body cannot be sent twice;
   - `user_agent` and `request_id` set their header when the request has none, one id across the attempts of a call;
   - `timeout` is a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again;
-  - `Api::openapi()` returns a `rest::openapi::Document` and is written whatever the features, so that every type of a contract implements `JsonSchema`, unless the api says `#[openapi(none)]`;
-  - `Scheme::openapi` returns a `rest::openapi::SecurityScheme` and has no default;
+  - `Api::openapi()` returns a `quoll::openapi::Document` and is written whatever the features, so that every type of a contract implements `JsonSchema`, unless the api says `#[openapi(none)]`;
+  - `Scheme::openapi` returns a `quoll::openapi::SecurityScheme` and has no default;
   - the document's `info` is the contract crate's name and version, a query struct is unfolded into its keys, `Bytes` are `application/octet-stream` as a body and `*/*` as a result, each route lists the errors quoll answers and a `default`, two types of one name take schemars' suffix, a type read and written otherwise has two schemas, operation ids are unique, two schemes of one `NAME` in an api do not compile, and the notes document is a snapshot of its tests;
   - the server's helpers return quoll's layer types, under `server::layer`, which the example adds from the innermost to the outermost;
   - `request_id()` keeps a caller's id of 1 to 128 bytes of printable ASCII with no space, or makes a UUID v4, which a handler reads with `RequestId::current()`, a task-local;
@@ -47,12 +47,12 @@ Decided by the maintainer:
   - `cors(origins)?` refuses what is not an origin with an `InvalidOrigin`, allows the methods a contract serves and any header, exposes `Location`, `WWW-Authenticate` and `X-Request-Id`, and allows no credentials, the CSRF check of a cookie scheme still trusting the server's own origin alone.
 - **2026-11-20**:
   - a client error's sources show its URL by origin and path, never its credentials nor its query;
-  - the helpers move to the top of the crate, `quoll::client` and `quoll::server`, and `rest::test` to `quoll::test`, with no re-export left in `quoll::rest`;
+  - the helpers move to the top of the crate, `quoll::client` and `quoll::server`, and the router of a test to `quoll::test`, with no re-export left in the module of the contract;
   - `client::builder()` takes quoll's helpers and any `reqwest_middleware::Middleware` with `with`; it puts quoll's own in the order they work in, `trace`, `user_agent`, `request_id`, `retry`, `timeout`, `redirects`, then the credentials and `on_request`, whatever the order they are given in, each other where it is given, and tells a helper by its type; it configures reqwest's client with `http(..)`, follows no redirect in reqwest's client when `redirects` is given, and adds `redirects(10)` when it is given a credential, `on_request` included, and no `redirects`; it builds a contract's client with `build::<Api>(url)`, through the trait `client::Contract` the macro implements on `Api`, or a `ClientWithMiddleware` with `build_http()`;
   - `server::builder()` takes quoll's layers and any tower layer with `with`, the first given the outermost; it puts quoll's own in the order `request_id`, `trace`, `cors`, `compression`, `timeout`, `body_limit`, each other where it is given; it serves a router with `serve(address, router)`, an address a `&str`, a `String` or a `SocketAddr`, or `serve_on(listener, router)` until Ctrl-C or `SIGTERM`, or the signal given to `shutdown(..)`, waits 5 s for the requests it serves, `grace(..)`, or until a second signal, and logs at `WARN` the connections it leaves open; it gives the router with its layers with `into_router(router)`;
   - `Api::client`, `Api::client_with` and `Api::router` stay;
   - `build::<T>` on a type that is not a contract's api does not compile;
-  - a contract splits into `rest::group!` blocks, one group per block, which an api lists by their paths, the usual form, `{ auth::Auth, notes::Notes }`, a group named alone needing its module imported by glob, `use notes::*;`, and rustc's error on the name otherwise;
+  - a contract splits into `quoll::group!` blocks, one group per block, which an api lists by their paths, the usual form, `{ auth::Auth, notes::Notes }`, a group named alone needing its module imported by glob, `use notes::*;`, and rustc's error on the name otherwise;
   - the api reads them through a hidden descriptor, by type, and checks them against each other at compile time, inline groups going through the same generator;
   - schemes are declared in the api alone, a `group!` naming one by its path or an import, the rule that names a declared scheme alone holding in the api's block only;
   - a group may be listed by two apis, each serving it under its prefix;
@@ -60,7 +60,7 @@ Decided by the maintainer:
   - two schemes of different types of one `NAME` from two blocks, which the macro cannot compare, make `Api::openapi()` panic with a message saying so, which the snapshot test of the document catches;
   - the example's store is in memory, without SQLite;
   - for the example of the Docker Engine API: the client reads a `JsonLines` sent as `application/json` too, which it asks for last, `application/json;q=0.5`, the server still sending `application/jsonl`;
-  - for the same example, a result `rest::ByteStream`, bytes of a content type sent as they come, one type on both sides, of chunks that are `Vec<u8>`, `bytes` being no dependency of the API, described as `Bytes` are in the document, `*/*`, a stream for every rule streams follow;
+  - for the same example, a result `quoll::ByteStream`, bytes of a content type sent as they come, one type on both sides, of chunks that are `Vec<u8>`, `bytes` being no dependency of the API, described as `Bytes` are in the document, `*/*`, a stream for every rule streams follow;
   - the TypeScript chain is driven by a Rust core, `cargo quoll gen`, `dev` and `build`, configured in the workspace's metadata, which runs the commands it names; no plugin for now; `subscribe` comes later.
 - **2026-11-21**:
   - with `cargo quoll dev`, its `--json` events are `document`, `error`, `server` and `web`, as [The dev loop](#the-dev-loop) lists them;
@@ -69,30 +69,31 @@ Decided by the maintainer:
   - an `Events` answer opens with a comment, `: `, and ends cleanly when the server of `server::builder()` is told to stop;
   - what a `JsonLines` or a `ByteStream` says of a stop is open, [#70](https://github.com/4thlabs/quoll/issues/70);
   - each example is a workspace of its own, as an application's is, with the config of `cargo quoll` in its own `Cargo.toml`, the repository's root workspace holding the library's crates alone;
-  - `rest::Response<T>` is the answer of HTTP on both sides, its status, its version, its headers and its body, with nothing declared per route in the contract; the response headers are not in the OpenAPI document;
-  - every handler returns `rest::Result<Response<T>>`, as tonic's do, `Ok(Response::new(note))`, with its headers, `.header(ETAG, tag)`; `Created<T>` and `Accepted<T>` are only written in the contract, to say 201 or 202, a handler of either returning a `Response<T>`, and `Location` is a header as any other, `Created::at` gone;
-  - the status of a response is the contract's unless the handler gives another, a success or a redirection, with `.with_status(Status::CREATED)`, `rest::Status` holding a `2xx` or a `3xx` alone, so that an error's status is refused at compile time and goes through `Err(rest::Error)`; the document describes the contract's status alone;
-  - every route's method on the client returns a `rest::Call<T>`, the call described and not sent yet, an `IntoFuture`: `.await` gives `rest::Result<T>`, `.response()` the whole answer, `rest::Result<Response<rest::Result<T>>>`, its body the route's value on a success and the error of the answer otherwise, a 304 among them, with its status and its headers and no body; its `Err` is only no usable answer; `.timeout(duration)` gives the call a deadline of its own, in place of the client's `client::timeout`, with its meaning; any future of a `rest::Result<T>` is a `Call<T>` too, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or the status of its error, so that a fake returns an `async move` block;
+  - `quoll::Response<T>` is the answer of HTTP on both sides, its status, its version, its headers and its body, with nothing declared per route in the contract; the response headers are not in the OpenAPI document;
+  - every handler returns `quoll::Result<Response<T>>`, as tonic's do, `Ok(Response::new(note))`, with its headers, `.header(ETAG, tag)`; `Created<T>` and `Accepted<T>` are only written in the contract, to say 201 or 202, a handler of either returning a `Response<T>`, and `Location` is a header as any other, `Created::at` gone;
+  - the status of a response is the contract's unless the handler gives another, a success or a redirection, with `.with_status(Status::CREATED)`, `quoll::Status` holding a `2xx` or a `3xx` alone, so that an error's status is refused at compile time and goes through `Err(quoll::Error)`; the document describes the contract's status alone;
+  - every route's method on the client returns a `quoll::Call<T>`, the call described and not sent yet, an `IntoFuture`: `.await` gives `quoll::Result<T>`, `.response()` the whole answer, `quoll::Result<Response<quoll::Result<T>>>`, its body the route's value on a success and the error of the answer otherwise, a 304 among them, with its status and its headers and no body; its `Err` is only no usable answer; `.timeout(duration)` gives the call a deadline of its own, in place of the client's `client::timeout`, with its meaning; any future of a `quoll::Result<T>` is a `Call<T>` too, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or the status of its error, so that a fake returns an `async move` block;
   - `client::retry(times)` keeps its rule, and `.when(|attempt: &Attempt| -> Retry)` is one decision for every other case, a `429` and its `Retry-After`, a `POST` with an `Idempotency-Key`, a `500`: `Retry::No`, `Retry::Backoff` or `Retry::After(duration)`; the `Attempt` gives the contract's `Route`, the request, the answer's status and headers or the error, and its number, `transient()` the rule of `retry(times)` alone and `retry_after()` the answer's `Retry-After`, in seconds or as an HTTP date, capped by `.max_wait(..)`; the middleware is quoll's own on backon's backoff, which no public signature shows, and reqwest-retry leaves the dependencies;
-  - the shape of the errors another API answers is said once, `#[error(E)]` on the api, and the errors of its calls carry its type: they return `rest::Result<T, E>`, an alias of `Result<T, rest::Error<E>>`, `rest::Error<Problem>` being `rest::Error`, the default; `error.detail()` gives the `E`, `error.response()` the answer with it; a body that is not an `E` is an answer with no detail, which keeps its status and its raw body; a fake builds one with `rest::Error::answered(status, e)`;
+  - the shape of the errors another API answers is said once, `#[error(E)]` on the api, and the errors of its calls carry its type: they return `quoll::Result<T, E>`, an alias of `Result<T, quoll::Error<E>>`, `quoll::Error<Problem>` being `quoll::Error`, the default; `error.detail()` gives the `E`, `error.response()` the answer with it; a body that is not an `E` is an answer with no detail, which keeps its status and its raw body; a fake builds one with `quoll::Error::answered(status, e)`;
   - a literal query key may hold `[` and `]`, so that `"/customers/{id}?expand[]={expand}"` and `"/articles?filter[name]={name}&page[size]={size}"`, the keys of Stripe, JSON:API and Rails, are written in the route's string; nothing else changes, the server reading the query through serde; the nested form, `metadata[k]=v` from a map, is no syntax of the contract: its recipe comes with the guide of [#84](https://github.com/4thlabs/quoll/issues/84).
 - **2026-11-22**:
-  - the body of `.response()` is `rest::Result<T, E>`: `Ok(T)` on a success, `Err(rest::Error<E>)` on any other status, with `detail()` when its body is an `E`; a 304 is an `Err` with its status and no `detail()`, its headers those of the `.response()`;
+  - the body of `.response()` is `quoll::Result<T, E>`: `Ok(T)` on a success, `Err(quoll::Error<E>)` on any other status, with `detail()` when its body is an `E`; a 304 is an `Err` with its status and no `detail()`, its headers those of the `.response()`;
   - `#[error(E)]` is inherited api → group → route, as `#[auth]` is, the nearest to the call winning;
   - `E: Display` gives the message: `another api answered 401: Bad credentials`; rejected, an attribute naming a field;
   - the fixed headers of an api are in its contract, `#[header("name" = value)]` on the api, a group or a route, inherited downward as `#[auth]` is, the nearest to the call winning: the caller's `header("X")` argument, the route, the group, the api, then quoll's own `Accept`; `#[header("X" = none)]` leaves one inherited header and `#[header(none)]` all of them, never what quoll writes for the route; a `none` on a header its parent does not fix does not compile; a `Content-Type` keeps the media type of the body, adding a parameter; the server does not check them, and the document describes each as a header parameter with `const`, not required; `on_request` stays for what belongs to a deployment;
   - taken with it as implementation, written in [Fixed headers](#fixed-headers): a group of another block takes its api's fixed headers, which are values read at run time, as the prefix is, the api checking at compile time what its groups leave and the `Content-Type` they take; a value is a string or the name of a `&str` constant, checked at compile time; a fixed `Content-Type` is left out of a request with no body, a route's own on one refused, refused on a `Bytes` body, which carries its own, and with a charset other than UTF-8, which quoll writes its bodies in; a fixed header is refused where an argument's would be, but `Content-Type`, and with it the credential of a scheme the route takes; `Accept`, `Content-Type` and `Authorization`, which OpenAPI describes otherwise, and a header an argument reads, are not described as fixed.
-  - a list is written as the one value of a query key by `#[join(sep)]` on its argument, in the route's line, its type staying the natural one, `#[join(",")] labels: Vec<String>`: `#[join(",")]` is `labels=bug,docs`, `style: form, explode: false`, `#[join(" ")]` `labels=bug%20docs`, `spaceDelimited`, `#[join("|")]` `labels=bug|docs`, `pipeDelimited`, and the server reads the list back; another separator, or an argument that is not a list, does not compile, spanned on the attribute; rejected, `#[query(labels(join = ","))]` on the route, which repeats the argument's name, and a `rest::Comma<T>` type;
-  - a field of a query struct is written in plain serde, the norm: `#[serde(with = "rest::join::Comma::<u32>")]`, or `rest::join::Comma` alone; `rest::join::Comma<T>`, `Space<T>` and `Pipe<T>` are public types, whose `serialize` and `deserialize` serde calls and whose schema schemars reads, carrying the mark the document turns into the parameter's style; their `T` defaults to `rest::join::Any`, which serde infers from the field either way, and with which the schema of the items says nothing, schemars taking the type written in the string as it is; this replaces `#[rest::query]`, decided earlier the same day and merged in #92, which is removed; a shorter form for a field comes later, once schemars or a macro of quoll's sees the field;
+  - a list is written as the one value of a query key by `#[join(sep)]` on its argument, in the route's line, its type staying the natural one, `#[join(",")] labels: Vec<String>`: `#[join(",")]` is `labels=bug,docs`, `style: form, explode: false`, `#[join(" ")]` `labels=bug%20docs`, `spaceDelimited`, `#[join("|")]` `labels=bug|docs`, `pipeDelimited`, and the server reads the list back; another separator, or an argument that is not a list, does not compile, spanned on the attribute; rejected, `#[query(labels(join = ","))]` on the route, which repeats the argument's name, and a `quoll::Comma<T>` type;
+  - a field of a query struct is written in plain serde, the norm: `#[serde(with = "quoll::join::Comma::<u32>")]`, or `quoll::join::Comma` alone; `quoll::join::Comma<T>`, `Space<T>` and `Pipe<T>` are public types, whose `serialize` and `deserialize` serde calls and whose schema schemars reads, carrying the mark the document turns into the parameter's style; their `T` defaults to `quoll::join::Any`, which serde infers from the field either way, and with which the schema of the items says nothing, schemars taking the type written in the string as it is; this replaces `#[quoll::query]`, decided earlier the same day and merged in #92, which is removed; a shorter form for a field comes later, once schemars or a macro of quoll's sees the field;
   - taken with them as implementation, written in [Parameters, by name](#parameters-by-name): the client writes an argument's values escaped, as a path parameter's are, with the separator between them as is, a space as `%20`, and a query struct's field as serde_html_form writes its text, the separator escaped, `labels=bug%2Cdocs`; the server decodes a value before it splits it, so that it reads both, and the `%2C` of a browser's `URLSearchParams`, through which orval's clients write it; so a value cannot hold the separator, which the client refuses, as it refuses a list of one empty value, which reads as an empty list; an empty list leaves the key out; the values are read from text, as a path parameter is; a joined field is its joined text, or `null` when empty, in JSON too, and its schema says so, a string or `null`, with a mark holding the list's own schema, which the document puts in the query parameter it unfolds and removes elsewhere;
-  - after #91, the rule on a `none` of a group of another block relaxed: a `#[header("X" = none)]` in a `rest::group!` leaves `X` where the api that lists the group fixes it and does nothing elsewhere, so that any api may list the group; in the api's own block, where the parent is known, a `none` on a header the parent does not fix stays a compile error, which catches a typo; the four defaults of #91 confirmed.
+  - after #91, the rule on a `none` of a group of another block relaxed: a `#[header("X" = none)]` in a `quoll::group!` leaves `X` where the api that lists the group fixes it and does nothing elsewhere, so that any api may list the group; in the api's own block, where the parent is known, a `none` on a header the parent does not fix stays a compile error, which catches a typo; the four defaults of #91 confirmed.
 - **2026-11-23**:
-  - a list is joined only on a route's argument, by `#[join(sep)]`, whose type the macro sees and of which nothing reaches the JSON of a body or a result; this replaces the joined field of a query struct decided on 2026-11-22: `#[rest::query]`, merged in #92, and the serde form that took its place, `rest::join::Comma<T>`, `Space<T>` and `Pipe<T>`, merged in #94, are both removed, with the mark their schema carried into the document; a `Vec` field of a query struct repeats its key, as before #92; a joined field of a query struct is reopened in #93;
+  - a list is joined only on a route's argument, by `#[join(sep)]`, whose type the macro sees and of which nothing reaches the JSON of a body or a result; this replaces the joined field of a query struct decided on 2026-11-22: `#[quoll::query]`, merged in #92, and the serde form that took its place, `quoll::join::Comma<T>`, `Space<T>` and `Pipe<T>`, merged in #94, are both removed, with the mark their schema carried into the document; a `Vec` field of a query struct repeats its key, as before #92; a joined field of a query struct is reopened in #93;
   - taken with the brackets of a query key as implementation, written in [Methods and paths](#methods-and-paths): a key is a name of the characters of a literal segment, then brackets that hold the same or nothing, never `.` or `..`, `expand[]`, `filter[name]`, `a[b][c]`, and a bracket left open, a bracket first or text after one does not compile; the client escapes them, `expand%5B%5D=a`, as serde_html_form and a browser's `URLSearchParams` write a key, and the server reads them escaped or as they are, which curl sends; a query scheme's key keeps its rule, letters, digits and `-._~`.
   - a 204 is a success, never an error, and one rule says where: a 204 or a 205 is allowed or refused at compile time by the type of the handler's value alone, whatever the route's result wraps it in; allowed when the value may be empty, `()`, `Option<T>`, `Text`, `Bytes`, `Events<T>`, `JsonLines<T>` and `ByteStream`, and in a `Created<T>` or an `Accepted<T>`, whose `T` is a JSON value, `()` and `Option<T>`, so that an `Accepted<()>` and a `Created<Option<Note>>` may answer 204, a `Created<Text>`, `Bytes` or stream not compiling, its message on the type, which quoll's client reads as `()`, `None`, an empty text or bytes, a stream that ends at once; refused when it must carry a value, a `Note` of `-> Note`, `-> Created<Note>` or `-> Accepted<Note>`, its message naming the handler's `T`; the OpenAPI document lists a 204 by the same type, in a `Created` or an `Accepted` too, from one list of the types that may be empty; the notes page's mutator gives `null` on a 204 or a 205; the other successes stay allowed everywhere; an api that answers 204 on a route of a value gives the read error of today, the `.response()` keeping its status and its headers, its body that error. This takes the place of the rules decided earlier the same day, `()` and `Option<T>` alone, then a refusal of a `Created<T>` or an `Accepted<T>` of an empty `T`, which broke `Accepted<()>`.
-  - taken with it as implementation: `Status::NO_CONTENT` and `Status::RESET_CONTENT` are a `rest::NoContent`, which `NoContent::try_from(status)` gives from a 204 or a 205 another API answered, and which `Status::try_from` refuses; `with_status` takes a `rest::IntoStatus`, a `Status` or a `NoContent`, whose body `rest::Allows<T>` the response's value, the one list of the types that may be empty, which the document reads through a bound on it, so that another argument, an `http::StatusCode`, has a message of its own; a route with no result that answers 201 or 204 gives each in its branch; the value of a `Response` given a 204 is not sent, as a 304's; the client drops the body a 205 carries, its bytes of `application/octet-stream`, and reads a 204 as `null` for an `Option<T>` or `()` alone, told by its type.
+  - taken with it as implementation: `Status::NO_CONTENT` and `Status::RESET_CONTENT` are a `quoll::NoContent`, which `NoContent::try_from(status)` gives from a 204 or a 205 another API answered, and which `Status::try_from` refuses; `with_status` takes a `quoll::IntoStatus`, a `Status` or a `NoContent`, whose body `quoll::Allows<T>` the response's value, the one list of the types that may be empty, which the document reads through a bound on it, so that another argument, an `http::StatusCode`, has a message of its own; a route with no result that answers 201 or 204 gives each in its branch; the value of a `Response` given a 204 is not sent, as a 304's; the client drops the body a 205 carries, its bytes of `application/octet-stream`, and reads a 204 as `null` for an `Option<T>` or `()` alone, told by its type.
   - the fixed fields of a body are in the contract, `#[body("name" = value)]` on a route, as `#[header]` is for headers, which replaces the decision of 2026-11-21 in [#83](https://github.com/4thlabs/quoll/issues/83), a second api `#[openapi(none)]` for the second answer of a method and a path: the client wraps the body in a `Serialize` adapter that adds the fields to the top-level struct or map of `T` as it serializes, the route's codec writing the whole, JSON, `Form<T>` and any serde format quoll may take later, with no intermediate value, a fixed field replacing a field of `T` of its name; the server reads the same bytes twice, into a struct of the fixed fields alone, which picks the route, then into the handler's `T`, which ignores them; two routes of one method and path are allowed when their `#[body]` tell them apart, by a field in common with different values, and do not compile otherwise; a value is a bool, a number or a string; a body serializes as a struct or a map, `Text` and `Bytes` not compiling and another `T` refused when it is sent; the format is self-describing, and a `T` with `#[serde(deny_unknown_fields)]` refuses the field when it is read, with a clear message; a single route's fixed field is a `const` property of its body schema, two routes of one method and path described later as one operation with a `oneOf` and a `discriminator`, compiling until then in an api `#[openapi(none)]` alone; the guide's Anthropic example is one api with `create` and `stream`.
   - taken with it as implementation, written in [Fixed fields of the body](#fixed-fields-of-the-body): two values tell routes apart when they are of one kind, numbers compared as numbers, as a form writes `true` and `"true"` alike; a field is fixed once by a route, a negative number written `-1`, and `#[body]` goes on a route with a body alone; the fields come first in the body, before those of `T`, the length the format is given exact, counted by a first pass over `T` that serializes none of its values, so that MessagePack and CBOR, which write it, read the body back, the `Serialize` of `T` giving the same at each pass, as a derived one does; a key of a map is compared to a field's name as its text, an integer, a bool and a finite float among them, as serde_json writes a key; a route alone on its method and path checks its fields too, after it authenticates, a body without them a 400 that names them, and the document lists them as required; two routes that share them read the body, within its limit, before either authenticates, as it picks the route, so that the 400 of a body that holds the fields of none names no route nor field, and is the same for a body that does not read as them; a content type none of them reads is a 415 that names the media types they read, and one they read with a parameter they refuse, a form's charset, is the first such route's to refuse; a body that does not read as its fields, a mistake of syntax or a field of another type, is a 400 of its own, with the format's message, on a route alone, once authenticated; a field a form gives twice is one the body does not hold, as in JSON; a `T` with `#[serde(deny_unknown_fields)]` gives the 400 of a body that does not read as `T`, serde's message naming the field.
+  - quoll is a REST contract and nothing else, so the contract is at the crate's root, `quoll::api!`, `quoll::group!`, `quoll::Response`, `quoll::Result`, `quoll::Error`, `quoll::Status` and every item the module `quoll::rest` held, its submodules too, `quoll::openapi`; `quoll::client`, `quoll::server` and `quoll::test` stay modules of their own; the module `rest`, which repeated the crate's name, is gone, with no alias, there being no release yet; this replaces the module of the contract decided on 2026-11-18, which the examples brought in with `use quoll::rest`.
 
 ## Stack and crates
 
@@ -111,14 +112,14 @@ notes/
   web/      TypeScript    vite, orval, TanStack Query
 ```
 
-The crate is `quoll`, used from git until it is published; the contract is its module `quoll::rest`, which the examples bring in with `use quoll::rest`. It has two features, `server` and `client`, which bring the modules of each side: `quoll::client`, the builder of a client and its middleware, `quoll::server`, the builder of a server and its layers, and `quoll::test`, a router served for a test. What the macro generates for each side compiles only with its feature: the command line never links axum, nor the server reqwest. A contract crate passes them on, `notes-api = { path = "../api", features = ["server"] }`.
+The crate is `quoll`, used from git until it is published; the contract is at its root, `quoll::api!`, `quoll::Response`, `quoll::Error`, which the examples name by their path or import. It has two features, `server` and `client`, which bring the modules of each side: `quoll::client`, the builder of a client and its middleware, `quoll::server`, the builder of a server and its layers, and `quoll::test`, a router served for a test. What the macro generates for each side compiles only with its feature: the command line never links axum, nor the server reqwest. A contract crate passes them on, `notes-api = { path = "../api", features = ["server"] }`.
 
 Quoll's own crates are three. The dev loop is a crate of its own, outside `quoll`, which no application depends on: it is installed, with `cargo install --git https://github.com/4thlabs/quoll quoll-cli` until it is published.
 
 | Crate | What it is |
 |---|---|
-| `quoll` | The contract, `quoll::rest`, and the `server`, `client` and `test` modules behind their features. |
-| `quoll-macros` | The proc macro behind `rest::api!` and `rest::group!`, re-exported by `quoll`, never named. |
+| `quoll` | The contract, at its root, and the `server`, `client` and `test` modules behind their features. |
+| `quoll-macros` | The proc macro behind `quoll::api!` and `quoll::group!`, re-exported by `quoll`, never named. |
 | `quoll-cli` | The binary `cargo-quoll`, a cargo subcommand: `cargo quoll gen`, `dev` and `build`, as [The dev loop](#the-dev-loop) says. |
 
 ## The contract
@@ -126,7 +127,7 @@ Quoll's own crates are three. The dev loop is a crate of its own, outside `quoll
 An api is a block read as a route table: the method, the path, then the Rust function it becomes.
 
 ```rust
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     pub api Api = "/api";
 
@@ -155,7 +156,7 @@ rest::api! {
 - Only the api has a prefix, with no parameter. A parameter that routes share goes in each path: `"/repos/{owner}/{repo}/issues"`.
 - The operation id is the group and the function, `notes_get`; the OpenAPI tag is the group.
 - `///` comments become the OpenAPI summary and description, and the rustdoc of what is generated.
-- A large api splits into `rest::group! { pub group Notes { ... } }` blocks, one group per block and per module, and an api that lists them by their paths: `pub api Api = "/api" { auth::Auth, notes::Notes };` (see Groups across modules).
+- A large api splits into `quoll::group! { pub group Notes { ... } }` blocks, one group per block and per module, and an api that lists them by their paths: `pub api Api = "/api" { auth::Auth, notes::Notes };` (see Groups across modules).
 
 ### Parameters, by name
 
@@ -186,7 +187,7 @@ pub group Issues {
 An api that asks every request for headers of its own, a version, a media type, says them once, in the contract, which every client of it shares:
 
 ```rust
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[header("Accept" = "application/vnd.github+json")]
     #[header("X-GitHub-Api-Version" = "2022-11-28")]
@@ -204,10 +205,10 @@ rest::api! {
 
 - `#[header("name" = value)]` goes on the api, a group or a route, as many as it needs, one per header, and is inherited downward as `#[auth]` is. The value is a string or the name of a `&str` constant, `#[header("anthropic-version" = ANTHROPIC_VERSION)]`, checked at compile time to be a header's value: visible ASCII, with spaces and tabs inside it only. A value that changes at run time, Stripe Connect's `Stripe-Account`, is a route's argument, `header("Stripe-Account")`, or goes through `on_request`, which stays for what belongs to a deployment, a signature or a tenant.
 - The nearest to the call wins: the caller's `header("X")` argument, when it gives one, then the route, the group, the api, then quoll's own, the `Accept` of the route's result. Names are compared ignoring case.
-- `#[header("X" = none)]` on a group or a route leaves one header it would take; `#[header(none)]` leaves them all, the headers it names beside it being its own, as `#[auth(none)]` then `#[auth(..)]`. A `none` never removes what quoll writes for the route: `#[header("Accept" = none)]` leaves the api's `Accept`, and the route asks for quoll's again. In the api's own block, where the parent is known, a `none` on a header its parent does not fix does not compile, its message on the name, so that a typo is not silent; neither does a `none` on the api, which has no parent. In a `rest::group!`, a `none` leaves the header where the api that lists the group fixes it and does nothing elsewhere, so that any api may list the group; a route's `none` on a header its group already leaves does not compile there either.
+- `#[header("X" = none)]` on a group or a route leaves one header it would take; `#[header(none)]` leaves them all, the headers it names beside it being its own, as `#[auth(none)]` then `#[auth(..)]`. A `none` never removes what quoll writes for the route: `#[header("Accept" = none)]` leaves the api's `Accept`, and the route asks for quoll's again. In the api's own block, where the parent is known, a `none` on a header its parent does not fix does not compile, its message on the name, so that a typo is not silent; neither does a `none` on the api, which has no parent. In a `quoll::group!`, a `none` leaves the header where the api that lists the group fixes it and does nothing elsewhere, so that any api may list the group; a route's `none` on a header its group already leaves does not compile there either.
 - `Content-Type` is the body's, which a fixed one keeps, adding a parameter: Slack's `application/json; charset=utf-8` on a JSON body. Another media type does not compile, nor does a charset other than UTF-8, which quoll writes its bodies in. One the route takes of its group or its api is left out of a request with no body; a route's own on a route with none does not compile, nor does any on a `Bytes` body, which carries its content type.
 - A fixed header is refused where an argument's would be, the headers quoll or HTTP writes, but `Content-Type`, and on a route that takes a scheme, the header that carries its credential, `Authorization`, a header scheme's, `Cookie` beside a cookie scheme: the client's middleware sends it.
-- The values are read at run time, as the prefix is: a group of another block, a `rest::group!`, takes the fixed headers of the api that lists it, which checks at compile time that the `Content-Type` they take keeps their bodies' media types, and that they carry no credential of their schemes, its message on the group in its list. What they leave is not checked: a `none` does nothing where the api does not fix the header.
+- The values are read at run time, as the prefix is: a group of another block, a `quoll::group!`, takes the fixed headers of the api that lists it, which checks at compile time that the `Content-Type` they take keeps their bodies' media types, and that they carry no credential of their schemes, its message on the group in its list. What they leave is not checked: a `none` does nothing where the api does not fix the header.
 - The server does not check them, on a contract of quoll's. The OpenAPI document describes each header a route sends as a header parameter with `const`, not required, so that orval does not ask its caller for it, but `Accept`, `Content-Type` and `Authorization`, which OpenAPI describes otherwise, and a header an argument of the route reads, which the argument describes.
 
 ### Fixed fields of the body
@@ -229,7 +230,7 @@ pub group Messages {
 - The client writes the body through a `Serialize` adapter that adds the fields at the top of the struct or the map `T` serializes as, or that an `Option` or a newtype holds, before `T`'s own, and leaves out a field of `T` of the same name: the contract wins, as with `#[header]`. The route's codec writes the whole, with no intermediate value, so that any self-describing serde format takes them; the length the format is given is exact, counted by a first pass over `T` that serializes none of its values, as MessagePack and CBOR write it, so that the `Serialize` of `T` gives the same at each pass, as a derived one does. A `T` that serializes as anything else, a list, a number, an enum's variant under its name, is refused when it is sent, a misuse error, before the request.
 - The server reads the same bytes twice: once for the fixed fields alone, which picks the route, then into the handler's `T`, which ignores them. A body holds a route's fields when each is there once, of its value; one that does not read as them, a mistake of syntax or a field of another type, answers 400 with the format's message, once the route has authenticated the request. A `T` with `#[serde(deny_unknown_fields)]` refuses them: the server answers the 400 of a body that does not read as `T`, whose message names the field.
 - Two routes of one method and path are allowed when a field both fix has two values of one kind, numbers compared as numbers: `true` and `false`, `1` and `2`, but not `true` and `"true"`, which a form writes alike. Otherwise, or when one of them fixes none, they do not compile, whichever blocks their groups come from. Such routes read the body, within its limit, before either authenticates, as it picks the route: a body that holds the fields of none, or does not read as them, answers one 400, which names no route nor field, as the request is not authenticated yet. A content type none of them reads answers 415, naming the media types they read; one they read with a parameter they refuse, a form's charset other than UTF-8, is refused by the first route that reads it, with its message. A route alone on its method and path checks its fields after it authenticates, as it reads its body, a body without them a 400 that names them.
-- The OpenAPI document describes a route's fields as `const` properties of its body, required: an `allOf` of the schema of `T` and of an object that holds them. Two routes of one method and path are described later, as one operation with a `oneOf` and a `discriminator`: until then, they compile only in an api `#[openapi(none)]`, or in a `rest::group!` that says it.
+- The OpenAPI document describes a route's fields as `const` properties of its body, required: an `allOf` of the schema of `T` and of an object that holds them. Two routes of one method and path are described later, as one operation with a `oneOf` and a `discriminator`: until then, they compile only in an api `#[openapi(none)]`, or in a `quoll::group!` that says it.
 
 ### Results
 
@@ -255,10 +256,10 @@ The status is the one of this table, unless the handler gives its `Response` ano
 
 ```rust
 // notes.rs
-use quoll::rest::{self, Created};
+use quoll::Created;
 use crate::{Key, NewNote, Note};
 
-rest::group! {
+quoll::group! {
     /// The signed-in user's notes.
     #[auth(Bearer | Key)]
     pub group Notes {
@@ -271,7 +272,7 @@ rest::group! {
 mod auth;
 mod notes;
 
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     pub api Api = "/api" { auth::Auth, notes::Notes };
 
@@ -285,9 +286,9 @@ rest::api! {
 }
 ```
 
-- A `rest::group!` holds one group, written as in an api, which becomes the same items in its module: `NotesServer`, `Notes` and `NotesClient`. It has no prefix, no api and no scheme of its own.
+- A `quoll::group!` holds one group, written as in an api, which becomes the same items in its module: `NotesServer`, `Notes` and `NotesClient`. It has no prefix, no api and no scheme of its own.
 - The api lists its groups by their paths, after its prefix: their routes are under its prefix, their services fields of `ApiServices`, their clients methods of `ApiClient`, their routes in its document. Paths are the usual form. A group named alone, `{ Notes }`, is one in the api's module or block, or brought by a glob import, `use notes::*;`, which brings its items; otherwise rustc finds no descriptor of the group, `__QuollGroupNotes`, for the name, an error on it. The groups of the list come first, then the ones the api's block writes, which may sit beside them.
-- A `rest::group!` takes the fixed headers of the api that lists it, `#[header(...)]`, values read at run time; any api may list it, a `none` of the group's doing nothing where that api does not fix the header (see Fixed headers).
+- A `quoll::group!` takes the fixed headers of the api that lists it, `#[header(...)]`, values read at run time; any api may list it, a `none` of the group's doing nothing where that api does not fix the header (see Fixed headers).
 - Schemes are declared in the api alone. A `group!` names one by its path, `#[auth(crate::Key)]`, or by an import, as any type implementing `Scheme`: the rule that names a declared scheme alone holds in the api's block.
 - The api reads the routes of a group through a hidden descriptor the group writes, `__QuollGroupNotes`, by type, and checks them at compile time against its own and those of its other groups: one method and path, one path with its parameters named otherwise, one operation id, a group less visible than its api, a declared scheme less visible than a group that takes it, two schemes of a route that read one place, an argument that reads the credential of a scheme its route takes. A scheme says by its type whether it is a declared one, with its place, its visibility and whether it checks the origin of a request: a scheme of the application's of a declared scheme's `NAME` is not taken for it. The error points at the group in the api's list. A group the api's block writes goes through the same generator, its mistakes still pointed at their tokens; one that takes a scheme of another block, which the macro knows by its type alone, has what its arguments and its fixed headers read checked so too, the error on its name.
 - A group may be listed by two apis: each serves it, calls it and describes it under its own prefix.
@@ -332,7 +333,7 @@ impl NotesServer for App {
 - `#[auth(Bearer | Key)]` tries the schemes in the order written, up to four: the first whose credential the request carries decides, and a wrong one is refused with its error, the next not tried. A request may carry two credentials, a session cookie beside a token: neither is refused for the other. A 401 carries one `WWW-Authenticate` per scheme of the route, in that order.
 - `optional` gives `None` for a request with no credential of any of its schemes; a credential that is malformed or that `authenticate` refuses is answered as on any route.
 - A service whose group takes `Bearer` implements `Authenticate<Bearer>`: the server's trait requires it, so a service that cannot authenticate does not compile. Its `authenticate` runs before the handler, and its error answers its own status: 401 for an unknown or expired credential, 403 for a caller refused, 500 for a failure of the service, logged, so that a client does not drop a valid token when the store is down.
-- With scopes, the caller implements `rest::Scoped`, and the router answers 403 before the handler, after `authenticate` and before the path, the query and the body are read, when the caller lacks one of them: a route needs every scope it names, `scopes("repo", "admin")` both. `optional` with `scopes` does not compile: a request with no credential has no scope to check. OpenAPI lists each route's scopes.
+- With scopes, the caller implements `quoll::Scoped`, and the router answers 403 before the handler, after `authenticate` and before the path, the query and the body are read, when the caller lacks one of them: a route needs every scope it names, `scopes("repo", "admin")` both. `optional` with `scopes` does not compile: a request with no credential has no scope to check. OpenAPI lists each route's scopes.
 - The client's trait has no caller: its middleware sends the credential.
 
 An implementation writes `authenticate` as an `async fn`, as the server above does.
@@ -351,7 +352,7 @@ pub trait Scoped {
 
 ### Schemes
 
-A scheme is a type implementing `rest::Scheme`: how the server reads a credential, its name, the challenge of a 401, and how OpenAPI describes it.
+A scheme is a type implementing `quoll::Scheme`: how the server reads a credential, its name, the challenge of a 401, and how OpenAPI describes it.
 
 ```rust
 pub trait Scheme: 'static {
@@ -365,9 +366,9 @@ pub trait Scheme: 'static {
 }
 ```
 
-- `NAME` is what `rest::Route::schemes()` holds and what OpenAPI names the scheme; `CHALLENGE` is the `WWW-Authenticate` of a 401, a constant, which the macro evaluates for each scheme a route takes, so that one that is not a header's value does not compile. The credential is `Send`, as `authenticate` holds it across an `await`. `openapi` describes the scheme in the document, with no default: `SecurityScheme::bearer()`, `basic()`, `http(name)`, `header(name)`, `cookie(name)`, `query(name)` or `openid(url)`, `.with_description(text)`. The crate's schemes and the declared ones give theirs, a declared one with its `///` as the description.
+- `NAME` is what `quoll::Route::schemes()` holds and what OpenAPI names the scheme; `CHALLENGE` is the `WWW-Authenticate` of a 401, a constant, which the macro evaluates for each scheme a route takes, so that one that is not a header's value does not compile. The credential is `Send`, as `authenticate` holds it across an `await`. `openapi` describes the scheme in the document, with no default: `SecurityScheme::bearer()`, `basic()`, `http(name)`, `header(name)`, `cookie(name)`, `query(name)` or `openid(url)`, `.with_description(text)`. The crate's schemes and the declared ones give theirs, a declared one with its `///` as the description.
 - `read` gives `None` for a request with none of its credential, leaving to another scheme an `Authorization` header of another scheme, and a 401 for one of its own that is not well formed. Its detail never shows the credential.
-- Given by the crate: `Bearer`, whose credential is the token, a `String`; and `Basic`, whose credential is a `rest::BasicCredential { user, password }`, read from the base64 of `user:password` in UTF-8, and whose `Debug` hides the password. `Basic` challenges with `Basic realm="api", charset="UTF-8"`, which makes a browser open its own login window: a route the web page calls takes another scheme.
+- Given by the crate: `Bearer`, whose credential is the token, a `String`; and `Basic`, whose credential is a `quoll::BasicCredential { user, password }`, read from the base64 of `user:password` in UTF-8, and whose `Debug` hides the password. `Basic` challenges with `Basic realm="api", charset="UTF-8"`, which makes a browser open its own login window: a route the web page calls takes another scheme.
 - Declared in the contract, with a name and a visibility: `pub scheme Key = header "X-Api-Key";`, `pub scheme Session = cookie "session";`, `pub scheme Token = query "token";`, `pub scheme Login = openid "https://accounts.example.com/.well-known/openid-configuration";` (a bearer token on the wire, described as OpenID Connect, whose challenge is `Bearer`; quoll checks no token, `authenticate` does). Each becomes a type of that name implementing `Scheme`, whose credential is a `String` and whose name is its own: the server implements `Authenticate<Key>`. A header or a query key given twice is a 401, as is an empty one. A header scheme's credential is a header of its own, which reqwest, as curl and `fetch`, keeps on a redirect it follows to another host, where it strips only `Authorization`, `Cookie` and `Proxy-Authorization`: a client that sends one follows redirects with `client::redirects(n)`, which sends each hop through the middleware after it, on a reqwest client that follows none. Of a cookie given twice, as a browser holding it for two paths sends it, the first that is not empty is read, the one of the longest path (RFC 6265); an empty one is none, as a cookie cleared by the application. A route that takes a query scheme has no other value of its key: the macro refuses one in the route's string, and a query struct has no field of that name, which the macro cannot see.
 - A cookie travels with a request that a page of another site has a browser send, with no preflight for a form or text. A request that carries the cookie of a cookie scheme, with a method other than `GET`, `HEAD` or `OPTIONS`, is answered 403 unless its `Sec-Fetch-Site` is `same-origin` or `none`, or, from a browser that sends none, its `Origin` is its `Host`, compared as origins: one host, and one port, the default of the origin's scheme where either leaves it out. A request with neither header comes from no browser and passes. Behind a reverse proxy, the proxy passes the browser's `Host`, `proxy_set_header Host $host` in nginx; `X-Forwarded-Host`, which anyone may send, is not read. Only the server's own origin is trusted for now: trusted origins come later. The application sets the cookie `SameSite=Lax` or `Strict`, `HttpOnly` and `Secure`, a second defense that does not cover a page of the same site, and names it with the prefix `__Host-`, which a subdomain cannot set.
 - Any other is a type of the application implementing `Scheme`, as an HMAC signature, named in `#[auth(...)]` as the others are, by its path: `#[auth(crate::auth::Hmac)]`.
@@ -378,9 +379,9 @@ Nothing is written to disk: the macro runs as rustc compiles the contract, and i
 
 | Item | For | What it is |
 |---|---|---|
-| `trait NotesServer` | server | one method per route, with the caller its authentication gives, returning a `rest::Response` |
+| `trait NotesServer` | server | one method per route, with the caller its authentication gives, returning a `quoll::Response` |
 | `struct __QuollGroupNotes` | both, and neither | hidden: the routes of the group, which the api that lists it reads |
-| `trait Notes` | client | one method per route, returning a `rest::Call`, implemented by the client and by fakes in tests |
+| `trait Notes` | client | one method per route, returning a `quoll::Call`, implemented by the client and by fakes in tests |
 | `struct ApiServices` | server | a field per group: its service |
 | `Api::router` | server | an `axum::Router` from an `ApiServices` |
 | `Api::client`, `Api::client_with` | client | `api.notes()` is a `NotesClient`, implementing `Notes` |
@@ -392,7 +393,7 @@ The generated code stays thin and calls the crate, compiled once. A client metho
 
 ```rust
 impl Notes for NotesClient {
-    fn get(&self, id: i64) -> impl rest::Call<Note> {
+    fn get(&self, id: i64) -> impl quoll::Call<Note> {
         // The macro writes the call: the api's prefix and fixed headers, read at run time, as a group may be listed
         // by two apis, the path with its segment, then the call that sends the request and reads its JSON once
         // awaited, through `quoll::__private`.
@@ -400,12 +401,12 @@ impl Notes for NotesClient {
 }
 ```
 
-A server trait's method returns `impl Future<Output = rest::Result<rest::Response<Note>>> + Send`, which axum needs; an implementation writes `async fn`. A client trait's returns `impl rest::Call<Note>`: a fake writes `fn get(&self, id: i64) -> impl rest::Call<Note>` and an `async move` block, as an `async fn` there compiles but makes rustc warn `refining_impl_trait`, which `-D warnings` refuses.
+A server trait's method returns `impl Future<Output = quoll::Result<quoll::Response<Note>>> + Send`, which axum needs; an implementation writes `async fn`. A client trait's returns `impl quoll::Call<Note>`: a fake writes `fn get(&self, id: i64) -> impl quoll::Call<Note>` and an `async move` block, as an `async fn` there compiles but makes rustc warn `refining_impl_trait`, which `-D warnings` refuses.
 
 ## The server
 
 - A service implements the server trait of its group; one type may implement several.
-- Every handler returns `rest::Result<Response<T>>`, `T` the route's value: `Note` for `-> Note`, `-> Created<Note>` and `-> Accepted<Note>`, `()` for a route with no result, the stream for a stream. `Ok(Response::new(note))` answers the contract's status, `.header(name, value)` adds a header, after those of its name, a `Location` as any other, and `.with_status(Status::..)` gives a success or a redirection in place of the contract's: a `PUT` that answers 201 when it creates and 200 when it replaces, a 304 Not Modified, a 206. `rest::Status` holds a `2xx` or a `3xx` alone, `TryFrom<StatusCode>` refusing the others with an `InvalidStatus`: an error's status is an `Err(rest::Error)`, which answers its problem. A 204 or a 205, `Status::NO_CONTENT` and `Status::RESET_CONTENT`, a `rest::NoContent`, is given to a value that may be empty alone, `()`, an `Option<T>`, a `Text`, `Bytes` or a stream, whatever the result wraps it in, an `Accepted<()>` or a `Created<Option<Note>>` among them, and does not compile on a value that must be one, a `Note` of `-> Note`, `-> Created<Note>` or `-> Accepted<Note>`, its message saying to write an `Option`. A 204, a 205 or a 304 is answered without its body, which the `Response` still holds, and without the headers that describe one.
+- Every handler returns `quoll::Result<Response<T>>`, `T` the route's value: `Note` for `-> Note`, `-> Created<Note>` and `-> Accepted<Note>`, `()` for a route with no result, the stream for a stream. `Ok(Response::new(note))` answers the contract's status, `.header(name, value)` adds a header, after those of its name, a `Location` as any other, and `.with_status(Status::..)` gives a success or a redirection in place of the contract's: a `PUT` that answers 201 when it creates and 200 when it replaces, a 304 Not Modified, a 206. `quoll::Status` holds a `2xx` or a `3xx` alone, `TryFrom<StatusCode>` refusing the others with an `InvalidStatus`: an error's status is an `Err(quoll::Error)`, which answers its problem. A 204 or a 205, `Status::NO_CONTENT` and `Status::RESET_CONTENT`, a `quoll::NoContent`, is given to a value that may be empty alone, `()`, an `Option<T>`, a `Text`, `Bytes` or a stream, whatever the result wraps it in, an `Accepted<()>` or a `Created<Option<Note>>` among them, and does not compile on a value that must be one, a `Note` of `-> Note`, `-> Created<Note>` or `-> Accepted<Note>`, its message saying to write an `Option`. A 204, a 205 or a 304 is answered without its body, which the `Response` still holds, and without the headers that describe one.
 - A handler's header replaces one quoll puts of its name, a stream's `Cache-Control`; a name or a value that is not one, and a `Content-Type`, a `Content-Length` or a `Transfer-Encoding`, which quoll writes from the result, answer 500, logged without the value.
 - A service of a group with authentication also implements `Authenticate` for its schemes (see Authentication).
 - `ApiServices` has one field per group: a missing one does not compile.
@@ -419,10 +420,10 @@ A server trait's method returns `impl Future<Output = rest::Result<rest::Respons
 ## The client
 
 - `Api::client(url)` makes a client with no middleware; `Api::client_with(http, url)` takes a `ClientWithMiddleware`.
-- `client::builder()` builds one with middleware: `.with(middleware)` for quoll's helpers and any `reqwest_middleware::Middleware` (see Middleware), `.http(|http| http.proxy(proxy))` configures reqwest's `ClientBuilder`, and `.build::<Api>(url)` gives the `ApiClient`, through `client::Contract`, which the macro implements on `Api`: its `Client` and its `client_with`. `.build_http()` gives the `ClientWithMiddleware`, for the clients of several contracts. Both return a `rest::Result`, an error when reqwest cannot build its client or the URL is not an api's.
+- `client::builder()` builds one with middleware: `.with(middleware)` for quoll's helpers and any `reqwest_middleware::Middleware` (see Middleware), `.http(|http| http.proxy(proxy))` configures reqwest's `ClientBuilder`, and `.build::<Api>(url)` gives the `ApiClient`, through `client::Contract`, which the macro implements on `Api`: its `Client` and its `client_with`. `.build_http()` gives the `ClientWithMiddleware`, for the clients of several contracts. Both return a `quoll::Result`, an error when reqwest cannot build its client or the URL is not an api's.
 - `api.notes().get(3)`: a method per route, arguments in the contract's order. Rust has no named arguments: a route with many optional filters takes a query struct with `Default`.
-- Each method returns a `rest::Call<T>`, the call described and not sent yet, which `.await` sends: it gives `rest::Result<T>`, the value, or an error that goes up, an answer with an error status among them. Its methods give the call changed: `.timeout(duration)`, a deadline for this call alone, in place of the client's `client::timeout`, with its meaning, a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; a client of `client::builder()` or of `Api::client` keeps it per attempt whatever its helpers, a chain built otherwise without `client::timeout` for the whole call on a stream.
-- `.response()` sends it and gives the whole answer, `rest::Result<Response<rest::Result<T, E>>, E>`, as reqwest's `send()` gives an `Ok` whatever the status: its status, its version, its headers, a rate limit's or a `Retry-After`, and its body, `Ok(T)` on a success and `Err(rest::Error<E>)` on any other status, which holds its status, its detail when the body is an `E`, and its body. A 304 is such an `Err`, with no detail: it comes only to a caller that sent `If-None-Match`, whose answer's headers are those of the `.response()`. `response.into_value()` gives the value, or that error, to go up with `?`. A 204 or a 205 is a success, read as `()`, `None`, an empty text or bytes, or a stream that ends at once: on a route `-> T`, as another API may answer it, the body of the `.response()` is the read error, which keeps its status and its headers. The `Err` of `.response()` is only no usable answer: a connection, a timeout, an answer with a success status but a 204 or a 205 that is not the route's result.
+- Each method returns a `quoll::Call<T>`, the call described and not sent yet, which `.await` sends: it gives `quoll::Result<T>`, the value, or an error that goes up, an answer with an error status among them. Its methods give the call changed: `.timeout(duration)`, a deadline for this call alone, in place of the client's `client::timeout`, with its meaning, a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; a client of `client::builder()` or of `Api::client` keeps it per attempt whatever its helpers, a chain built otherwise without `client::timeout` for the whole call on a stream.
+- `.response()` sends it and gives the whole answer, `quoll::Result<Response<quoll::Result<T, E>>, E>`, as reqwest's `send()` gives an `Ok` whatever the status: its status, its version, its headers, a rate limit's or a `Retry-After`, and its body, `Ok(T)` on a success and `Err(quoll::Error<E>)` on any other status, which holds its status, its detail when the body is an `E`, and its body. A 304 is such an `Err`, with no detail: it comes only to a caller that sent `If-None-Match`, whose answer's headers are those of the `.response()`. `response.into_value()` gives the value, or that error, to go up with `?`. A 204 or a 205 is a success, read as `()`, `None`, an empty text or bytes, or a stream that ends at once: on a route `-> T`, as another API may answer it, the body of the `.response()` is the read error, which keeps its status and its headers. The `Err` of `.response()` is only no usable answer: a connection, a timeout, an answer with a success status but a 204 or a 205 that is not the route's result.
 
 ```rust
 let response = api.notes().get(3).timeout(Duration::from_secs(5)).response().await?;
@@ -435,8 +436,8 @@ if response.status() == StatusCode::NOT_FOUND {
 Ok(Some(response.into_value()?))
 ```
 
-- Any future of a `rest::Result<T, E>` is a `Call<T, E>` too: a fake returns an `async move` block, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or an answer of its error's status, an error with none, which got no answer, as it is. A fake of an api with `#[error(E)]` builds the error of an answer with `rest::Error::answered(StatusCode::NOT_FOUND, e)`, and one of a status alone, with no detail, with `rest::Error::not_found(..).into_shape()`, which turns a `rest::Error` into one of another shape, leaving its problem. Code generic over `impl Notes` calls either.
-- Each request carries a `rest::Route` in its extensions: the operation id, the group, the method, the path as written and the schemes it accepts. Middleware reads it.
+- Any future of a `quoll::Result<T, E>` is a `Call<T, E>` too: a fake returns an `async move` block, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or an answer of its error's status, an error with none, which got no answer, as it is. A fake of an api with `#[error(E)]` builds the error of an answer with `quoll::Error::answered(StatusCode::NOT_FOUND, e)`, and one of a status alone, with no detail, with `quoll::Error::not_found(..).into_shape()`, which turns a `quoll::Error` into one of another shape, leaving its problem. Code generic over `impl Notes` calls either.
+- Each request carries a `quoll::Route` in its extensions: the operation id, the group, the method, the path as written and the schemes it accepts. Middleware reads it.
 
 ## Middleware
 
@@ -448,7 +449,7 @@ The builders put quoll's own in the order they work in, whatever the order they 
 
 | Helper | What it does |
 |---|---|
-| `on_request(f)` | a closure that changes each request of a contract to its api's own origin before it leaves, given its `rest::Route`: what an interceptor does elsewhere |
+| `on_request(f)` | a closure that changes each request of a contract to its api's own origin before it leaves, given its `quoll::Route`: what an interceptor does elsewhere |
 | `bearer(token)` | `Authorization: Bearer`, on the routes whose schemes hold `Bearer` only |
 | `bearer_from(source)` | asks a `client::TokenSource` for a token before each call, and once more after a 401, for tokens that expire |
 | `basic(user, password)` | `Authorization: Basic`, on the routes whose schemes hold `Basic` only |
@@ -460,12 +461,12 @@ The builders put quoll's own in the order they work in, whatever the order they 
 | `trace()` | a tracing span per call, named by the operation id (reqwest-tracing) |
 | `redirects(n)` | follows up to `n` redirects, one hop at a time through the middleware after it, on a reqwest client built with `redirect(Policy::none())` |
 
-The helpers tell a route's schemes by their type, `rest::Route::takes::<Key>()`, so that two contracts declaring a `Key` each get their own through one `ClientWithMiddleware`, and send nothing on a request with no `rest::Route`, nor to another origin than the api's: the client puts the api's origin in each request's extensions beside its `Route`, and `on_request` runs on the same requests. A credential the server would not read, a token that is not a `b64token`, a user with a `:`, a key with a line break, fails each call that would send it with an error that does not show it.
+The helpers tell a route's schemes by their type, `quoll::Route::takes::<Key>()`, so that two contracts declaring a `Key` each get their own through one `ClientWithMiddleware`, and send nothing on a request with no `quoll::Route`, nor to another origin than the api's: the client puts the api's origin in each request's extensions beside its `Route`, and `on_request` runs on the same requests. A credential the server would not read, a token that is not a `b64token`, a user with a `:`, a key with a line break, fails each call that would send it with an error that does not show it.
 
 A header computed from the request is a closure given to `on_request`; the helpers of authentication are written so:
 
 ```rust
-let sign = client::on_request(move |request: &mut Request, route: &rest::Route| {
+let sign = client::on_request(move |request: &mut Request, route: &quoll::Route| {
     let body = request.body().and_then(|body| body.as_bytes()).unwrap_or_default();
     let signature = key.sign(request.method(), request.url().path(), body);
 
@@ -504,7 +505,7 @@ The order `client::builder()` puts the helpers in, from the first, which sees th
 They answer RFC 9457 problems, as handlers do, where tower-http's answer plain text. Any other tower layer applies as is, as a rate limit from tower_governor. Each helper returns a layer type of quoll's, under `server::layer`, which no application names, and no tower-http type: the builder tells them by it.
 
 - **The order.** `server::builder()` runs the first layer given first, the outermost, and puts quoll's in this order, from the outermost: `request_id`, `trace`, `cors`, `compression`, `timeout`, `body_limit`. So a request gets its id, then its span, and a 503 of the deadline and a 413 of the limit are traced, carry the id and the headers of CORS, which a page needs to read them. `Router::layer` runs the last layer added first: there, the layers are added in the reverse order. In another order each layer still works, but an answer of a layer outside `request_id` carries no id, one of a layer outside `trace` is not traced, past its deadline a request whose `timeout` is outside `trace` has its span dropped with the route's future, and an answer of a layer outside `cors` carries no header of CORS.
-- **The route.** The router puts the `rest::Route` of a request in the extensions of its answer, where a layer reads it, and names its operation in the span of `trace`. An answer no route made carries none: axum's 404 and 405, a 503 of `timeout`, an early 413 of `body_limit`.
+- **The route.** The router puts the `quoll::Route` of a request in the extensions of its answer, where a layer reads it, and names its operation in the span of `trace`. An answer no route made carries none: axum's 404 and 405, a 503 of `timeout`, an early 413 of `body_limit`.
 - **`request_id()`**: the caller's id is kept when it is 1 to 128 bytes of printable ASCII with no space, and replaced otherwise, or when given twice; the request is served. The id is set on the request and its answer, and given to the span. `RequestId::current()` gives it while the handler's future runs, a task-local: not in a task it spawns, nor in the stream it returns.
 - **`trace()`**: the span `request` has the `method`, the `path` without the query, which may hold a credential, the `operation` and the `request_id`. Each answer is logged once, `answered` with its status and latency: at `INFO`, and at `ERROR` for a 5xx the crate has not logged with its cause already, as it logs an `Error::internal`, an error of another API and a deadline.
 - **`timeout(duration)`**: it bounds the route's future, which reads the body and ends with the head of the answer, and not the body: an `Events`, a `JsonLines` or a `ByteStream` goes on past it. The 503 says the deadline, and is logged once.
@@ -514,11 +515,11 @@ They answer RFC 9457 problems, as handlers do, where tower-http's answer plain t
 
 ## Errors
 
-- `rest::Result<T>` is `Result<T, rest::Error>`, one error for the server and the client: its `status()`, its `detail()`, the RFC 9457 problem when the body of an answer is one, `response()`, that answer with its headers, the raw `body()`, and `body_as::<T>()` for the extension members of a problem.
+- `quoll::Result<T>` is `Result<T, quoll::Error>`, one error for the server and the client: its `status()`, its `detail()`, the RFC 9457 problem when the body of an answer is one, `response()`, that answer with its headers, the raw `body()`, and `body_as::<T>()` for the extension members of a problem.
 - The server answers a handler's error with its status and a problem in JSON: `Error::not_found(detail)`, `Error::bad_request(detail)`, `Error::unauthorized(detail)`, `Error::new(status, detail)`, and `Error::internal(err)` for a 500 that logs `err` without sending it.
 - An error a client received from another API answers 502 when a handler returns it, so that the other API's status is not passed on as ours.
 - On the client, a failure with no response (connection, timeout) is an `Error` without a status. Its sources, the errors of quoll's client and middlewares and those of reqwest and reqwest-middleware, show the URL of the call by its origin and its path, never its credentials nor its query, where a query scheme sends its key, and so does a reqwest error given to `Error::internal`; an error the application wraps itself is its own to redact, with `reqwest::Error::without_url`.
-- Every route of quoll's server has this one error, and its TypeScript the problem shape. Typed errors per route, `Result<Note, NotFound>` with `#[derive(rest::Problem)] #[problem(status = 404)]`, come later: adding them breaks no contract.
+- Every route of quoll's server has this one error, and its TypeScript the problem shape. Typed errors per route, `Result<Note, NotFound>` with `#[derive(quoll::Problem)] #[problem(status = 404)]`, come later: adding them breaks no contract.
 
 ### Another API's errors
 
@@ -538,7 +539,7 @@ impl fmt::Display for GitHubError {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[error(GitHubError)]
     pub api GitHub = "";
@@ -552,19 +553,19 @@ rest::api! {
 }
 ```
 
-- `rest::Error<E>` is the error of a call whose route has the shape `E`, and `rest::Result<T, E>` an alias of `Result<T, rest::Error<E>>`; `rest::Error` is `rest::Error<Problem>`. Each method of the group's trait returns `impl rest::Call<T, E>`.
-- `#[error(E)]` goes on the api, a group or a route, and is inherited downward as `#[auth]` is, the nearest to the call winning: a route answering another shape, an OAuth endpoint, says its own; `#[error(rest::Problem)]` gives a group or a route problems again.
-- A `rest::group!` writes its client's trait before an api lists it, and cannot take the api's: a group of another block says its own `#[error(E)]`, on the group or on each of its routes, and an api with an `#[error(...)]` that lists a group with a route that has none does not compile, its message naming the attribute to write; an api whose `#[error(...)]` is `rest::Problem`, the default, lists any group.
+- `quoll::Error<E>` is the error of a call whose route has the shape `E`, and `quoll::Result<T, E>` an alias of `Result<T, quoll::Error<E>>`; `quoll::Error` is `quoll::Error<Problem>`. Each method of the group's trait returns `impl quoll::Call<T, E>`.
+- `#[error(E)]` goes on the api, a group or a route, and is inherited downward as `#[auth]` is, the nearest to the call winning: a route answering another shape, an OAuth endpoint, says its own; `#[error(quoll::Problem)]` gives a group or a route problems again.
+- A `quoll::group!` writes its client's trait before an api lists it, and cannot take the api's: a group of another block says its own `#[error(E)]`, on the group or on each of its routes, and an api with an `#[error(...)]` that lists a group with a route that has none does not compile, its message naming the attribute to write; an api whose `#[error(...)]` is `quoll::Problem`, the default, lists any group.
 - `E` implements `Deserialize`, `Display` and `Debug`, and is `Send`, `Sync` and `'static`: the client reads the body of an answer with an error status as the JSON of `E`, whatever its content type, and `E`'s `Display` gives the message, `another api answered 401: Bad credentials`. The author of `E` says where its message is, GitHub's `message`, Stripe's `error.message`, in an `impl Display` or a `#[error("{message}")]` of thiserror. A `Problem` is read from `application/problem+json` alone, and says its `detail`.
 - `error.detail()` gives `Option<&E>`, `error.response()` the answer, `Option<&Response<E>>`, its status, its headers and its detail. A body that is not an `E`, an HTML page from a proxy, an empty one, or a 304, gives no detail and no `response()`, and keeps its status and its raw `body()`: `another api answered 502`.
-- `?` carries a `rest::Error<E>` up into a `rest::Error`, a handler's, through `From`: it keeps its status, its message and its body, and leaves its detail; the handler answers 502, as for any other API's answer.
-- A fake builds the error of an answer with `rest::Error::answered(StatusCode::NOT_FOUND, error)`: its status, its detail, a `response()` with no headers, and no body.
-- `#[error(E)]` shapes what the client reads, and nothing else: quoll's server answers problems whatever the contract says, and the OpenAPI document describes them. The items of a stream, `Events` and `JsonLines`, keep `rest::Error`: a failure after the 200 is quoll's own `event: problem`. The client's constructors, `Api::client` and `client::builder()`, return a `rest::Result`.
+- `?` carries a `quoll::Error<E>` up into a `quoll::Error`, a handler's, through `From`: it keeps its status, its message and its body, and leaves its detail; the handler answers 502, as for any other API's answer.
+- A fake builds the error of an answer with `quoll::Error::answered(StatusCode::NOT_FOUND, error)`: its status, its detail, a `response()` with no headers, and no body.
+- `#[error(E)]` shapes what the client reads, and nothing else: quoll's server answers problems whatever the contract says, and the OpenAPI document describes them. The items of a stream, `Events` and `JsonLines`, keep `quoll::Error`: a failure after the 200 is quoll's own `event: problem`. The client's constructors, `Api::client` and `client::builder()`, return a `quoll::Result`.
 
 ## OpenAPI and TypeScript
 
 - `Api::openapi()` returns the OpenAPI 3.1 document: paths, parameters, bodies, results, schemas from schemars, security schemes, the problem shape of errors. A binary of the contract crate prints it: the schemas are known only once the types are compiled, which a macro does not see.
-- It is a `rest::openapi::Document`: `to_json_pretty()`, `to_json()`, `Serialize`, and `with_title(..)` and `with_version(..)` over its `info`, which is the contract crate's `CARGO_PKG_NAME` and `CARGO_PKG_VERSION`, or the api's name and `0.0.0` for a crate built without Cargo, with the api's `///` as its description.
+- It is a `quoll::openapi::Document`: `to_json_pretty()`, `to_json()`, `Serialize`, and `with_title(..)` and `with_version(..)` over its `info`, which is the contract crate's `CARGO_PKG_NAME` and `CARGO_PKG_VERSION`, or the api's name and `0.0.0` for a crate built without Cargo, with the api's `///` as its description.
 - An operation is `group_function`, tagged by its group, whose `///` describes the tag. The first paragraph of a route's `///` is its summary, the rest its description.
 - Path parameters, query keys and headers are parameters, required unless an `Option` or a `Vec`, never `null`. A fixed header a route sends is a header parameter, not required, whose schema is a string of its value, `const`: not `Accept`, `Content-Type` nor `Authorization`, which OpenAPI describes otherwise, nor a header an argument reads, which the argument describes. A query struct is unfolded into one query parameter per field of its schema, or is one parameter `style: form, explode: true`, not required, when its schema is not a plain object. A joined argument is a parameter `explode: false` of the style of its separator, `form`, `spaceDelimited` or `pipeDelimited`, not required, whose schema is the list's. The key of a query scheme is no parameter: the security describes it.
 - Bodies: `application/json`, `application/x-www-form-urlencoded` for `Form<T>`, `text/plain` for `Text`, `application/octet-stream` for `Bytes`; the fixed fields of a body are `const` properties of its schema, required, an `allOf` of the schema of its type and of an object that holds them. Results: 200, 201 with an optional `Location`, 202, 204, and a 204 beside the status of a result whose value may be empty, an `Option<T>`, `()`, `Text`, `Bytes` or a stream, in a `Created` or an `Accepted` too; `text/plain` for `Text`, `*/*` for `Bytes` and for `ByteStream`, whose description says it streams.
@@ -572,7 +573,7 @@ rest::api! {
 - Schemes sit under `securitySchemes` by their `NAME`. A route's requirement lists its schemes, any of which serves, each with its scopes, and `{}` when its credential is optional.
 - Schemas sit under `components/schemas`, as schemars names them: a second type named `Note` in another module is `Note2`, in the order the contract names them, which `#[schemars(rename = "...")]` changes; a character a component's name does not take, a space, a `<`, is a `_`. A parameter or a body is described as serde reads it, a result or a stream's item as serde writes it; a type whose two schemas differ, as with a `#[serde(default)]` field, has both, `NoteInput` and `NoteOutput`, and so has a type that holds one of them. The two sides are paired by schemars' names: two types of one name, one of them used on one side only, may get misleading `Input` and `Output` names, every `$ref` still pointing at the right schema, which `#[schemars(rename = "...")]` avoids.
 - A schema that holds a `$ref` beside other keywords, as schemars writes a newtype variant of an internally tagged enum beside its tag, is an `allOf` of the reference and of the keywords that constrain, with its `description`, `default` and other annotations beside the `allOf`: orval and the generators that follow OpenAPI 3.0 read a `$ref` alone and drop what is beside it.
-- A contract of a third-party API that is only called says `#[openapi(none)]` on its api: no `Api::openapi`, and its types, which may come from crates that do not implement `JsonSchema`, need serde alone. A `rest::group!` of such a contract says it on its group.
+- A contract of a third-party API that is only called says `#[openapi(none)]` on its api: no `Api::openapi`, and its types, which may come from crates that do not implement `JsonSchema`, need serde alone. A `quoll::group!` of such a contract says it on its group.
 - orval writes the TypeScript from it: TanStack Query here; `vue-query`, `svelte-query`, `swr`, `zod` or a plain `fetch` client from the same document.
 - The credential goes through orval's mutator, one function of the application; the browser sends cookies itself.
 - A stream's items are typed through an extension, as OpenAPI 3.1 cannot type them: the response's media type (`text/event-stream`, `application/jsonl`) carries `x-item`, a `$ref` to the item's schema, which orval writes as a type like any other. The extension goes once the generators read OpenAPI 3.2's item schemas.
@@ -629,7 +630,7 @@ The JavaScript side follows conventions, with no plugin of quoll for now:
 
 ## A complete example
 
-Notes kept per user: a token for a login, notes to list, read, write and watch, and statistics for operators holding a key. The web page and the command line use bearer tokens, the operators' scripts a key. The contract is one `rest::api!`, its models a file per domain, as is the server. The sessions and the store, both in memory, are in the repository, `examples/notes/server/src/sessions.rs` and `store.rs`, beside the helpers they share, `utils.rs`, the hashing of passwords included, and are not shown here.
+Notes kept per user: a token for a login, notes to list, read, write and watch, and statistics for operators holding a key. The web page and the command line use bearer tokens, the operators' scripts a key. The contract is one `quoll::api!`, its models a file per domain, as is the server. The sessions and the store, both in memory, are in the repository, `examples/notes/server/src/sessions.rs` and `store.rs`, beside the helpers they share, `utils.rs`, the hashing of passwords included, and are not shown here.
 
 `api/Cargo.toml`
 
@@ -667,11 +668,11 @@ pub use notes::*;
 `api/src/api.rs`
 
 ```rust
-use quoll::rest::{self, Created, Events, Form};
+use quoll::{Created, Events, Form};
 
 use crate::{Login, NewNote, Note, NoteEvent, NoteFilter, Stats, TokenResponse};
 
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     pub api Api = "/api";
 
@@ -868,7 +869,7 @@ pub fn server() -> server::Builder {
 
 ```rust
 use notes_api::{AuthServer, Key, Login, TokenResponse};
-use quoll::rest::{Authenticate, Bearer, Error, Form, Response, Result};
+use quoll::{Authenticate, Bearer, Error, Form, Response, Result};
 
 use crate::App;
 
@@ -924,7 +925,7 @@ impl Authenticate<Key> for App {
 ```rust
 use axum::http::header::LOCATION;
 use notes_api::{CONTAINS_LIMIT, NewNote, Note, NoteEvent, NoteFilter, NotesServer};
-use quoll::rest::{Error, Events, Response, Result};
+use quoll::{Error, Events, Response, Result};
 
 use crate::{App, User};
 
@@ -986,7 +987,7 @@ impl NotesServer for App {
 
 ```rust
 use notes_api::{AdminServer, Stats};
-use quoll::rest::{Response, Result};
+use quoll::{Response, Result};
 
 use crate::{App, Operator};
 
@@ -1076,8 +1077,7 @@ async fn a_call_without_token_is_refused() -> anyhow::Result<()> {
 ```rust
 use futures::StreamExt;
 use notes_api::{Api, Auth, Login, NewNote, NoteFilter, Notes};
-use quoll::client;
-use quoll::rest::Form;
+use quoll::{Form, client};
 use reqwest::StatusCode;
 
 #[tokio::main]
@@ -1532,17 +1532,17 @@ function NoteText({ note, error, onEdit, onRemove }: NoteTextProps) {
 - A header that quoll or HTTP writes itself, `Content-Type`, `Content-Length`, `Host`, `Transfer-Encoding` and the hop-by-hop ones, and `Authorization` on a route that takes a scheme.
 - A `Created<T>` or an `Accepted<T>` of a type of quoll's, `Created<Text>`, `Bytes`, a stream or a `Form`: its `T` is the JSON it answers.
 - In `#[header(...)]`: anything but `"name" = value`, `"name" = none` or `none`; a name that is not a token, or a header that quoll or HTTP writes but `Content-Type`; a value that is not visible ASCII with blanks inside it only, a string or a `&str` constant's; a header named twice by one item, `none` twice, or a header left beside `#[header(none)]`; a `none` on the api, in the api's own block on a header the parent does not fix, or, in any block, a route's on a header its group already leaves; a `Content-Type` of another media type than the body's or of another charset than UTF-8, a route's own on a route with no body, or any on a `Bytes` body; a header that carries the credential of a scheme the route takes; `#[header(...)]` on a scheme. What a group of another block takes of its api's is checked by the api, its message on the group in the list; what it leaves is not.
-- One method and path twice in an api, whichever blocks its groups come from, unless a field both routes fix in their `#[body(...)]` has two values of one kind; two such routes in an api with a document, or in a `rest::group!` with one.
+- One method and path twice in an api, whichever blocks its groups come from, unless a field both routes fix in their `#[body(...)]` has two values of one kind; two such routes in an api with a document, or in a `quoll::group!` with one.
 - In `#[body(...)]`: anything but `"name" = value`, a value that is not a bool, a number of an `i64` or a `u64` or a finite float, or a string; a field named twice by one route; `#[body(...)]` on the api, a group or a scheme, on a route with no body, or with a `Text` or a `Bytes` body.
 - A group less visible than its api, whose router and client name the group's items.
-- A group listed twice, or of the name of another group of the api; an empty list; a path of the list that is not a group, or a group named alone that is not in scope; a group of the list with `#[openapi(none)]` in an api with a document. A `rest::group!` with no group, two groups, an api or a scheme.
+- A group listed twice, or of the name of another group of the api; an empty list; a path of the list that is not a group, or a group named alone that is not in scope; a group of the list with `#[openapi(none)]` in an api with a document. A `quoll::group!` with no group, two groups, an api or a scheme.
 - Two items the macro writes with one name: a group named as its api, or as the `NotesServer`, `NotesClient`, `ApiServices` or `ApiClient` the contract writes for another; two routes of one operation id, as `tags_list` in a group `Note` and `list` in a group `NoteTags`, both `note_tags_list`.
 - A route left out of a service or a fake, a handler or a fake's method of the wrong signature: Rust's own errors on the trait.
 - `client::builder().build::<T>(url)` for a type that is not the api of a contract: the message says what an api is.
 - A group without a service; a service of a group with authentication that does not implement `Authenticate` for its schemes; two schemes of one `#[auth(A | B)]` giving callers of two types; scopes on a caller that does not implement `Scoped`.
 - A scheme in `#[auth(...)]` that is neither given by the crate, declared in the contract nor a type implementing `Scheme`; a scheme's credential that is not `Send`; `key::<K>` for a scheme the contract does not declare; two schemes of one `NAME` in an api's block, which names a scheme in the OpenAPI document (from two blocks, `Api::openapi()` panics), or a `NAME` of other characters than ASCII letters, digits, `.`, `-` and `_`.
-- A type of a contract that does not implement `JsonSchema`, unless the api or the `rest::group!` says `#[openapi(none)]`; `#[openapi(...)]` with anything but `none`, or on a scheme, a route or a group of the api's block.
-- In `#[auth(...)]`: `none` beside a scheme or an option; a scheme twice in an alternative, or more than four; in the api's block, a path to a declared scheme, `self::Key`, and anywhere, a path through `rest` to the crate's, `rest::Bearer`, which are named alone; two schemes of an alternative of one `NAME`, as `Key | crate::Key` in a `rest::group!`; two schemes of an alternative that read one place, `Bearer | Login` for an `openid` scheme or two header schemes of one header; `optional` or `scopes` twice, or an option it does not take; `scopes()` empty, a scope written twice or that is not an OAuth `scope-token`; `optional` with `scopes`.
+- A type of a contract that does not implement `JsonSchema`, unless the api or the `quoll::group!` says `#[openapi(none)]`; `#[openapi(...)]` with anything but `none`, or on a scheme, a route or a group of the api's block.
+- In `#[auth(...)]`: `none` beside a scheme or an option; a scheme twice in an alternative, or more than four; in the api's block, a path to a declared scheme, `self::Key`, and anywhere, a path through `quoll` to the crate's, `quoll::Bearer`, which are named alone; two schemes of an alternative of one `NAME`, as `Key | crate::Key` in a `quoll::group!`; two schemes of an alternative that read one place, `Bearer | Login` for an `openid` scheme or two header schemes of one header; `optional` or `scopes` twice, or an option it does not take; `scopes()` empty, a scope written twice or that is not an OAuth `scope-token`; `optional` with `scopes`.
 - A declared scheme of a kind other than `header`, `cookie`, `query` and `openid`; named `Bearer`, `Basic` or `none`, with a name that is not ASCII, or with the name of another scheme or of an item the macro writes; a header that quoll or HTTP writes, `Authorization` or `Cookie`; a header or a cookie whose name is not a token, a query key other than letters, digits and `-._~`; an `openid` URL that is not `http(s)://`; a scheme less visible than a group that takes it; `#[auth(...)]` on a scheme.
 - An argument that reads the credential of a scheme its route takes: the header of a header scheme, `Cookie` beside a cookie scheme, the query key of a query scheme.
 
@@ -1553,7 +1553,7 @@ Each message the macro writes points at the token at fault and says what it expe
 Attributes on a trait. Not chosen, but kept possible: both spellings are read into one model of the api, from which one generator writes the code, so A can be added later, or groups of both sit in one api, as an api lists its groups through their descriptors. Neither spelling says anything the other cannot.
 
 ```rust
-#[rest::group(auth = Bearer)]
+#[quoll::group(auth = Bearer)]
 pub trait Notes {
     #[get("/notes/{id}")]
     async fn get(&self, id: i64) -> Result<Note>;
@@ -1562,7 +1562,7 @@ pub trait Notes {
     async fn create(&self, note: NewNote) -> Result<Created<Note>>;
 }
 
-#[rest::api(prefix = "/api", groups(Notes))]
+#[quoll::api(prefix = "/api", groups(Notes))]
 pub struct Api;
 ```
 
@@ -1574,6 +1574,6 @@ Decided, not in the first version. The first two change no contract already writ
 
 1. **Typed errors per route** of quoll's server, as the Errors section says.
 2. **Pagination by header.** GitHub pages with a `Link` header (`rel="next"`, `rel="last"`), which a result cannot say yet: a result `Paged<T>` carrying it, and on the client `.pages()`, a stream that follows the links.
-3. **A `rest::PathValue` derive** on unit enums and newtypes, so that a path parameter not read from text is refused at compile time: a struct of the application in a path no longer compiles.
+3. **A `quoll::PathValue` derive** on unit enums and newtypes, so that a path parameter not read from text is refused at compile time: a struct of the application in a path no longer compiles.
 4. **A `subscribe` helper** for the web side, in an npm package of its own: `subscribe<T>(url, onItem, init)` reads a stream with `fetch`, so that it sends a header credential, calls `onItem` with each item parsed and returns the function that stops it. It reads `Events`, every event that has data an item whatever its name and `event: problem` an error, and `JsonLines`, an aborted body an error, not a clean end, and does not connect again after a clean end; `ByteStream` too, with `onChunk`.
 5. **Two routes of one method and path in the OpenAPI document**, told apart by their `#[body(...)]`: one operation whose body is a `oneOf` of their bodies with a `discriminator` on the field that tells them apart, so that an api with a document takes them.

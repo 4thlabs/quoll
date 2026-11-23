@@ -1,5 +1,5 @@
 error: POST on this path is already the route `Messages::create`: a method and a path belong to one route, unless a field both fix in their `#[body(...)]` tells them apart, of one kind and two values: fix one in both, as `#[body("stream" = false)]` and `#[body("stream" = true)]`
-  --> tests/compile_fail/fixed_field_beside_a_route_without.rs:17:14
+  --> tests/compile_fail/fixed_field_beside_a_route_without.rs:16:14
    |
-17 |         POST "/messages" => stream(request: Request);
+16 |         POST "/messages" => stream(request: Request);
    |              ^^^^^^^^^^^

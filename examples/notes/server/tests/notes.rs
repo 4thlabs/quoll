@@ -6,8 +6,7 @@ use notes_api::{
     Notes, Stats, TokenResponse,
 };
 use notes_server::{PAGE_SIZE, SESSION_LIFETIME, Sessions, Store, StoreError, User};
-use quoll::client;
-use quoll::rest::{self, Form};
+use quoll::{Form, client};
 use reqwest::StatusCode;
 
 fn served(app: notes_server::App) -> axum::Router {
@@ -70,17 +69,17 @@ impl Served {
         }
     }
 
-    fn client_as(&self, user: User) -> rest::Result<ApiClient> {
+    fn client_as(&self, user: User) -> quoll::Result<ApiClient> {
         self.client_with(self.sessions.open(user))
     }
 
-    fn client_with(&self, token: String) -> rest::Result<ApiClient> {
+    fn client_with(&self, token: String) -> quoll::Result<ApiClient> {
         client::builder()
             .with(client::bearer(token))
             .build::<Api>(&self.url)
     }
 
-    fn anonymous(&self) -> rest::Result<ApiClient> {
+    fn anonymous(&self) -> quoll::Result<ApiClient> {
         Api::client(&self.url)
     }
 }

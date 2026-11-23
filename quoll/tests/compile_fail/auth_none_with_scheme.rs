@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // `none` takes no scheme beside it.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

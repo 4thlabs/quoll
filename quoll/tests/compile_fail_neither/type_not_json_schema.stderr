@@ -1,15 +1,15 @@
 error[E0277]: `Note` has no schema, which the OpenAPI document of the contract describes it with
-  --> tests/compile_fail_neither/type_not_json_schema.rs:14:46
+  --> tests/compile_fail_neither/type_not_json_schema.rs:13:46
    |
-14 |         GET "/notes/{id}" => get(id: i64) -> Note;
+13 |         GET "/notes/{id}" => get(id: i64) -> Note;
    |                                              ^^^^ no `schemars::JsonSchema`
    |
 help: the trait `schemars::JsonSchema` is not implemented for `Note`
-  --> tests/compile_fail_neither/type_not_json_schema.rs:6:1
+  --> tests/compile_fail_neither/type_not_json_schema.rs:5:1
    |
- 6 | pub struct Note {
+ 5 | pub struct Note {
    | ^^^^^^^^^^^^^^^
-   = note: derive `schemars::JsonSchema` for `Note`, or write `#[openapi(none)]` on the api, or on the group of a `rest::group!`, of a contract that is only called, which has no document
+   = note: derive `schemars::JsonSchema` for `Note`, or write `#[openapi(none)]` on the api, or on the group of a `quoll::group!`, of a contract that is only called, which has no document
    = help: the following other types implement trait `schemars::JsonSchema`:
              &'a T
              &'a mut T

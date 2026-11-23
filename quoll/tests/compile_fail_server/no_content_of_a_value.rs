@@ -1,6 +1,6 @@
-use quoll::rest::{self, Response, Result, Status};
+use quoll::{Response, Result, Status};
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     pub api Api = "";
 

@@ -21,7 +21,7 @@ use crate::syntax::{Contract, GroupContract};
 /// Reads a REST contract and checks it.
 ///
 /// ```text
-/// rest::api! {
+/// quoll::api! {
 ///     /// Notes, kept per user.
 ///     pub api Api = "/api" { auth::Auth };
 ///
@@ -40,7 +40,7 @@ use crate::syntax::{Contract, GroupContract};
 /// The block holds, in any order:
 ///
 /// - the api, once: its visibility, its name, its prefix, `""` for none, and the groups of other modules it lists,
-///   by their paths, which `rest::group!` blocks write. `#[openapi(none)]` on it leaves out its OpenAPI document;
+///   by their paths, which `quoll::group!` blocks write. `#[openapi(none)]` on it leaves out its OpenAPI document;
 /// - the schemes it declares, `header`, `cookie`, `query` or `openid`, each with its visibility and its name;
 /// - its groups, each a table of routes, with `#[auth(...)]` on the group or on a route.
 ///
@@ -57,7 +57,7 @@ use crate::syntax::{Contract, GroupContract};
 /// A route is `METHOD "path?query" => function(arguments) -> Result;`, with no `->` for a route that returns nothing.
 /// An argument is a `{name}` of the path or a `key={name}` of the query by its name, a query struct as `query filter:
 /// NoteFilter`, a header as `header("Last-Event-ID") last: Option<String>`, or else the body. The docs of
-/// `quoll::rest` show each form, with what it means.
+/// the crate `quoll` show each form, with what it means.
 ///
 /// A mistake in the contract is a compile error on the token at fault, which says what to write instead.
 ///
@@ -94,7 +94,7 @@ pub fn api(input: TokenStream) -> TokenStream {
 ///
 /// ```text
 /// // notes.rs
-/// rest::group! {
+/// quoll::group! {
 ///     /// The signed-in user's notes.
 ///     #[auth(Bearer | crate::Key)]
 ///     pub group Notes {
@@ -103,17 +103,17 @@ pub fn api(input: TokenStream) -> TokenStream {
 /// }
 ///
 /// // lib.rs
-/// rest::api! {
+/// quoll::api! {
 ///     pub api Api = "/api" { notes::Notes };
 ///
 ///     pub scheme Key = header "X-Api-Key";
 /// }
 /// ```
 ///
-/// The block holds one group, written as in `rest::api!`, with no api and no scheme. It becomes the same items in its
+/// The block holds one group, written as in `quoll::api!`, with no api and no scheme. It becomes the same items in its
 /// module: its server trait, `NotesServer`, its client's trait and its client, `Notes` and `NotesClient`, each behind
 /// its feature. A scheme the api declares is named by its path or an import, `#[auth(crate::Key)]`, as any type
-/// implementing `quoll::rest::Scheme`. The group has an OpenAPI document, for which each type it names implements
+/// implementing `quoll::Scheme`. The group has an OpenAPI document, for which each type it names implements
 /// `schemars::JsonSchema`, unless it says `#[openapi(none)]`, as the group of an api that has none. Its client's trait
 /// is written in its block, before an api lists it: the group says the shape of its errors itself, `#[error(E)]`, and an
 /// api with an `#[error(...)]` lists only groups that say one. The group takes the fixed headers, `#[header(...)]`, of

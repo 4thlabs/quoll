@@ -5,7 +5,7 @@ use http::request::Parts;
 use http::uri::Authority;
 use http::{Method, StatusCode, Uri, header};
 
-use crate::rest::{Bearer, Error, Result, Scheme};
+use crate::{Bearer, Error, Result, Scheme};
 
 /// Where the credential of a scheme the contract declares travels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

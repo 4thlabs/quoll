@@ -1,5 +1,5 @@
-error: the list of groups is empty: remove the braces, or an api lists the groups of `rest::group!` blocks by their paths: write `pub api Api = "/api" { auth::Auth, notes::Notes };`
- --> tests/compile_fail/group_list_empty.rs:4:26
+error: the list of groups is empty: remove the braces, or an api lists the groups of `quoll::group!` blocks by their paths: write `pub api Api = "/api" { auth::Auth, notes::Notes };`
+ --> tests/compile_fail/group_list_empty.rs:2:26
   |
-4 |     pub api Api = "/api" {};
+2 |     pub api Api = "/api" {};
   |                          ^^

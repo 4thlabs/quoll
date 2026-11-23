@@ -9,8 +9,8 @@ note: type in trait
    |
  7 |         GET "/notes/{id}" => get(id: i64) -> String;
    |                                      ^^^
-   = note: expected signature `fn(&App, i64) -> impl Future<Output = Result<Response<String>, quoll::rest::Error>>`
-              found signature `fn(&App, String) -> impl Future<Output = Result<Response<String>, quoll::rest::Error>>`
+   = note: expected signature `fn(&App, i64) -> impl Future<Output = Result<Response<String>, quoll::Error>>`
+              found signature `fn(&App, String) -> impl Future<Output = Result<Response<String>, quoll::Error>>`
 help: change the parameter type to match the trait
    |
 15 -     async fn get(&self, id: String) -> Result<Response<String>> {

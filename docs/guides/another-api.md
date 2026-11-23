@@ -10,8 +10,7 @@ what other APIs bring.
 ```rust,no_run
 use std::fmt;
 
-use quoll::client;
-use quoll::rest::{self, Bytes};
+use quoll::{Bytes, client};
 use serde::{Deserialize, Serialize};
 
 /// A repository, with the fields the application reads.
@@ -51,7 +50,7 @@ impl fmt::Display for GitHubError {
 /// The version of GitHub's REST API the contract follows.
 pub const VERSION: &str = "2022-11-28";
 
-rest::api! {
+quoll::api! {
     /// GitHub's REST API, at `https://api.github.com`.
     #[openapi(none)]
     #[header("Accept" = "application/vnd.github+json")]
@@ -128,7 +127,6 @@ The name of a group is the name of its client's trait, `Repos`, in the contract'
 of a type there, as copying an API's names soon does, does not compile:
 
 ```rust,compile_fail,E0428
-use quoll::rest;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -136,7 +134,7 @@ pub struct Places {
     pub results: Vec<String>,
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     pub api Geocoding = "/v1";
 
@@ -215,7 +213,6 @@ result is an envelope, read by `ok`, which the caller turns into a `Result`.
 ```rust
 use std::fmt;
 
-use quoll::rest;
 use serde::de::{self, DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize};
 
@@ -271,7 +268,7 @@ pub struct Identity {
     pub team: String,
 }
 
-rest::api! {
+quoll::api! {
     /// Slack's Web API, at `https://slack.com`.
     #[openapi(none)]
     #[error(SlackError)]
@@ -320,7 +317,6 @@ A route returns what the API answers on a success, as any route does. Two cases 
 use std::fmt;
 
 use http::StatusCode;
-use quoll::rest;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -334,7 +330,7 @@ impl fmt::Display for GitHubError {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[header("Accept" = "application/vnd.github+json")]
     #[error(GitHubError)]
@@ -347,7 +343,7 @@ rest::api! {
     }
 }
 
-async fn starred(github: &GitHubClient, owner: &str, repo: &str) -> rest::Result<bool, GitHubError> {
+async fn starred(github: &GitHubClient, owner: &str, repo: &str) -> quoll::Result<bool, GitHubError> {
     match github.stars().check(owner.into(), repo.into()).await {
         Ok(()) => Ok(true),
         Err(error) if error.status() == Some(StatusCode::NOT_FOUND) => Ok(false),
@@ -374,8 +370,7 @@ beside the other fields.
 ```rust,no_run
 use std::collections::BTreeMap;
 
-use quoll::rest::Form;
-use quoll::{client, rest};
+use quoll::{Form, client};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -400,7 +395,7 @@ pub struct Customer {
     pub id: String,
 }
 
-rest::api! {
+quoll::api! {
     /// Stripe's API, at `https://api.stripe.com`.
     #[openapi(none)]
     pub api Stripe = "/v1";
@@ -413,7 +408,7 @@ rest::api! {
 }
 
 #[tokio::main]
-async fn main() -> rest::Result<()> {
+async fn main() -> quoll::Result<()> {
     let stripe = client::builder()
         .with(client::bearer("sk_test_..."))
         .build::<Stripe>("https://api.stripe.com")?;
@@ -451,9 +446,8 @@ twice. An API says which of its errors pass, and `.when(..)` follows it: a 429 a
 ```rust,no_run
 use http::Method;
 use quoll::client::{self, Attempt, Retry};
-use quoll::rest;
 
-fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
+fn http() -> quoll::Result<reqwest_middleware::ClientWithMiddleware> {
     let retry = client::retry(3).when(|attempt: &Attempt| {
         let request = attempt.request();
         let keyed = request.method() == Method::POST && request.headers().contains_key("Idempotency-Key");
@@ -487,8 +481,7 @@ use std::fmt;
 use std::time::Duration;
 
 use futures::StreamExt;
-use quoll::client;
-use quoll::rest::{self, Call, Events};
+use quoll::{Call, Events, client};
 use serde::{Deserialize, Serialize};
 
 /// The version of the Messages API the contract follows.
@@ -559,7 +552,7 @@ impl fmt::Display for AnthropicError {
     }
 }
 
-rest::api! {
+quoll::api! {
     /// Anthropic's API, at `https://api.anthropic.com`.
     #[openapi(none)]
     #[header("anthropic-version" = VERSION)]
@@ -640,7 +633,6 @@ shows:
 use std::fmt;
 
 use quoll::client;
-use quoll::rest;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -679,7 +671,7 @@ impl fmt::Display for OpenMeteoError {
     }
 }
 
-rest::api! {
+quoll::api! {
     /// Open-Meteo's API, its geocoding at `https://geocoding-api.open-meteo.com` and its forecast at
     /// `https://api.open-meteo.com`.
     #[openapi(none)]
@@ -697,7 +689,7 @@ rest::api! {
 }
 
 #[tokio::main]
-async fn main() -> rest::Result<()> {
+async fn main() -> quoll::Result<()> {
     let http = client::builder()
         .with(client::user_agent("quoll-guide"))
         .with(client::retry(3))
@@ -736,7 +728,7 @@ GitHub says it in the `Link` header of the answer, which `.response()` gives:
 use std::fmt;
 
 use http::header::LINK;
-use quoll::rest::{self, Call};
+use quoll::Call;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -756,7 +748,7 @@ impl fmt::Display for GitHubError {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[header("Accept" = "application/vnd.github+json")]
     #[error(GitHubError)]
@@ -768,7 +760,7 @@ rest::api! {
     }
 }
 
-async fn all_issues(github: &GitHubClient, owner: &str, repo: &str) -> rest::Result<Vec<Issue>, GitHubError> {
+async fn all_issues(github: &GitHubClient, owner: &str, repo: &str) -> quoll::Result<Vec<Issue>, GitHubError> {
     let mut issues = Vec::new();
 
     for page in 1.. {
@@ -800,7 +792,7 @@ body, [#80](https://github.com/4thlabs/quoll/issues/80).
 ## Fakes
 
 The client of a group implements its trait, `Repos`, and so does a fake, whose errors are those of the API's shape,
-`rest::Error::answered(StatusCode::NOT_FOUND, error)`: [Testing](testing.md#fakes) and
+`quoll::Error::answered(StatusCode::NOT_FOUND, error)`: [Testing](testing.md#fakes) and
 [Another API's errors](errors.md#another-apis-errors) show one. A server of quoll's answers its errors as problems,
 whatever the contract's `#[error]`: a fake server of another API, one that answers its shape, is written with axum
 alone.

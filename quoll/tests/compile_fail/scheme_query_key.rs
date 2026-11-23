@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A query key that needs escaping.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Token = query "the token";

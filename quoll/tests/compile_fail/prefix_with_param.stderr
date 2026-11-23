@@ -1,5 +1,5 @@
 error: in the prefix, `{version}` is not a plain segment: a literal segment holds ASCII letters, digits, `-`, `_`, `.` and `~`, and is not `.` or `..` (a prefix is written "/api", or "" for none)
- --> tests/compile_fail/prefix_with_param.rs:4:19
+ --> tests/compile_fail/prefix_with_param.rs:2:19
   |
-4 |     pub api Api = "/api/{version}";
+2 |     pub api Api = "/api/{version}";
   |                   ^^^^^^^^^^^^^^^^

@@ -1,5 +1,5 @@
 error: a route takes no `#[openapi(...)]`: `#[openapi(none)]` goes on the api, whose whole document it leaves out
- --> tests/compile_fail/openapi_on_route.rs:7:9
+ --> tests/compile_fail/openapi_on_route.rs:5:9
   |
-7 |         #[openapi(none)]
+5 |         #[openapi(none)]
   |         ^^^^^^^^^^^^^^^^

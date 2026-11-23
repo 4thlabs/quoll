@@ -1,5 +1,5 @@
 error: unexpected `service`: an item of a contract starts with `api`, `scheme` or `group`
- --> tests/compile_fail/item_unknown.rs:4:9
+ --> tests/compile_fail/item_unknown.rs:2:9
   |
-4 |     pub service Notes = "notes";
+2 |     pub service Notes = "notes";
   |         ^^^^^^^

@@ -1,5 +1,5 @@
 //! What a scheme the contract declares becomes, on both sides and whatever the features: a type implementing
-//! `rest::Scheme`, which reads its credential through a helper of `quoll`, and which says where its credential
+//! `quoll::Scheme`, which reads its credential through a helper of `quoll`, and which says where its credential
 //! travels, for the client's `client::key`.
 
 use proc_macro2::TokenStream;
@@ -98,7 +98,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
         )]
         #vis struct #name;
 
-        impl ::quoll::rest::Scheme for #name {
+        impl ::quoll::Scheme for #name {
             type Credential = ::std::string::String;
 
             const NAME: &'static str = #shown;
@@ -107,13 +107,13 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
 
             fn read(
                 request: &::quoll::__private::http::request::Parts,
-            ) -> ::quoll::rest::Result<::core::option::Option<::std::string::String>> {
+            ) -> ::quoll::Result<::core::option::Option<::std::string::String>> {
                 #read
             }
 
-            fn openapi() -> ::quoll::rest::openapi::SecurityScheme {
+            fn openapi() -> ::quoll::openapi::SecurityScheme {
                 ::quoll::__private::openapi::described(
-                    ::quoll::rest::openapi::SecurityScheme::#openapi,
+                    ::quoll::openapi::SecurityScheme::#openapi,
                     &[#(#comments),*],
                 )
             }
@@ -127,14 +127,14 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
     }
 }
 
-/// The type of a scheme, by which the generated code names it: the crate's, `::quoll::rest::Bearer`, or the path the
+/// The type of a scheme, by which the generated code names it: the crate's, `::quoll::Bearer`, or the path the
 /// contract writes, spanned on it, for a declared scheme or one of the application's.
 pub(crate) fn scheme_type(scheme: &Scheme) -> TokenStream {
     let span = scheme.span();
 
     match scheme.kind {
-        SchemeKind::Bearer => quote_spanned! {span=> ::quoll::rest::Bearer },
-        SchemeKind::Basic => quote_spanned! {span=> ::quoll::rest::Basic },
+        SchemeKind::Bearer => quote_spanned! {span=> ::quoll::Bearer },
+        SchemeKind::Basic => quote_spanned! {span=> ::quoll::Basic },
         SchemeKind::Declared(_) | SchemeKind::Foreign => {
             let path = &scheme.path;
 
@@ -175,7 +175,7 @@ pub(crate) fn challenge_checks(group: &Group) -> TokenStream {
 
         // `forget`, as a `HeaderValue` cannot be dropped in a constant.
         checks.push(quote_spanned! {scheme.span()=>
-            ::core::mem::forget(<#ty as ::quoll::rest::Scheme>::CHALLENGE);
+            ::core::mem::forget(<#ty as ::quoll::Scheme>::CHALLENGE);
         });
     }
 

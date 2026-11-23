@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::group! {
+quoll::group! {
     pub scheme Key = header "X-Api-Key";
 
     pub group Notes {

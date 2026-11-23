@@ -1,5 +1,5 @@
 error[E0080]: evaluation panicked: the route `Auth::token` takes the `Content-Type` `application/json; charset=utf-8` of the api `Chat`, which is not the media type of its body, `application/x-www-form-urlencoded`, in UTF-8: write `#[header("Content-Type" = none)]` on the route, or a `Content-Type` of its body's media type
-  --> tests/compile_fail/group_listed_content_type_other.rs:23:35
+  --> tests/compile_fail/group_listed_content_type_other.rs:21:35
    |
-23 |     pub api Chat = "/api" { auth::Auth };
+21 |     pub api Chat = "/api" { auth::Auth };
    |                                   ^^^^ evaluation of `_::_` failed here

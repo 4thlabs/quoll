@@ -1,8 +1,8 @@
-use quoll::rest::{self, Created};
+use quoll::Created;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     pub api Api = "/api";
 

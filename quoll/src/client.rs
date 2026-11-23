@@ -24,7 +24,7 @@
 //! ```no_run
 //! # use std::time::Duration;
 //! use quoll::client;
-//! # quoll::rest::api! {
+//! # quoll::api! {
 //! #     pub api Api = "/api";
 //! #     #[auth(Bearer)]
 //! #     pub group Notes { GET "/notes/{id}" => get(id: i64) -> String; }
@@ -56,7 +56,7 @@
 //! ```no_run
 //! # use std::time::Duration;
 //! # use quoll::client;
-//! # quoll::rest::api! {
+//! # quoll::api! {
 //! #     pub api Api = "/api";
 //! #     #[auth(Bearer)]
 //! #     pub group Notes { GET "/notes/{id}" => get(id: i64) -> String; }
@@ -93,8 +93,8 @@ use reqwest_middleware::{Middleware, Next};
 
 use crate::__private::auth::{Declared, Place};
 use crate::__private::client::ApiOrigin;
-use crate::rest::auth::is_b64token;
-use crate::rest::{Basic, Bearer, Route, Scheme};
+use crate::auth::is_b64token;
+use crate::{Basic, Bearer, Route, Scheme};
 
 mod builder;
 mod redirects;
@@ -124,13 +124,13 @@ pub use trace::trace;
 /// than a 401 that would look like an expired token.
 ///
 /// ```no_run
-/// # use quoll::{client, rest};
-/// # rest::api! {
+/// # use quoll::client;
+/// # quoll::api! {
 /// #     pub api Api = "/api";
 /// #     #[auth(Bearer)]
 /// #     pub group Notes { GET "/notes/{id}" => get(id: i64) -> String; }
 /// # }
-/// # async fn run() -> rest::Result<()> {
+/// # async fn run() -> quoll::Result<()> {
 /// let api = client::builder()
 ///     .with(client::bearer("mF_9.B5f-4.1JqM"))
 ///     .build::<Api>("http://localhost:8080")?;
@@ -155,13 +155,13 @@ pub fn bearer(token: impl Into<String>) -> impl Middleware {
 /// server would not read, fails each call that would send them, with an error that shows neither.
 ///
 /// ```no_run
-/// # use quoll::{client, rest};
-/// # rest::api! {
+/// # use quoll::client;
+/// # quoll::api! {
 /// #     pub api Api = "/api";
 /// #     #[auth(Basic)]
 /// #     pub group Admin { GET "/admin/stats" => stats() -> String; }
 /// # }
-/// # async fn run() -> rest::Result<()> {
+/// # async fn run() -> quoll::Result<()> {
 /// let api = client::builder()
 ///     .with(client::basic("ana", "secret"))
 ///     .build::<Api>("http://localhost:8080")?;
@@ -213,8 +213,8 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
 /// through the middleware after it, and `key` sends the key to the api's own origin only.
 ///
 /// ```no_run
-/// # use quoll::{client, rest};
-/// rest::api! {
+/// # use quoll::client;
+/// quoll::api! {
 ///     pub api Api = "/api";
 ///
 ///     /// The key of an operator's scripts.

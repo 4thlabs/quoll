@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use axum::extract::State as Shared;
 use axum::http::Uri;
 use axum::routing::get;
-use quoll::rest::{self, Response, Result};
+use quoll::{Response, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -30,7 +30,7 @@ struct Search {
     size: Option<u32>,
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Shop {

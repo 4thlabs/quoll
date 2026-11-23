@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // `optional` written twice.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer, optional, optional)]

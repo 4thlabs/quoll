@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use axum::extract::State as Shared;
 use axum::http::Uri;
 use axum::routing::get;
-use quoll::rest::{self, Response, Result};
+use quoll::{Response, Result};
 use reqwest::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ struct Listed {
     state: Option<State>,
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Issues {

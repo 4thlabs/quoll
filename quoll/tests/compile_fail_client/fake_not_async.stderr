@@ -1,14 +1,14 @@
-error[E0277]: the trait bound `Result<String, quoll::rest::Error>: Call<String>` is not satisfied
+error[E0277]: the trait bound `Result<String, quoll::Error>: Call<String>` is not satisfied
   --> tests/compile_fail_client/fake_not_async.rs:15:31
    |
 15 |     fn get(&self, id: i64) -> Result<String> {
-   |                               ^^^^^^^^^^^^^^ the trait `Future` is not implemented for `Result<String, quoll::rest::Error>`
+   |                               ^^^^^^^^^^^^^^ the trait `Future` is not implemented for `Result<String, quoll::Error>`
    |
-   = note: required for `Result<String, quoll::rest::Error>` to implement `Call<String>`
+   = note: required for `Result<String, quoll::Error>` to implement `Call<String>`
 note: required by a bound in `Notes::get::{anon_assoc#0}`
   --> tests/compile_fail_client/fake_not_async.rs:7:30
    |
- 3 | rest::api! {
+ 3 | quoll::api! {
 ...
  7 |         GET "/notes/{id}" => get(id: i64) -> String;
    |                              ^^^ required by this bound in `Notes::get::{anon_assoc#0}`

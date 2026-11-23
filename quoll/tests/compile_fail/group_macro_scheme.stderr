@@ -1,5 +1,5 @@
-error: a scheme is declared in the `rest::api!` of the api: name it here by its path, as `#[auth(crate::Key)]`, or import it
- --> tests/compile_fail/group_macro_scheme.rs:4:9
+error: a scheme is declared in the `quoll::api!` of the api: name it here by its path, as `#[auth(crate::Key)]`, or import it
+ --> tests/compile_fail/group_macro_scheme.rs:2:9
   |
-4 |     pub scheme Key = header "X-Api-Key";
+2 |     pub scheme Key = header "X-Api-Key";
   |         ^^^^^^

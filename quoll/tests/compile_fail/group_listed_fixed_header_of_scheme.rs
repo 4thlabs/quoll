@@ -1,9 +1,5 @@
-use quoll::rest;
-
 mod admin {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         #[openapi(none)]
         #[auth(crate::Key)]
         pub group Admin {
@@ -12,7 +8,7 @@ mod admin {
     }
 }
 
-rest::api! {
+quoll::api! {
     // The api's header is the credential of a scheme a route of the group takes.
     #[openapi(none)]
     #[header("X-Api-Key" = "public")]

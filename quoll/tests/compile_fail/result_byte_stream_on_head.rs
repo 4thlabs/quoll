@@ -1,10 +1,8 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Health {
-        HEAD "/" => check() -> rest::ByteStream;
+        HEAD "/" => check() -> quoll::ByteStream;
     }
 }
 

@@ -1,5 +1,5 @@
 error: `#[header(...)]` takes a header: write `#[header("X-GitHub-Api-Version" = "2022-11-28")]`, with a string or a constant's name for the value, `#[header("Name" = none)]` to leave a header, or `#[header(none)]` to leave them all
- --> tests/compile_fail/fixed_header_not_a_header.rs:5:14
+ --> tests/compile_fail/fixed_header_not_a_header.rs:3:14
   |
-5 |     #[header(Accept = "application/json")]
+3 |     #[header(Accept = "application/json")]
   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^

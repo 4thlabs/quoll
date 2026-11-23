@@ -1,16 +1,16 @@
 error[E0277]: `Created<Note>` is not quoll's `Created`, which a result named `Created` is read as
-  --> tests/compile_fail_neither/foreign_created.rs:17:48
+  --> tests/compile_fail_neither/foreign_created.rs:16:48
    |
-17 |         POST "/notes" => create(note: Note) -> Created<Note>;
-   |                                                ^^^^^^^^^^^^^ not `quoll::rest::Created`
+16 |         POST "/notes" => create(note: Note) -> Created<Note>;
+   |                                                ^^^^^^^^^^^^^ not `quoll::Created`
    |
 help: the trait `quoll::__private::known::IsCreated` is not implemented for `Created<Note>`
-  --> tests/compile_fail_neither/foreign_created.rs:6:1
+  --> tests/compile_fail_neither/foreign_created.rs:5:1
    |
- 6 | pub struct Created<T>(pub T);
+ 5 | pub struct Created<T>(pub T);
    | ^^^^^^^^^^^^^^^^^^^^^
-   = note: bring quoll's into scope, `use quoll::rest::Created;`, or name a type of your own otherwise
-help: the trait `quoll::__private::known::IsCreated` is implemented for `quoll::rest::Created<T>`
+   = note: bring quoll's into scope, `use quoll::Created;`, or name a type of your own otherwise
+help: the trait `quoll::__private::known::IsCreated` is implemented for `quoll::Created<T>`
   --> src/__private/known.rs
    |
    | impl<T> IsCreated for Created<T> {

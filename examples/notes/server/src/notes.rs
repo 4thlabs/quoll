@@ -1,6 +1,6 @@
 use axum::http::header::LOCATION;
 use notes_api::{CONTAINS_LIMIT, NewNote, Note, NoteEvent, NoteFilter, NotesServer};
-use quoll::rest::{Error, Events, Response, Result};
+use quoll::{Error, Events, Response, Result};
 
 use crate::{App, User};
 

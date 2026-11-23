@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // An option `#[auth]` does not take.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer, required)]

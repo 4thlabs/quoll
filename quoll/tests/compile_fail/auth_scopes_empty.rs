@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // `scopes` with no scope.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

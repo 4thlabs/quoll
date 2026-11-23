@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A group reaches at least as far as its api.
-rest::api! {
+quoll::api! {
     pub(crate) api Api = "";
 
     pub(crate) group Notes {

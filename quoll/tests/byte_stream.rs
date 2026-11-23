@@ -7,19 +7,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
-use quoll::rest::{self, ByteStream, Error, Response, Result};
+use quoll::{ByteStream, Error, Response, Result};
 use reqwest::StatusCode;
 use reqwest::header::{ACCEPT, CACHE_CONTROL, CONTENT_TYPE};
 use tokio::sync::mpsc;
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Output {
         GET "/chunks?count={count}" => chunks(count: u32) -> ByteStream;
         GET "/typed"                => typed() -> ByteStream;
         GET "/failing"              => failing() -> ByteStream;
-        GET "/missing"              => missing() -> rest::ByteStream;
+        GET "/missing"              => missing() -> quoll::ByteStream;
         GET "/held"                 => held() -> ByteStream;
         GET "/mistyped"             => mistyped() -> ByteStream;
     }
@@ -208,7 +208,7 @@ async fn an_error_before_the_stream_is_a_problem_with_its_status() {
 
     assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     assert_eq!(
-        error.detail().and_then(rest::Problem::detail),
+        error.detail().and_then(quoll::Problem::detail),
         Some("no such output")
     );
 }

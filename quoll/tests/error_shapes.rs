@@ -7,7 +7,7 @@ use std::fmt;
 
 use gists::Gists as _;
 use http::header::{ETAG, IF_NONE_MATCH};
-use quoll::rest::{self, Call, Error, Problem, Response, Result};
+use quoll::{Call, Error, Problem, Response, Result};
 use reqwest::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -46,9 +46,7 @@ struct Repo {
 }
 
 mod gists {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         /// A group of another block, which names the api's shape itself.
         #[openapi(none)]
         #[error(super::HubError)]
@@ -58,7 +56,7 @@ mod gists {
     }
 }
 
-rest::api! {
+quoll::api! {
     /// The third party, which answers its errors as `HubError`.
     #[openapi(none)]
     #[error(HubError)]
@@ -178,7 +176,7 @@ async fn serve(router: axum::Router) -> String {
 async fn an_error_answer_reads_as_the_apis_shape() -> Result<()> {
     let hub = Hub::client(&serve(hub()).await)?;
 
-    let found: rest::Result<Repo, HubError> = hub.repos().get("quoll".into()).await;
+    let found: quoll::Result<Repo, HubError> = hub.repos().get("quoll".into()).await;
     let error = hub.repos().get("secret".into()).await.expect_err("a 401");
     let answer = error.response().expect("the answer of a `HubError`");
 
@@ -218,9 +216,9 @@ async fn a_body_that_is_not_the_shape_keeps_its_status_and_its_body() -> Result<
 async fn the_nearest_error_to_a_route_wins() -> Result<()> {
     let hub = Hub::client(&serve(hub()).await)?;
 
-    let token: rest::Result<String, OAuthError> = hub.repos().token("x".into()).await;
-    let mirror: rest::Result<Repo> = hub.mirror().get("quoll".into()).await;
-    let gist: rest::Result<String, HubError> = hub.gists().get("1".into()).await;
+    let token: quoll::Result<String, OAuthError> = hub.repos().token("x".into()).await;
+    let mirror: quoll::Result<Repo> = hub.mirror().get("quoll".into()).await;
+    let gist: quoll::Result<String, HubError> = hub.gists().get("1".into()).await;
 
     let token = token.expect_err("a 400");
     let mirror = mirror.expect_err("a 404");
@@ -335,7 +333,7 @@ async fn a_fake_answers_an_error_of_the_shape() -> Result<()> {
     Ok(())
 }
 
-rest::api! {
+quoll::api! {
     /// A server of quoll's that calls the third party.
     api Front = "/api";
 

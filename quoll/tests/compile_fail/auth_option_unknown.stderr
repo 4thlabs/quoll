@@ -1,5 +1,5 @@
 error: `required` is not an option of `#[auth]`, which takes `optional` or `scopes("...")`: write `#[auth(Bearer)]`, `#[auth(Bearer | Key)]`, `#[auth(Bearer, optional)]` or `#[auth(Bearer, scopes("repo"))]`, or `#[auth(none)]` on a route that takes no credential
- --> tests/compile_fail/auth_option_unknown.rs:7:20
+ --> tests/compile_fail/auth_option_unknown.rs:5:20
   |
-7 |     #[auth(Bearer, required)]
+5 |     #[auth(Bearer, required)]
   |                    ^^^^^^^^

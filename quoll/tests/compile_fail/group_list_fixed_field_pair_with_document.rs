@@ -1,4 +1,3 @@
-use quoll::rest;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, schemars::JsonSchema)]
@@ -7,9 +6,7 @@ pub struct Request {
 }
 
 mod streams {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         pub group Streams {
             #[body("stream" = true)]
             POST "/messages" => stream(request: super::Request);
@@ -17,7 +14,7 @@ mod streams {
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/v1" { streams::Streams };
 
     pub group Messages {

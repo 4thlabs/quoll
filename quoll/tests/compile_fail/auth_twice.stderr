@@ -1,5 +1,5 @@
 error: an item takes one `#[auth(...)]`: remove this one
- --> tests/compile_fail/auth_twice.rs:9:9
+ --> tests/compile_fail/auth_twice.rs:7:9
   |
-9 |         #[auth(Bearer)]
+7 |         #[auth(Bearer)]
   |         ^^^^^^^^^^^^^^^

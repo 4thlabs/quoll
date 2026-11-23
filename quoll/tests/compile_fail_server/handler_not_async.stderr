@@ -1,14 +1,14 @@
-error[E0277]: `Result<Response<String>, quoll::rest::Error>` is not a future
+error[E0277]: `Result<Response<String>, quoll::Error>` is not a future
   --> tests/compile_fail_server/handler_not_async.rs:15:31
    |
 15 |     fn get(&self, id: i64) -> Result<Response<String>> {
-   |                               ^^^^^^^^^^^^^^^^^^^^^^^^ `Result<Response<String>, quoll::rest::Error>` is not a future
+   |                               ^^^^^^^^^^^^^^^^^^^^^^^^ `Result<Response<String>, quoll::Error>` is not a future
    |
-   = help: the trait `Future` is not implemented for `Result<Response<String>, quoll::rest::Error>`
+   = help: the trait `Future` is not implemented for `Result<Response<String>, quoll::Error>`
 note: required by a bound in `NotesServer::get::{anon_assoc#0}`
   --> tests/compile_fail_server/handler_not_async.rs:7:30
    |
- 3 | rest::api! {
+ 3 | quoll::api! {
 ...
  7 |         GET "/notes/{id}" => get(id: i64) -> String;
    |                              ^^^ required by this bound in `NotesServer::get::{anon_assoc#0}`

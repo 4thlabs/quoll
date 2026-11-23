@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 
 use futures_util::{StreamExt, stream};
 use http::Extensions;
-use quoll::client::{Attempt, Retry, TokenSource};
-use quoll::rest::{
-    self, Authenticate, Bearer, ByteStream, Error, Events, Response, Result, Route, Text,
+use quoll::{
+    Authenticate, Bearer, ByteStream, Error, Events, Response, Result, Route, Text,
+    client::{Attempt, Retry, TokenSource},
 };
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware, Next};
@@ -34,7 +34,7 @@ struct Seen {
     signature: Option<String>,
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Calls {

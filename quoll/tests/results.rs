@@ -7,7 +7,7 @@ use std::error::Error as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use quoll::rest::{self, Accepted, Bytes, Error, Response, Result, Text};
+use quoll::{Accepted, Bytes, Error, Response, Result, Text};
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
 use schemars::JsonSchema;
@@ -24,7 +24,7 @@ struct Job {
     name: String,
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Files {
@@ -32,7 +32,7 @@ rest::api! {
         GET  "/text?value={value}" => text(value: String) -> Text;
         GET  "/bytes?len={len}"    => bytes(len: usize) -> Bytes;
         GET  "/image?type={content_type}" => image(content_type: Option<String>) -> Bytes;
-        GET  "/missing"            => missing() -> rest::Text;
+        GET  "/missing"            => missing() -> quoll::Text;
     }
 
     /// Routes of each kind of result, to see the `Accept` each sends.
@@ -260,7 +260,7 @@ async fn an_error_of_a_text_route_is_a_problem_with_its_status() {
 
     assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     assert_eq!(
-        error.detail().and_then(rest::Problem::detail),
+        error.detail().and_then(quoll::Problem::detail),
         Some("no such text")
     );
 }

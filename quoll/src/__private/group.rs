@@ -1,6 +1,7 @@
-//! What a group says of itself to the api that lists it, which `rest::group!` and `rest::api!` write: the routes of the
-//! group below the api's prefix, the table of `rest::Route` an api builds from them under its prefix at compile time,
-//! and the checks an api makes, at compile time too, of the routes of a group it lists, which the macro does not see.
+//! What a group says of itself to the api that lists it, which `quoll::group!` and `quoll::api!` write: the routes of
+//! the group below the api's prefix, the table of `quoll::Route` an api builds from them under its prefix at compile
+//! time, and the checks an api makes, at compile time too, of the routes of a group it lists, which the macro does not
+//! see.
 
 use std::any::TypeId;
 use std::marker::PhantomData;
@@ -10,14 +11,14 @@ use http::Method;
 use crate::__private::auth::{Declared, Place};
 use crate::__private::fields::{Field, tell_apart};
 use crate::__private::headers::{Fixed, RouteHeaders, keeps_media_type};
-use crate::rest::{Problem, Route};
+use crate::{Problem, Route};
 
-/// A group, as the descriptor `rest::group!` writes for it describes it: the type `__QuollGroupNotes` of the group
+/// A group, as the descriptor `quoll::group!` writes for it describes it: the type `__QuollGroupNotes` of the group
 /// `Notes`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a group of a contract",
     label = "not a group",
-    note = "an api lists the groups that `rest::group!` writes, by their path, `pub api Api = \"/api\" {{ notes::Notes }};`, or by their name alone where a glob import, `use notes::*;`, brings the items of the group"
+    note = "an api lists the groups that `quoll::group!` writes, by their path, `pub api Api = \"/api\" {{ notes::Notes }};`, or by their name alone where a glob import, `use notes::*;`, brings the items of the group"
 )]
 pub trait Group: 'static {
     /// What the group is.
@@ -222,7 +223,7 @@ const fn copy<const N: usize>(bytes: &mut [u8; N], mut at: usize, text: &str) ->
     at
 }
 
-/// The routes of a group under an api's prefix, `rest::Route`s, the path of each cut from `paths`, which [`paths`]
+/// The routes of a group under an api's prefix, `quoll::Route`s, the path of each cut from `paths`, which [`paths`]
 /// wrote for the same `routes` and the same prefix: the table the api's router and client take a route from.
 pub const fn routes<const N: usize>(
     prefix: &str,
@@ -270,12 +271,12 @@ pub const fn routes<const N: usize>(
 }
 
 /// Writes the table of the routes of the group `$group`, a type implementing [`Group`], under the api's `$prefix`: a
-/// `static` named `$name`, of one `rest::Route` per route, built at compile time.
+/// `static` named `$name`, of one `quoll::Route` per route, built at compile time.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __table {
     ($name:ident, $prefix:expr, $group:ty) => {
-        static $name: [::quoll::rest::Route;
+        static $name: [::quoll::Route;
             <$group as ::quoll::__private::group::Group>::INFO
                 .routes
                 .len()] = {
@@ -300,7 +301,7 @@ pub use crate::__table as table;
 pub const fn is_group<G: Group>() {}
 
 /// The shape `E` of an api's errors, as its checks tell it by its type: [`IS_PROBLEM`](Shape::IS_PROBLEM) is `true`
-/// for quoll's `rest::Problem` alone, by the impl of that type, and `false` for any other, by [`OtherShape`], whose
+/// for quoll's `quoll::Problem` alone, by the impl of that type, and `false` for any other, by [`OtherShape`], whose
 /// constant a path reaches only where no impl of the type's own has one.
 #[derive(Debug)]
 pub struct Shape<E>(PhantomData<fn() -> E>);
@@ -310,7 +311,7 @@ impl Shape<Problem> {
     pub const IS_PROBLEM: bool = true;
 }
 
-/// The constant of any shape but quoll's `rest::Problem`, which the code of an api brings into scope.
+/// The constant of any shape but quoll's `quoll::Problem`, which the code of an api brings into scope.
 pub trait OtherShape {
     /// Another shape than problems.
     const IS_PROBLEM: bool = false;
@@ -319,7 +320,7 @@ pub trait OtherShape {
 impl<E> OtherShape for Shape<E> {}
 
 /// Checks, at compile time, a group an api of the shape `shape` lists, problems when `problems` is set: the message
-/// of a route of the group whose shape is named nowhere, unless the api's is problems. A `rest::group!` writes its
+/// of a route of the group whose shape is named nowhere, unless the api's is problems. A `quoll::group!` writes its
 /// client's trait before any api lists it, and cannot take the api's.
 pub const fn check_error(group: &GroupInfo, problems: bool, shape: &str) -> Option<Message> {
     let Some(route) = group.unshaped else {
@@ -336,7 +337,7 @@ pub const fn check_error(group: &GroupInfo, problems: bool, shape: &str) -> Opti
             .push(group.name)
             .push("::")
             .push(route)
-            .push("` takes no `#[error(...)]`, and a `rest::group!` cannot take its api's: write `#[error(")
+            .push("` takes no `#[error(...)]`, and a `quoll::group!` cannot take its api's: write `#[error(")
             .push(shape)
             .push(")]` on the group `")
             .push(group.name)

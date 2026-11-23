@@ -1,0 +1,5 @@
+error: `quoll::Bearer` names the scheme `Bearer`, which `#[auth(...)]` takes by its name alone: write `Bearer`
+ --> tests/compile_fail/auth_scheme_through_quoll.rs:5:12
+  |
+5 |     #[auth(quoll::Bearer)]
+  |            ^^^^^^^^^^^^^

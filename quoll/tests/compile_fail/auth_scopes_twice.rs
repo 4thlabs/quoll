@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // `scopes` written twice.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer, scopes("repo"), scopes("admin"))]

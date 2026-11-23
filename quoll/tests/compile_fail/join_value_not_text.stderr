@@ -1,5 +1,5 @@
 error: each value of `labels` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants
- --> tests/compile_fail/join_value_not_text.rs:7:72
+ --> tests/compile_fail/join_value_not_text.rs:5:72
   |
-7 |         GET "/issues?labels={labels}" => list(#[join(",")] labels: Vec<Vec<String>>);
+5 |         GET "/issues?labels={labels}" => list(#[join(",")] labels: Vec<Vec<String>>);
   |                                                                        ^^^^^^^^^^^

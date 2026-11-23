@@ -1,6 +1,6 @@
 //! The model of an api: what the generators read, whatever the spelling it was written in.
 //!
-//! The `rest::api!` syntax reads into it (`syntax.rs`); a spelling with attributes on traits could build the same
+//! The `quoll::api!` syntax reads into it (`syntax.rs`); a spelling with attributes on traits could build the same
 //! values, and the generators would not know. Nothing here depends on how a contract looks: only on what it says.
 //! Every constructor checks what a spelling cannot get wrong without the mistake being a contract's: names matched,
 //! one body, no route twice.
@@ -1075,7 +1075,7 @@ impl Api {
         errors.finish().map(|()| api)
     }
 
-    /// The group of a `rest::group!`, checked as the api of a block of its own would check it: its routes, its
+    /// The group of a `quoll::group!`, checked as the api of a block of its own would check it: its routes, its
     /// names and its schemes, none of which it declares. The api is a stand-in, which nothing generates.
     ///
     /// # Errors

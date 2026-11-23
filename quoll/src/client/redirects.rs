@@ -35,8 +35,8 @@ use super::{Failure, Rank, helper};
 ///   with an error with no status.
 ///
 /// ```no_run
-/// # use quoll::{client, rest};
-/// # fn run() -> rest::Result<()> {
+/// # use quoll::client;
+/// # fn run() -> quoll::Result<()> {
 /// let http = client::builder()
 ///     .with(client::redirects(5))
 ///     .with(client::bearer("mF_9.B5f-4.1JqM"))

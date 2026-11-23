@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     #[derive(Clone)]
     pub api Api = "/api";
 }

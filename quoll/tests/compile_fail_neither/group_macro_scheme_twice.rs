@@ -1,9 +1,5 @@
-use quoll::rest;
-
 pub mod schemes {
-    use quoll::rest;
-
-    rest::api! {
+    quoll::api! {
         pub api Api = "/api";
 
         pub scheme Key = header "X-Api-Key";
@@ -12,7 +8,7 @@ pub mod schemes {
 
 use schemes::Key;
 
-rest::group! {
+quoll::group! {
     #[auth(Key | schemes::Key)]
     pub group Notes {
         GET "/notes" => list();

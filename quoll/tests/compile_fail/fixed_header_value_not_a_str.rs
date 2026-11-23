@@ -1,8 +1,6 @@
-use quoll::rest;
-
 const VERSION: u32 = 3;
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[header("X-Version" = VERSION)]
     pub api Api = "";

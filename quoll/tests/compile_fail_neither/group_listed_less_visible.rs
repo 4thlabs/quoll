@@ -1,16 +1,12 @@
-use quoll::rest;
-
 mod notes {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         pub(crate) group Notes {
             GET "/notes" => list();
         }
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api" { notes::Notes };
 }
 

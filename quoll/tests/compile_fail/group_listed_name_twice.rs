@@ -1,9 +1,5 @@
-use quoll::rest;
-
 mod mine {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         pub group Notes {
             GET "/mine" => list();
         }
@@ -11,16 +7,14 @@ mod mine {
 }
 
 mod theirs {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         pub group Notes {
             GET "/theirs" => list();
         }
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api" { mine::Notes, theirs::Notes };
 }
 

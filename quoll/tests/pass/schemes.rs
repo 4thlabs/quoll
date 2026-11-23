@@ -1,6 +1,5 @@
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{self, Result, Scheme};
+use quoll::{Result, Scheme, openapi::SecurityScheme};
 
 /// A scheme of the application's own.
 pub struct Hmac;
@@ -28,7 +27,7 @@ mod auth {
 }
 
 // Whatever the features, a contract with every kind of scheme compiles: each side writes what it needs of it.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     /// The key of an operator's scripts.

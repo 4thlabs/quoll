@@ -1,7 +1,7 @@
 error: unused implementer of `Call` that must be used
-  --> tests/compile_fail_client/call_not_awaited.rs:16:5
+  --> tests/compile_fail_client/call_not_awaited.rs:14:5
    |
-16 |     api.notes().remove(3);
+14 |     api.notes().remove(3);
    |     ^^^^^^^^^^^^^^^^^^^^^
    |
    = note: a call does nothing until it is awaited
