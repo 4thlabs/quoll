@@ -55,11 +55,11 @@ cargo quoll dev                                                    # the notes s
 - `quoll/`: the crate users depend on. Its features `server` (axum) and `client` (reqwest) are each off by default.
 - `quoll-macros/`: the proc macro behind `quoll::api!`, re-exported by `quoll`, which users never name.
 - `quoll-cli/`: the binary `cargo-quoll`, `cargo quoll gen`, `build` and `dev`, configured in a workspace's
-  `[workspace.metadata.quoll]`, as the notes example's is. It does not depend on `quoll`: it runs the contract's
+  `[workspace.metadata.quoll]`, like the notes example. It does not depend on `quoll`: it runs the contract's
   binary. Its tests run it on a small workspace under `tests/fixture/`, copied for each test, whose server and
   `web.dev` listen on ports.
-- `examples/`: each example a workspace of its own, as an application's is, which depends on `quoll` by path, has its
-  own lints and its own `Cargo.lock`, and is left out of the root's, `exclude`d.
+- `examples/`: each example is its own workspace, like an application: it depends on `quoll` by path, has its own
+  lints and its own `Cargo.lock`, and is excluded from the root workspace.
 - `examples/notes/`: the spec's complete example, split into the contract, its server, its command line and its page,
   with the config of `cargo quoll` in its `Cargo.toml`. `web/` is the page, Vite, React and the TanStack Query hooks
   orval writes from `openapi.json`, which `cargo quoll gen` writes there, both gitignored; its npm dependencies are

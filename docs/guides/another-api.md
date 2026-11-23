@@ -123,8 +123,8 @@ The sections below take each of these in turn, and what other APIs ask beside.
 
 ## Names
 
-The name of a group is the name of its client's trait, `Repos`, in the contract's module. A group that takes the name
-of a type there, as copying an API's names soon does, does not compile:
+The name of a group is the name of its client's trait, `Repos`, in the contract's module. A group with the same name
+as a type there does not compile, which happens quickly when you copy an API's names:
 
 ```rust,compile_fail,E0428
 use serde::Deserialize;
@@ -303,14 +303,14 @@ fn main() {
 
 ## Results
 
-A route returns what the API answers on a success, as any route does. Two cases are worth a word:
+A route returns what the API answers on a success. Two cases need a word:
 
 - A route that the API answers with a 204 returns a value that may be empty: nothing, an `Option<T>`, a `Text`,
   `Bytes` or a stream, as [Results](contract.md#results) lists. The client reads the 204 as `()`, `None`, an empty
   text or bytes, or a stream that ends at once. GitHub's `GET /user/starred/{owner}/{repo}` answers 204 when the user
   starred the repository, and 404 when not. A route `-> T`, whose `T` is a JSON value, answered with a 204 fails as an
   answer that is not its result, whose [`.response()`](client.md#the-whole-answer) keeps the status and the headers.
-- A route that an API answers in two shapes, JSON or a stream, as a field of its body says, is two routes of one
+- A route that an API answers in two shapes, JSON or a stream, depending on a field of its body, is two routes of one
   method and path: [Two answers on one path](#two-answers-on-one-path) says how.
 
 ```rust
@@ -616,10 +616,10 @@ async fn main() -> anyhow::Result<()> {
 ```
 
 - `create` sends `"stream": false` and `stream` sends `"stream": true`: the caller never sets it, and
-  `MessageRequest` has no field of it. A field of the body's own of that name would be replaced, as the contract wins.
-- Two routes of one method and path compile in an api `#[openapi(none)]`, as a contract of another API is: its
-  document does not describe them yet.
-- Anthropic's `event: error`, a failure once the stream has begun, is an item as any other: the enum names it,
+  `MessageRequest` has no field of it. If the body had a field of that name, the contract's value would replace it.
+- Two routes of one method and path compile only in an api `#[openapi(none)]`, which a contract of another API
+  usually is: the document does not describe them yet.
+- Anthropic's `event: error`, a failure once the stream has begun, is an item like any other: the enum names it,
   `Error`, and the loop turns it into an error. `Other` is for the events the client skips, `ping` and those the API
   adds later, so that a new event breaks no client, never for an error.
 
