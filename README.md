@@ -14,7 +14,7 @@
   <p>
     <img src="https://img.shields.io/badge/Rust-2024-B7410E?logo=rust&logoColor=white" alt="Rust 2024" />
     <img src="https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.1" />
-    <img src="https://img.shields.io/badge/status-from%20git-orange" alt="Status: from git" />
+    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.9.0-orange" alt="Version 0.9.0" /></a>
     <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" /></a>
   </p>
 
@@ -139,12 +139,13 @@ writes TanStack Query hooks. `cargo quoll gen` writes the document and runs the 
 
 ## Quick start
 
-[Getting started](docs/guides/getting-started.md) goes through this crate step by step. quoll is used from git until
-it is published. Create a crate with `cargo new notes`, then add quoll with both features to its `Cargo.toml`:
+[Getting started](docs/guides/getting-started.md) goes through this crate step by step. quoll is used from git, at
+the tag of a version: [the changelog](CHANGELOG.md) lists them. Create a crate with `cargo new notes`, then add quoll
+with both features to its `Cargo.toml`:
 
 ```toml
 [dependencies]
-quoll = { git = "https://github.com/4thlabs/quoll", features = ["server", "client"] }
+quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.0", features = ["server", "client"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
@@ -287,30 +288,14 @@ cd examples/docker
 cargo run -p docker-cli -- ps -a
 ```
 
-## Agents
+## Agent ready
 
-**Made for agents.** The contract is checked when it compiles: a route without its handler, a call with the wrong
+**Agent ready.** The contract is checked when it compiles: a route without its handler, a call with the wrong
 arguments, or a client out of step with the server is a compile error, spanned on the token at fault and saying what
 to write instead. An agent that gets it wrong finds out at once, and fixes it from the message.
 
 The compiler checks the contract, not what a handler does: [a test](docs/guides/testing.md) does, a server and its
 client in a few lines.
-
-## Status
-
-quoll is used from git. It has no version yet, and the first release is
-[#21](https://github.com/4thlabs/quoll/issues/21). Everything [the spec](docs/spec.md) describes works, except its
-section [Later](docs/spec.md#later). What works:
-
-- the contract, the server and the client;
-- the OpenAPI document;
-- `cargo quoll gen`, `build` and `dev`;
-- the notes page.
-
-What comes next is in the milestone [Later](https://github.com/4thlabs/quoll/milestone/5).
-
-The guides are in [`docs/`](docs/README.md). The API documentation is the crate's rustdoc: `cargo doc -p quoll
---all-features --open` opens it.
 
 ## License
 
