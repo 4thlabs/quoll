@@ -783,7 +783,7 @@ impl Answer {
     /// # Errors
     ///
     /// The read resolves to an error with no status when the body cannot be read, or is not the JSON of `T`, as a 204
-    /// or a 205 of a route whose `T` is not an `Option`.
+    /// or a 205 of a route whose `T` is neither an `Option` nor `()`.
     pub fn json<T: Deserialized + Send + 'static>(self, nullable: bool) -> Read<T> {
         Read::new(self.read_json(nullable))
     }
@@ -859,8 +859,13 @@ impl Answer {
         ))
     }
 
-    /// The answer's content type, or `application/octet-stream` when it has none, or one that is not a media type.
+    /// The answer's content type, or `application/octet-stream` when it has none, or one that is not a media type, or
+    /// when it is a 204 or a 205, whose body, dropped, the type was of.
     fn content_type(&self) -> Cow<'static, str> {
+        if rest::no_content(self.response.status()) {
+            return Cow::Borrowed(OCTET_STREAM);
+        }
+
         content_type::media_type(self.response.headers())
             .map_or(Cow::Borrowed(OCTET_STREAM), |media_type| {
                 Cow::Owned(media_type.to_owned())

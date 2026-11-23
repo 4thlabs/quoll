@@ -302,8 +302,10 @@ rest::api! {
 | `JsonLines<T>`    | 200, one JSON value per line, or 204       | a stream of `T`    |
 | `ByteStream`      | 200, bytes as they come, or 204            | a stream of bytes  |
 
-A 204, `Status::NO_CONTENT`, is the handler's to give, on the results that may be empty alone, and the client reads
-it as `None`, an empty text or bytes, or a stream that ends at once.
+A 204 or a 205, `Status::NO_CONTENT` or `Status::RESET_CONTENT`, is the handler's to give, on the results that may
+be empty alone, and the client reads it as `None`, an empty text or bytes, or a stream that ends at once.
+`NoContent::try_from(status)` gives one back from another API's answer. A `Created<T>` or an `Accepted<T>` whose `T`
+may be empty does not compile: its status carries a value.
 
 A handler returns each of them in a `Response`, the `T` alone for a `Created<T>` or an `Accepted<T>`, whose status
 the contract gives, with the headers it sends:

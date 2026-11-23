@@ -9,7 +9,7 @@ use syn::spanned::Spanned;
 use crate::descriptor::{self, Cx};
 use crate::docs::doc_attrs;
 use crate::known::Known;
-use crate::model::Api;
+use crate::model::{Api, Route};
 use crate::{client, headers, openapi, scheme, server};
 
 /// What a contract becomes: the api's type, its schemes, each group its block writes, its OpenAPI document, the checks
@@ -115,6 +115,10 @@ fn known_types(cx: &Cx) -> TokenStream {
 
             checks.push(quote_spanned! {ty.span()=> ::quoll::__private::known::#check::<#ty>(); });
         }
+
+        if let Some(check) = carries_a_value(route) {
+            checks.push(check);
+        }
     }
 
     if checks.is_empty() {
@@ -126,6 +130,35 @@ fn known_types(cx: &Cx) -> TokenStream {
             #(#checks)*
         };
     }
+}
+
+/// For a route that returns a `Created<T>` or an `Accepted<T>`, a check that its `T` is a value, which its 201 or its
+/// 202 carries: one that may be empty, an `Option<T>` or a `Text`, would let its handler answer a 204, which is no
+/// answer of such a route.
+fn carries_a_value(route: &Route) -> Option<TokenStream> {
+    let returned = route.reply.as_deref()?;
+    let (name, status) = match returned.known?.check {
+        "created" => ("Created", 201),
+        "accepted" => ("Accepted", 202),
+        _ => return None,
+    };
+    let inner = returned.inner.as_ref()?;
+    let shown = quote! { #inner }.to_string().replace(' ', "");
+    let message = syn::LitStr::new(
+        &format!(
+            "a `{name}<T>` answers its value with a {status}, and `{shown}` may be empty, which a 204 answers and a `{name}` does not: its `T` is the type of the value"
+        ),
+        inner.span(),
+    );
+
+    Some(quote_spanned! {inner.span()=>
+        {
+            #[allow(unused_imports)]
+            use ::quoll::__private::known::NotEmpty as _;
+
+            ::core::assert!(!<::quoll::__private::known::MayBeEmpty<#inner>>::IS, #message);
+        }
+    })
 }
 
 /// Names the type of an `#[error(E)]` whatever the features of `quoll`, so that it is checked, and its import used,
