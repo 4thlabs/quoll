@@ -46,16 +46,6 @@ const WELL_KNOWN: &str = ".well-known";
 /// The extensions of the compressed copies `ServeDir` sends in the place of a file.
 const COPIES: [&str; 3] = ["br", "gz", "zst"];
 
-/// The headers of a conditional or partial request, which `index.html` does not read: it is always sent whole.
-const CONDITIONS: [header::HeaderName; 6] = [
-    header::IF_MATCH,
-    header::IF_NONE_MATCH,
-    header::IF_MODIFIED_SINCE,
-    header::IF_UNMODIFIED_SINCE,
-    header::IF_RANGE,
-    header::RANGE,
-];
-
 /// The files of a page's directory, a service an axum router falls back to.
 #[derive(Debug, Clone)]
 pub(crate) struct Page {
@@ -98,14 +88,38 @@ impl Service<Request> for Page {
 
         Box::pin(async move {
             let mut response = page.answer(request).await;
+            let headers = response.headers_mut();
 
-            // Every answer of the page, its errors among them, leaves through here.
-            response.headers_mut().insert(
+            // Every answer of the page, its errors among them, leaves through here. Any path may have compressed
+            // copies, which `ServeDir` sends: every answer varies by the coding.
+            headers.insert(
                 header::X_CONTENT_TYPE_OPTIONS,
                 HeaderValue::from_static("nosniff"),
             );
+            vary(headers, "accept-encoding");
             Ok(response)
         })
+    }
+}
+
+/// Adds `name` to the `Vary` of `headers`, once: the names they hold already are kept, each once, in one header.
+fn vary(headers: &mut HeaderMap, name: &str) {
+    let mut names: Vec<String> = Vec::new();
+    let held = headers
+        .get_all(header::VARY)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(|name| name.trim().to_ascii_lowercase());
+
+    for held in held.chain(std::iter::once(name.to_owned())) {
+        if !held.is_empty() && !names.contains(&held) {
+            names.push(held);
+        }
+    }
+
+    if let Ok(value) = HeaderValue::from_str(&names.join(", ")) {
+        headers.insert(header::VARY, value);
     }
 }
 
@@ -160,7 +174,7 @@ impl StdError for NoIndex {
 
 impl Page {
     /// The answer to `request`: refused by the filter, or `ServeDir`'s, with the headers of the page.
-    async fn answer(mut self, mut request: Request) -> Response {
+    async fn answer(mut self, request: Request) -> Response {
         if request.method() != Method::GET && request.method() != Method::HEAD {
             return method_not_allowed();
         }
@@ -178,25 +192,20 @@ impl Page {
         let checked = {
             let relative = relative.clone();
 
-            tokio::task::spawn_blocking(move || -> Result<(Checked, Hashed), Refusal> {
-                let checked = filter(&dir, &relative, slashed)?;
-                let hashed = dir
-                    .canonicalize()
-                    .map_or(Hashed::Named, |root| manifest.hashed(&root));
+            tokio::task::spawn_blocking(move || -> Result<Hashed, Refusal> {
+                filter(&dir, &relative, slashed)?;
 
-                Ok((checked, hashed))
+                Ok(dir
+                    .canonicalize()
+                    .map_or(Hashed::Named, |root| manifest.hashed(&root)))
             })
             .await
         };
-        let (checked, hashed) = match checked {
-            Ok(Ok(checked)) => checked,
+        let hashed = match checked {
+            Ok(Ok(hashed)) => hashed,
             Ok(Err(refusal)) => return refusal.into_response(),
             Err(error) => return Error::internal(error).into_response(),
         };
-
-        if checked.index {
-            unconditional(request.headers_mut());
-        }
 
         // `ServeDir` is ready when its fallback is, which always is.
         let _ = poll_fn(|cx| self.files.poll_ready(cx)).await;
@@ -206,7 +215,7 @@ impl Page {
             Err(never) => match never {},
         };
 
-        dressed(served, &relative, &hashed, checked.copies)
+        dressed(served, &relative, &hashed)
     }
 }
 
@@ -224,17 +233,9 @@ fn method_not_allowed() -> Response {
     response
 }
 
-/// Removes from `headers` what makes a request conditional or partial, so that its file is sent whole.
-fn unconditional(headers: &mut HeaderMap) {
-    for name in CONDITIONS {
-        headers.remove(name);
-    }
-}
-
-/// `served`, an answer of `ServeDir`, of the file at `relative`, with the headers of the page: a `Vary` on a file
-/// with compressed `copies`, the `Cache-Control` of a file that `hashed` tells, and a problem for an error it
-/// answered with no body.
-fn dressed(served: Response, relative: &str, hashed: &Hashed, copies: bool) -> Response {
+/// `served`, an answer of `ServeDir`, of the file at `relative`, with the `Cache-Control` of a file that `hashed`
+/// tells, and a problem for an error it answered with no body.
+fn dressed(served: Response, relative: &str, hashed: &Hashed) -> Response {
     let status = served.status();
     let mut served = if status.is_server_error() {
         Error::internal("the page's file cannot be read").into_response()
@@ -248,15 +249,9 @@ fn dressed(served: Response, relative: &str, hashed: &Hashed, copies: bool) -> R
         served
     };
     let headers = served.headers_mut();
-    let file = status.is_success() || status == StatusCode::NOT_MODIFIED;
-
-    // The fallback says it of `index.html`.
-    if copies && file {
-        headers.append(header::VARY, HeaderValue::from_static("accept-encoding"));
-    }
 
     // The fallback gives its own; an error none.
-    let cached = file;
+    let cached = status.is_success() || status == StatusCode::NOT_MODIFIED;
 
     if cached && !headers.contains_key(header::CACHE_CONTROL) {
         let cache = if hashed.names(relative) {
@@ -295,7 +290,7 @@ impl Service<Request> for Fallback {
 }
 
 /// The answer to `request`, of a path that is no file of `dir`.
-async fn fall_back(dir: Arc<Path>, mut request: Request) -> Response {
+async fn fall_back(dir: Arc<Path>, request: Request) -> Response {
     // Told by the decoded segments, as `/%2Ewell-known/` and `/./.well-known/` are `/.well-known/` too.
     let well_known = segments(request.uri().path()).map_or(true, |segments| {
         segments.first().is_some_and(|first| first == WELL_KNOWN)
@@ -310,9 +305,7 @@ async fn fall_back(dir: Arc<Path>, mut request: Request) -> Response {
         let mut response = Error::not_found("the page has no file of this path").into_response();
 
         // A request that accepted `text/html` would have had `index.html`.
-        response
-            .headers_mut()
-            .insert(header::VARY, HeaderValue::from_static("accept"));
+        vary(response.headers_mut(), "accept");
         return response;
     }
 
@@ -321,13 +314,11 @@ async fn fall_back(dir: Arc<Path>, mut request: Request) -> Response {
 
         tokio::task::spawn_blocking(move || filter(&dir, "", true)).await
     };
-    let checked = match checked {
-        Ok(Ok(checked)) => checked,
+    match checked {
+        Ok(Ok(())) => {}
         Ok(Err(refusal)) => return refusal.into_response(),
         Err(error) => return Error::internal(error).into_response(),
-    };
-
-    unconditional(request.headers_mut());
+    }
 
     let mut index = ServeFile::new(dir.join(INDEX))
         .precompressed_br()
@@ -345,12 +336,7 @@ async fn fall_back(dir: Arc<Path>, mut request: Request) -> Response {
     let headers = served.headers_mut();
 
     headers.insert(header::CACHE_CONTROL, NO_CACHE);
-    headers.append(header::VARY, HeaderValue::from_static("accept"));
-
-    if checked.copies {
-        headers.append(header::VARY, HeaderValue::from_static("accept-encoding"));
-    }
-
+    vary(headers, "accept");
     served
 }
 
@@ -414,10 +400,8 @@ fn segments(path: &str) -> Result<Vec<String>, Refused> {
 enum Refusal {
     /// A file the page does not serve, by its real path.
     Refused(Refused),
-    /// A file whose time no HTTP date holds, before 1970 or from the year 10000, which `ServeDir` cannot answer.
+    /// A file whose time no HTTP date holds, before 1970 or from the year 10000, on which `ServeDir` panics.
     Undated(PathBuf),
-    /// A file that is there but cannot be opened, which `ServeDir` takes for no file.
-    Unreadable(PathBuf),
 }
 
 impl IntoResponse for Refusal {
@@ -429,41 +413,27 @@ impl IntoResponse for Refusal {
                 file.display()
             ))
             .into_response(),
-            Self::Unreadable(file) => Error::internal(format!(
-                "the page's file `{}` is there but cannot be opened",
-                file.display()
-            ))
-            .into_response(),
         }
     }
 }
 
-/// What the filter found of the file `ServeDir` will send.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct Checked {
-    /// Whether it is an `index.html` by its real name, which is always sent whole.
-    index: bool,
-    /// Whether it has compressed copies beside it, which its answer varies by.
-    copies: bool,
-}
-
 /// The filter of a request of the path of `relative`, the decoded segments joined by `/`, under `dir`, `slashed` when
-/// the request's path ends with a `/`: it finds the file `ServeDir` will open, as `ServeDir` does, then checks it and
-/// each compressed copy of it that `ServeDir` may send, by their real paths, which must be under `dir`'s and not
-/// hidden, each one that can be opened, and of a time an HTTP date holds.
+/// the request's path ends with a `/`. It finds the file `ServeDir` will open, as `ServeDir` does, then checks it and
+/// each compressed copy of it that `ServeDir` may send by their real paths, which must be under `dir`'s and not
+/// hidden, and checks that the time of each that is a file is one an HTTP date holds. Nothing is opened. A file that
+/// is not there, or that the server cannot read, is left to `ServeDir`, which falls back.
 ///
 /// As `ServeDir` does, a directory opens its `index.html` when the path ends with a `/`, and is redirected otherwise;
-/// any other path opens the file of its segments, whatever its final `/`. A file that is not there is left to
-/// `ServeDir`, which falls back.
-fn filter(dir: &Path, relative: &str, slashed: bool) -> Result<Checked, Refusal> {
+/// any other path opens the file of its segments, whatever its final `/`.
+fn filter(dir: &Path, relative: &str, slashed: bool) -> Result<(), Refusal> {
     let Ok(root) = dir.canonicalize() else {
-        return Ok(Checked::default());
+        return Ok(());
     };
     let mut target = root.join(relative);
 
     if std::fs::metadata(&target).is_ok_and(|metadata| metadata.is_dir()) {
         if !slashed {
-            return Ok(Checked::default());
+            return Ok(());
         }
 
         target.push(INDEX);
@@ -476,18 +446,13 @@ fn filter(dir: &Path, relative: &str, slashed: bool) -> Result<Checked, Refusal>
         copy.push(extension);
         PathBuf::from(copy)
     });
-    let mut checked = Checked::default();
 
-    for (at, candidate) in std::iter::once(target).chain(copies).enumerate() {
+    for candidate in std::iter::once(target).chain(copies) {
         let Ok(real) = candidate.canonicalize() else {
             continue;
         };
 
         under(&root, &real).map_err(Refusal::Refused)?;
-
-        if std::fs::File::open(&real).is_err() {
-            return Err(Refusal::Unreadable(candidate));
-        }
 
         let undated = std::fs::metadata(&real)
             .ok()
@@ -498,18 +463,9 @@ fn filter(dir: &Path, relative: &str, slashed: bool) -> Result<Checked, Refusal>
         if undated {
             return Err(Refusal::Undated(candidate));
         }
-
-        if at == 0 {
-            checked.index = real
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.eq_ignore_ascii_case(INDEX));
-        } else {
-            checked.copies = true;
-        }
     }
 
-    Ok(checked)
+    Ok(())
 }
 
 /// Whether `real`, a real path, is a file the page serves under `root`, its real path: under it, and with no hidden
@@ -909,6 +865,21 @@ mod tests {
     }
 
     #[test]
+    fn a_name_is_added_to_vary_once() {
+        let mut headers = HeaderMap::new();
+
+        vary(&mut headers, "accept-encoding");
+        vary(&mut headers, "accept-encoding");
+        assert_eq!(headers.get_all(header::VARY).iter().count(), 1);
+        assert_eq!(headers[header::VARY], "accept-encoding");
+
+        headers.append(header::VARY, HeaderValue::from_static("Accept, origin"));
+        vary(&mut headers, "accept");
+        assert_eq!(headers.get_all(header::VARY).iter().count(), 1);
+        assert_eq!(headers[header::VARY], "accept-encoding, accept, origin");
+    }
+
+    #[test]
     fn only_the_times_an_http_date_holds_are_dated() {
         let year_10000 = UNIX_EPOCH + std::time::Duration::from_secs(YEAR_10000);
 
@@ -942,13 +913,7 @@ mod tests {
             filter(&dist, "app.js", true),
             Err(Refusal::Refused(Refused::Outside))
         );
-        assert_eq!(
-            filter(&dist, "", true),
-            Ok(Checked {
-                index: true,
-                copies: false
-            })
-        );
-        assert_eq!(filter(&dist, "gone.js", false), Ok(Checked::default()));
+        assert_eq!(filter(&dist, "", true), Ok(()));
+        assert_eq!(filter(&dist, "gone.js", false), Ok(()));
     }
 }
