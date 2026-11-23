@@ -77,10 +77,25 @@ pub enum Format {
 
 impl Format {
     /// Whether `body`, of this format, holds `fields`.
-    fn holds(self, body: &[u8], fields: &'static [Field]) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// The text of the format's error when the body does not read as a struct or a map of its fields' types.
+    fn holds(self, body: &[u8], fields: &'static [Field]) -> std::result::Result<bool, String> {
         match self {
-            Self::Json => fields::holds(&mut serde_json::Deserializer::from_slice(body), fields),
-            Self::Form => fields::holds(serde_html_form::Deserializer::from_bytes(body), fields),
+            Self::Json => fields::holds(&mut serde_json::Deserializer::from_slice(body), fields)
+                .map_err(|error| error.to_string()),
+            Self::Form => fields::holds(serde_html_form::Deserializer::from_bytes(body), fields)
+                .map_err(|error| error.to_string()),
+        }
+    }
+
+    /// Whether `headers` name this format's media type, whatever its parameters: the route that reads it says what
+    /// it refuses of them, a charset other than UTF-8 for a form.
+    fn is_named(self, headers: &HeaderMap) -> bool {
+        match self {
+            Self::Json => content_type::is_json(headers),
+            Self::Form => content_type::is(headers, FORM, false),
         }
     }
 
@@ -89,6 +104,14 @@ impl Format {
         match self {
             Self::Json => content_type::is_json(headers),
             Self::Form => content_type::is(headers, FORM, true),
+        }
+    }
+
+    /// Its media type.
+    const fn media_type(self) -> &'static str {
+        match self {
+            Self::Json => JSON,
+            Self::Form => FORM,
         }
     }
 }
@@ -141,16 +164,36 @@ impl Routes {
 }
 
 /// Serves `request` by the one of `routes`, of one method and path, whose fields its body holds. The body is read
-/// first, within the limit axum sets, as it picks the route, which then authenticates the request and reads it.
+/// first, within the limit axum sets, as it picks the route, which then authenticates the request and reads it: so
+/// what the answer says before, a body of no route's, says nothing of the routes.
 async fn pick(routes: Arc<[Fielded]>, request: axum::extract::Request) -> Response {
     let (parts, body) = request.into_parts();
-
-    // A body none of the routes reads is the first one's to refuse, as it is when it serves the path alone.
-    if !routes
+    let named: Vec<&Fielded> = routes
         .iter()
-        .any(|route| route.format.is_sent(&parts.headers))
-    {
-        return (routes[0].endpoint)(http::Request::from_parts(parts, body)).await;
+        .filter(|route| route.format.is_named(&parts.headers))
+        .collect();
+
+    let Some(first) = named.first() else {
+        let mut media_types: Vec<String> = Vec::new();
+
+        for route in routes.iter() {
+            let media_type = format!("`{}`", route.format.media_type());
+
+            if !media_types.contains(&media_type) {
+                media_types.push(media_type);
+            }
+        }
+
+        return unsupported(format!(
+            "the body is read as {}: send it with one `Content-Type` of them",
+            media_types.join(" or ")
+        ))
+        .into_response();
+    };
+
+    // A media type the routes read with a parameter they refuse, a form's charset, is refused by its first route.
+    if !first.format.is_sent(&parts.headers) {
+        return (first.endpoint)(http::Request::from_parts(parts, body)).await;
     }
 
     let bytes =
@@ -161,31 +204,27 @@ async fn pick(routes: Arc<[Fielded]>, request: axum::extract::Request) -> Respon
             Err(error) => return body_rejected(error.status(), error.body_text()).into_response(),
         };
 
-    let picked = routes.iter().find(|route| {
-        route.format.is_sent(&parts.headers) && route.format.holds(&bytes, route.fields)
-    });
-    let Some(picked) = picked else {
-        let routes: Vec<String> = routes
-            .iter()
-            .map(|route| {
-                format!(
-                    "`{}` {}",
-                    route.route.operation_id,
-                    fields::shown(route.fields)
-                )
-            })
-            .collect();
+    let mut unread = None;
+    for route in &named {
+        match route.format.holds(&bytes, route.fields) {
+            Ok(true) => {
+                return (route.endpoint)(http::Request::from_parts(parts, Body::from(bytes))).await;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                unread.get_or_insert(error);
+            }
+        }
+    }
 
-        return Error::bad_request(format!(
-            "the body holds the fields of none of the routes of `{} {}`, which they tell apart: {}",
-            parts.method,
-            parts.uri.path(),
-            routes.join("; ")
-        ))
-        .into_response();
+    let error = match unread {
+        Some(error) => Error::bad_request(format!("the body is not valid: {error}")),
+        None => Error::bad_request(
+            "the body does not hold the fixed fields of any route of this method and path",
+        ),
     };
 
-    (picked.endpoint)(http::Request::from_parts(parts, Body::from(bytes))).await
+    error.into_response()
 }
 
 /// The routes of one group, each served by the group's service.
@@ -558,7 +597,7 @@ impl Request {
 
         match axum::Json::<T>::from_bytes(&body) {
             Ok(axum::Json(value)) => Ok(value),
-            Err(JsonRejection::JsonDataError(error)) => Err(refused(error.body_text(), fields)),
+            Err(JsonRejection::JsonDataError(error)) => Err(Error::bad_request(error.body_text())),
             Err(error) => Err(body_rejected(error.status(), error.body_text())),
         }
     }
@@ -624,9 +663,7 @@ impl Request {
         check_utf8(&body, "the form")?;
         check_fields(Format::Form.holds(&body, fields), fields)?;
 
-        serde_html_form::from_bytes(&body)
-            .map(F::from_value)
-            .map_err(|error| refused(format!("the form is not valid: {error}"), fields))
+        parse_form(&body, "the form").map(F::from_value)
     }
 
     /// The body, read as UTF-8 text.
@@ -723,6 +760,11 @@ fn unsupported(detail: String) -> Error {
 fn from_form<T: DeserializeOwned>(form: &[u8], what: &str) -> Result<T> {
     check_utf8(form, what)?;
 
+    parse_form(form, what)
+}
+
+/// `form`, read into `T` once [`check_utf8`] has checked it.
+fn parse_form<T: DeserializeOwned>(form: &[u8], what: &str) -> Result<T> {
     serde_html_form::from_bytes(form)
         .map_err(|error| Error::bad_request(format!("{what} is not valid: {error}")))
 }
@@ -743,25 +785,28 @@ fn check_utf8(form: &[u8], what: &str) -> Result<()> {
     Ok(())
 }
 
-/// A 400 unless the body `holds` the route's fixed `fields`.
-fn check_fields(holds: bool, fields: &[Field]) -> Result<()> {
-    if holds {
-        return Ok(());
+/// A 400 unless the body holds the route's fixed `fields`, as `holds` says, or when it does not read as them.
+fn check_fields(holds: std::result::Result<bool, String>, fields: &[Field]) -> Result<()> {
+    match holds {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(Error::bad_request(format!(
+            "the body does not hold the fields this route fixes, each once: {}",
+            shown(fields)
+        ))),
+        Err(error) => Err(Error::bad_request(format!(
+            "the body is not valid: {error}"
+        ))),
     }
-
-    Err(Error::bad_request(format!(
-        "the body does not hold the fields this route fixes, each once: {}",
-        fields::shown(fields)
-    )))
 }
 
-/// The error of a body with fixed fields that its type does not read, `text` saying why: a 500 when the type refuses
-/// one of the fields, `#[serde(deny_unknown_fields)]`, a mistake of the server's, else a 400.
-fn refused(text: String, fields: &[Field]) -> Error {
-    match fields::refused_by(&text, fields) {
-        Some(name) => Error::internal(fields::refused_message(name)),
-        None => Error::bad_request(text),
-    }
+/// The fields as a message shows them: `"stream": true, "n": 1`.
+fn shown(fields: &[Field]) -> String {
+    let fields: Vec<String> = fields
+        .iter()
+        .map(|field| format!("{:?}: {}", field.name, field.value))
+        .collect();
+
+    fields.join(", ")
 }
 
 /// What axum refused in a body: a 413 for one larger than its limit, said as `server::body_limit` says it but
