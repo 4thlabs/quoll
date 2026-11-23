@@ -675,7 +675,7 @@ export function followEvents<T>(
 }
 ```
 
-An item that is the last of its stream, as `removed` is, closes the source in `onItem`, with the function
+An item that ends its stream, such as `removed`, closes the source in `onItem`, with the function
 `followEvents` returns: otherwise the clean end that follows it connects again.
 
 ### `JsonLines` and `ByteStream`

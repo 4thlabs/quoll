@@ -259,7 +259,7 @@ No Rust is generated on disk: the macro expands at compile time, and `cargo expa
 
 ## Examples
 
-Each example is a workspace of its own, as an application's is, built and tested from its directory.
+Each example is its own workspace, built and tested from its directory.
 
 [`examples/notes`](examples/notes) is the spec's [complete example](docs/spec.md#a-complete-example): a contract,
 its server, a command line, and a web page on the hooks orval writes. `cargo quoll dev` runs the server, orval and

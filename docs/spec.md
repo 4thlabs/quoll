@@ -68,7 +68,7 @@ Decided by the maintainer:
   - every child of `cargo quoll dev` runs in a process group or a job, stopped with what it started;
   - an `Events` answer opens with a comment, `: `, and ends cleanly when the server of `server::builder()` is told to stop;
   - what a `JsonLines` or a `ByteStream` says of a stop is open, [#70](https://github.com/4thlabs/quoll/issues/70);
-  - each example is a workspace of its own, as an application's is, with the config of `cargo quoll` in its own `Cargo.toml`, the repository's root workspace holding the library's crates alone;
+  - each example is its own workspace, with the config of `cargo quoll` in its own `Cargo.toml`, the repository's root workspace holding the library's crates alone;
   - `quoll::Response<T>` is the answer of HTTP on both sides, its status, its version, its headers and its body, with nothing declared per route in the contract; the response headers are not in the OpenAPI document;
   - every handler returns `quoll::Result<Response<T>>`, as tonic's do, `Ok(Response::new(note))`, with its headers, `.header(ETAG, tag)`; `Created<T>` and `Accepted<T>` are only written in the contract, to say 201 or 202, a handler of either returning a `Response<T>`, and `Location` is a header as any other, `Created::at` gone;
   - the status of a response is the contract's unless the handler gives another, a success or a redirection, with `.with_status(Status::CREATED)`, `quoll::Status` holding a `2xx` or a `3xx` alone, so that an error's status is refused at compile time and goes through `Err(quoll::Error)`; the document describes the contract's status alone;
@@ -1127,7 +1127,7 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-`Cargo.toml`, the workspace's, a workspace of its own as an application's is, in the repository's `examples/notes/`: `cargo quoll dev` in its directory runs the server and Vite, `cargo quoll build` writes the TypeScript then bundles the page, in CI too, so that a change of the contract that breaks the page breaks the pull request.
+`Cargo.toml`, the one of its own workspace, in the repository's `examples/notes/`: `cargo quoll dev` in its directory runs the server and Vite, `cargo quoll build` writes the TypeScript then bundles the page, in CI too, so that a change of the contract that breaks the page breaks the pull request.
 
 ```toml
 [workspace]
