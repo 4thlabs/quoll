@@ -9,6 +9,7 @@ use syn::spanned::Spanned;
 use syn::{Ident, LitStr, Type, ext::IdentExt};
 
 use crate::descriptor::{Cx, below_prefix, descriptor_name};
+use crate::fields::route_fields;
 use crate::headers::{api_headers, route_headers};
 use crate::model::{Api, Group, Param, ParamKind, Route, SchemeKind, is_vec, option_inner};
 use crate::scheme::scheme_type;
@@ -333,6 +334,7 @@ fn route_description(group: &Group, route: &Route) -> TokenStream {
     };
 
     let headers = route_headers(group, route);
+    let fields = route_fields(route);
 
     quote! {
         ::quoll::__private::openapi::Route {
@@ -343,6 +345,7 @@ fn route_description(group: &Group, route: &Route) -> TokenStream {
             params: &[#(#params),*],
             headers: #headers,
             body: #body,
+            fields: #fields,
             reply: #reply,
             may_be_empty: #may_be_empty,
             auth: #auth,

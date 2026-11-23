@@ -9,6 +9,7 @@ use schemars::generate::{Contract, SchemaSettings};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde_json::{Map, Value, json};
 
+use crate::__private::fields::Field;
 use crate::__private::headers::{Fixed, RouteHeaders};
 use crate::__private::join::Join;
 use crate::rest::openapi::{Document, SecurityScheme};
@@ -102,6 +103,8 @@ pub struct Route {
     pub headers: RouteHeaders,
     /// Its body, if it reads one.
     pub body: Option<Body>,
+    /// The fixed fields of its body, `#[body("name" = value)]`.
+    pub fields: &'static [Field],
     /// Its result.
     pub reply: Reply,
     /// Whether the handler's value may be empty, so that a 204 answers it beside its own status, as
@@ -458,7 +461,7 @@ impl Builder {
         }
 
         if let Some(body) = &route.body {
-            operation.insert("requestBody".into(), self.body(body));
+            operation.insert("requestBody".into(), self.body(body, route.fields));
         }
 
         operation.insert("responses".into(), self.responses(route));
@@ -546,16 +549,20 @@ impl Builder {
         vec![(param.name.to_owned(), place, parameter)]
     }
 
-    fn body(&mut self, body: &Body) -> Value {
+    fn body(&mut self, body: &Body, fields: &[Field]) -> Value {
         match body {
             Body::Json(schema) => json!({
                 "required": true,
-                "content": { "application/json": { "schema": self.schema(*schema, Side::Read) } },
+                "content": {
+                    "application/json": { "schema": with_fields(self.schema(*schema, Side::Read), fields) },
+                },
             }),
             Body::Form(schema) => json!({
                 "required": true,
                 "content": {
-                    "application/x-www-form-urlencoded": { "schema": self.schema(*schema, Side::Read) },
+                    "application/x-www-form-urlencoded": {
+                        "schema": with_fields(self.schema(*schema, Side::Read), fields),
+                    },
                 },
             }),
             Body::Text => json!({
@@ -750,6 +757,27 @@ fn security(auth: &Auth) -> Value {
     }
 
     Value::Array(requirements)
+}
+
+/// The schema of a body with its fixed `fields`: an `allOf` of its type's and of an object that holds each field,
+/// its value a `const`, as the server reads it; the type's alone without any.
+fn with_fields(schema: Value, fields: &[Field]) -> Value {
+    if fields.is_empty() {
+        return schema;
+    }
+
+    let properties: Map<String, Value> = fields
+        .iter()
+        .map(|field| (field.name.to_owned(), json!({ "const": field.value })))
+        .collect();
+    let required: Vec<&str> = fields.iter().map(|field| field.name).collect();
+
+    json!({
+        "allOf": [
+            schema,
+            { "type": "object", "properties": properties, "required": required },
+        ],
+    })
 }
 
 /// A reference to a response under `components/responses`.

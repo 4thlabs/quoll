@@ -1,0 +1,5 @@
+error: a `Bytes` body is no struct or map, to which `#[body(...)]` adds its field: send a type of the application, as JSON or a `Form<T>`
+ --> tests/compile_fail/fixed_field_on_bytes.rs:8:16
+  |
+8 |         #[body("stream" = true)]
+  |                ^^^^^^^^

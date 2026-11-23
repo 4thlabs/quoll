@@ -28,5 +28,5 @@ note: required by a bound in `quoll::__private::client::Request::<'a>::json`
    |
    | impl<'a> Request<'a> {
 ...
-   |     pub fn json<T: Serialize>(mut self, body: T) -> Result<Self> {
+   |     pub fn json<T: Serialize>(mut self, body: T, fields: &'static [Field]) -> Result<Self> {
    |                    ^^^^^^^^^ required by this bound in `Request::<'a>::json`

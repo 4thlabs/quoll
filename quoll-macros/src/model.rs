@@ -12,12 +12,14 @@ use crate::known::{BodyKind, Known, ResultKind};
 use crate::path::{Segment, Template, literal_problem};
 
 mod auth;
+pub(crate) mod fields;
 pub(crate) mod headers;
 
 pub(crate) use auth::{
     Auth, Bounds, DeclaredKind, DeclaredScheme, Location, MAX_ALTERNATIVES, RouteAuth, Scheme,
     SchemeKind,
 };
+pub(crate) use fields::{BodyField, FieldValue};
 pub(crate) use headers::{Fixed, HeaderAttr, Headers, Value};
 
 /// The `///` comments of an item, one string per line, as rustc gives them (with their leading space).
@@ -148,6 +150,8 @@ pub(crate) struct Route {
     pub(crate) error: Option<Type>,
     /// The route's own `#[header(...)]`s, which win over its group's and its api's.
     pub(crate) headers: Headers,
+    /// The fixed fields of its body, `#[body("name" = value)]`, in the order they are written.
+    pub(crate) fields: Vec<BodyField>,
     /// The span of the route's string, where a mistake about the route as a whole is pointed.
     pub(crate) span: Span,
 }
@@ -389,6 +393,8 @@ pub(crate) struct RouteDecl {
     pub(crate) error: Option<Type>,
     /// The route's own `#[header(...)]`s.
     pub(crate) headers: Headers,
+    /// Its `#[body(...)]`s, each name once.
+    pub(crate) fields: Vec<BodyField>,
 }
 
 impl Route {
@@ -402,7 +408,7 @@ impl Route {
     /// whose argument says it comes from elsewhere, a path argument or a header that is not read from text, a query
     /// struct beside a query in the string or another query struct, a header name that is not one or that is read
     /// twice, an argument that is nowhere, a second body or a body the method does not take, a result that is not
-    /// supported.
+    /// supported, fixed fields on a route with no body or with a `Text` or `Bytes` body.
     pub(crate) fn resolve(decl: RouteDecl, group_auth: Option<&Auth>) -> Result<Self> {
         let RouteDecl {
             docs,
@@ -414,6 +420,7 @@ impl Route {
             auth,
             error,
             headers,
+            fields,
         } = decl;
         let template = Template::parse(&path)?;
 
@@ -435,6 +442,11 @@ impl Route {
             })
             .collect();
         let reply = Returned::read(method, reply)?;
+        let body = params.iter().find_map(|param| match param.kind {
+            ParamKind::Body(kind) => Some(kind),
+            _ => None,
+        });
+        fields::check_body(&fields, body)?;
 
         Ok(Self {
             docs,
@@ -447,6 +459,7 @@ impl Route {
             auth,
             error,
             headers,
+            fields,
             span: path.span(),
         })
     }
@@ -1220,6 +1233,7 @@ impl Api {
                     method: route.method,
                     shape: shape_of(&route.path),
                     path: &route.path,
+                    fields: &route.fields,
                     group: &group.name,
                     route: &route.name,
                 };
@@ -1368,6 +1382,7 @@ struct Seen<'a> {
     method: Method,
     shape: Vec<Segment>,
     path: &'a [Segment],
+    fields: &'a [BodyField],
     group: &'a Ident,
     route: &'a Ident,
 }
@@ -1378,12 +1393,16 @@ impl Seen<'_> {
     fn clash(&self, next: &Seen<'_>, span: Span) -> Option<Error> {
         let Self { group, route, .. } = self;
 
-        if self.method == next.method && self.shape == next.shape {
+        if self.method == next.method
+            && self.shape == next.shape
+            && !fields::tell_apart(self.fields, next.fields)
+        {
             return Some(Error::new(
                 span,
                 format!(
-                    "{} on this path is already the route `{group}::{route}`: a method and a path belong to one route",
-                    next.method.as_str()
+                    "{} on this path is already the route `{group}::{route}`: a method and a path belong to one route{}",
+                    next.method.as_str(),
+                    fields::why_not_apart(self.fields, next.fields),
                 ),
             ));
         }

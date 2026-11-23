@@ -313,8 +313,8 @@ A route returns what the API answers on a success, as any route does. Two cases 
   text or bytes, or a stream that ends at once. GitHub's `GET /user/starred/{owner}/{repo}` answers 204 when the user
   starred the repository, and 404 when not. A route `-> T`, whose `T` is a JSON value, answered with a 204 fails as an
   answer that is not its result, whose [`.response()`](client.md#the-whole-answer) keeps the status and the headers.
-- A route that an API answers in two shapes, JSON or a stream, is two routes: [Two answers on one
-  path](#two-answers-on-one-path) says how.
+- A route that an API answers in two shapes, JSON or a stream, as a field of its body says, is two routes of one
+  method and path: [Two answers on one path](#two-answers-on-one-path) says how.
 
 ```rust
 use std::fmt;
@@ -477,10 +477,10 @@ fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
 
 ## Two answers on one path
 
-Some APIs answer one method and path in two shapes, chosen by the request: Anthropic's `POST /v1/messages` answers a
-message in JSON, or server-sent events when its body says `"stream": true`. A method and a path belong to one route,
-so the second answer goes in a second api, in the same module, with the same headers and errors. It names the scheme
-of the first by its path, `crate::ApiKey`, and one client sends the key to both.
+Some APIs answer one method and path in two shapes, chosen by a field of the body: Anthropic's `POST /v1/messages`
+answers a message in JSON, or server-sent events when its body says `"stream": true`. Each answer is a route, and
+`#[body("stream" = ...)]` on each fixes the field that tells them apart, which the client adds to the body, as
+[Fixed fields of the body](contract.md#fixed-fields-of-the-body) says:
 
 ```rust,no_run
 use std::fmt;
@@ -499,9 +499,6 @@ pub struct MessageRequest {
     pub model: String,
     pub max_tokens: u32,
     pub messages: Vec<Input>,
-    /// `true` for the route of `AnthropicStreams`, which the caller sets.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub stream: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -574,20 +571,11 @@ rest::api! {
 
     #[auth(ApiKey)]
     pub group Messages {
+        #[body("stream" = false)]
         POST "/messages" => create(request: MessageRequest) -> Message;
-    }
-}
 
-rest::api! {
-    /// The routes of Anthropic's API that answer a stream where `Anthropic`'s answer JSON.
-    #[openapi(none)]
-    #[header("anthropic-version" = VERSION)]
-    #[error(AnthropicError)]
-    pub api AnthropicStreams = "/v1";
-
-    #[auth(crate::ApiKey)]
-    pub group Streams {
-        POST "/messages" => create(request: MessageRequest) -> Events<StreamEvent>;
+        #[body("stream" = true)]
+        POST "/messages" => stream(request: MessageRequest) -> Events<StreamEvent>;
     }
 }
 
@@ -595,8 +583,7 @@ rest::api! {
 async fn main() -> anyhow::Result<()> {
     let key = std::env::var("ANTHROPIC_API_KEY")?;
     let http = client::builder().with(client::key::<ApiKey>(key)).build_http()?;
-    let anthropic = Anthropic::client_with(http.clone(), "https://api.anthropic.com")?;
-    let streams = AnthropicStreams::client_with(http, "https://api.anthropic.com")?;
+    let anthropic = Anthropic::client_with(http, "https://api.anthropic.com")?;
 
     let request = MessageRequest {
         model: "claude-opus-5-5".into(),
@@ -605,7 +592,6 @@ async fn main() -> anyhow::Result<()> {
             role: "user".into(),
             content: "Name three Australian marsupials.".into(),
         }],
-        stream: false,
     };
 
     let message = anthropic
@@ -620,13 +606,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let mut events = streams
-        .streams()
-        .create(MessageRequest {
-            stream: true,
-            ..request
-        })
-        .await?;
+    let mut events = anthropic.messages().stream(request).await?;
 
     while let Some(event) = events.next().await {
         match event? {
@@ -642,20 +622,19 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-- Each api has its own client, and both share one `ClientWithMiddleware`, its connections and its middleware:
-  `key::<ApiKey>` sends the key to the routes of both, which take the same scheme, told by its type.
-- The caller sets `"stream": true` itself, on the route of the stream alone. Sent to the other route, the answer is
-  not its result, and the call fails.
+- `create` sends `"stream": false` and `stream` sends `"stream": true`: the caller never sets it, and
+  `MessageRequest` has no field of it. A field of the body's own of that name would be replaced, as the contract wins.
+- Two routes of one method and path compile in an api `#[openapi(none)]`, as a contract of another API is: its
+  document does not describe them yet.
 - Anthropic's `event: error`, a failure once the stream has begun, is an item as any other: the enum names it,
   `Error`, and the loop turns it into an error. `Other` is for the events the client skips, `ping` and those the API
   adds later, so that a new event breaks no client, never for an error.
 
-GitHub's media types, a JSON or a raw README on one path, and Open-Meteo's formats are written the same way.
-
 ## Several hosts
 
-An API served on several hosts, Open-Meteo's forecast and its geocoding, is an api per host, and the clients share
-one `ClientWithMiddleware`, as [Building a client](client.md#building-a-client) shows:
+An API served on several hosts, Open-Meteo's geocoding and its forecast, is one api, with a group per host, and a
+client of it per host, which share one `ClientWithMiddleware`, as [Building a client](client.md#building-a-client)
+shows:
 
 ```rust,no_run
 use std::fmt;
@@ -701,21 +680,15 @@ impl fmt::Display for OpenMeteoError {
 }
 
 rest::api! {
-    /// Open-Meteo's geocoding, at `https://geocoding-api.open-meteo.com`.
+    /// Open-Meteo's API, its geocoding at `https://geocoding-api.open-meteo.com` and its forecast at
+    /// `https://api.open-meteo.com`.
     #[openapi(none)]
     #[error(OpenMeteoError)]
-    pub api Geocoding = "/v1";
+    pub api OpenMeteo = "/v1";
 
     pub group Search {
         GET "/search?name={name}&count={count}" => search(name: String, count: Option<u8>) -> Places;
     }
-}
-
-rest::api! {
-    /// Open-Meteo's forecast, at `https://api.open-meteo.com`.
-    #[openapi(none)]
-    #[error(OpenMeteoError)]
-    pub api Weather = "/v1";
 
     pub group Forecasts {
         GET "/forecast?latitude={latitude}&longitude={longitude}&hourly={hourly}&forecast_days={days}"
@@ -729,8 +702,8 @@ async fn main() -> rest::Result<()> {
         .with(client::user_agent("quoll-guide"))
         .with(client::retry(3))
         .build_http()?;
-    let geocoding = Geocoding::client_with(http.clone(), "https://geocoding-api.open-meteo.com")?;
-    let weather = Weather::client_with(http, "https://api.open-meteo.com")?;
+    let geocoding = OpenMeteo::client_with(http.clone(), "https://geocoding-api.open-meteo.com")?;
+    let weather = OpenMeteo::client_with(http, "https://api.open-meteo.com")?;
 
     let places = geocoding.search().search("Hobart".into(), Some(1)).await?;
     let Some(hobart) = places.results.first() else {
@@ -750,6 +723,9 @@ async fn main() -> rest::Result<()> {
     Ok(())
 }
 ```
+
+Each client serves the group of its host: `geocoding.search()` on the geocoding's, `weather.forecasts()` on the
+forecast's.
 
 ## Pages
 

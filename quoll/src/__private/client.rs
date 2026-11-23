@@ -21,6 +21,7 @@ use serde_json::Value;
 use crate::__private::content_type::{
     self, FORM, JSON_LINES, OCTET_STREAM, PROBLEM, TEXT_UTF8, media_type_value,
 };
+use crate::__private::fields::{Field, With};
 use crate::__private::headers::{Fixed, RouteHeaders};
 use crate::__private::join::{self, Join};
 use crate::__private::known::{IsByteStream, IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
@@ -297,13 +298,18 @@ impl<'a> Request<'a> {
         Ok(self)
     }
 
-    /// Sets the body to the JSON of `body`.
+    /// Sets the body to the JSON of `body`, with the route's fixed `fields` added at its top.
     ///
     /// # Errors
     ///
-    /// When `body` cannot be written as JSON.
-    pub fn json<T: Serialize>(mut self, body: T) -> Result<Self> {
-        let body = serde_json::to_vec(&body).map_err(|error| {
+    /// When `body` cannot be written as JSON, or, with fields, is not a struct or a map.
+    pub fn json<T: Serialize>(mut self, body: T, fields: &'static [Field]) -> Result<Self> {
+        let written = if fields.is_empty() {
+            serde_json::to_vec(&body)
+        } else {
+            serde_json::to_vec(&With::new(&body, fields))
+        };
+        let body = written.map_err(|error| {
             Error::misuse(
                 format!(
                     "the body of `{}` cannot be written as JSON",
@@ -321,17 +327,22 @@ impl<'a> Request<'a> {
     }
 
     /// Sets the body to the `T` of `Form<T>`, written as a form, `application/x-www-form-urlencoded`, as the query
-    /// is.
+    /// is, with the route's fixed `fields` added to it.
     ///
     /// # Errors
     ///
-    /// When serde_html_form cannot write the form.
-    pub fn form<F>(mut self, body: F) -> Result<Self>
+    /// When serde_html_form cannot write the form, or, with fields, the `T` is not a struct or a map.
+    pub fn form<F>(mut self, body: F, fields: &'static [Field]) -> Result<Self>
     where
         F: IsForm,
         F::Value: Serialize,
     {
-        let body = serde_html_form::to_string(body.value()).map_err(|error| {
+        let written = if fields.is_empty() {
+            serde_html_form::to_string(body.value())
+        } else {
+            serde_html_form::to_string(With::new(body.value(), fields))
+        };
+        let body = written.map_err(|error| {
             Error::misuse(
                 format!(
                     "the body of `{}` cannot be written as a form",

@@ -99,6 +99,24 @@ pub(crate) fn is(headers: &HeaderMap, expected: &str, utf8: bool) -> bool {
     })
 }
 
+/// Whether `headers` say the body is JSON, as axum's `Json` reads it: one content type, `application/json` or an
+/// `application/...+json`, whatever its case and parameters.
+#[cfg_attr(
+    not(any(test, feature = "server")),
+    expect(dead_code, reason = "only the server reads a body")
+)]
+pub(crate) fn is_json(headers: &HeaderMap) -> bool {
+    let Some(value) = single(headers) else {
+        return false;
+    };
+    let essence = essence(value).to_ascii_lowercase();
+    let Some(subtype) = essence.strip_prefix("application/") else {
+        return false;
+    };
+
+    subtype == "json" || subtype.ends_with("+json")
+}
+
 /// The parameters of a content type, each cut at a `;` outside a quoted string, as the macro reads a fixed one:
 /// `profile="a;b"` is one.
 fn params(value: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -235,6 +253,16 @@ mod tests {
         );
 
         headers
+    }
+
+    #[test]
+    fn json_is_its_type_or_a_suffix_of_it_as_axum_reads_it() {
+        assert!(is_json(&headers("application/json")));
+        assert!(is_json(&headers("Application/JSON; charset=utf-8")));
+        assert!(is_json(&headers("application/merge-patch+json")));
+        assert!(!is_json(&headers("text/json")));
+        assert!(!is_json(&headers("application/jsonl")));
+        assert!(!is_json(&HeaderMap::new()));
     }
 
     #[test]

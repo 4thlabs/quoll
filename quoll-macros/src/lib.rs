@@ -4,6 +4,7 @@ mod client;
 mod descriptor;
 mod docs;
 mod expand;
+mod fields;
 mod headers;
 mod known;
 mod model;
@@ -49,6 +50,9 @@ use crate::syntax::{Contract, GroupContract};
 /// `#[header("name" = value)]` on the api, a group or a route fixes a header its requests send, the value a string or
 /// a `&str` constant's name: the nearest to a route wins, below an argument of the same header, `#[header("name" =
 /// none)]` leaves one of its parent's, and `#[header(none)]` all of them.
+///
+/// `#[body("name" = value)]` on a route fixes a field of its body, the value a bool, a number or a string, which the
+/// client adds and by which the server tells two routes of one method and path apart.
 ///
 /// A route is `METHOD "path?query" => function(arguments) -> Result;`, with no `->` for a route that returns nothing.
 /// An argument is a `{name}` of the path or a `key={name}` of the query by its name, a query struct as `query filter:
