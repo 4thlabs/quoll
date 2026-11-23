@@ -6,6 +6,7 @@ use quote::ToTokens;
 use syn::{Error, Ident, LitStr, Path, Result, Visibility, ext::IdentExt};
 
 use super::{Api, Docs, ErrorList, Group, Route, check_header_name, is_token, reach, shown_vis};
+use crate::path::is_plain;
 
 /// The most schemes an alternative takes: `#[auth(A | B | C | D)]`, which the crate implements for tuples of up to
 /// four.
@@ -234,8 +235,7 @@ impl DeclaredScheme {
                 DeclaredKind::Cookie(text)
             }
             "query" => {
-                let plain = |c: char| c.is_ascii_alphanumeric() || "-._~".contains(c);
-                if text.is_empty() || !text.chars().all(plain) {
+                if text.is_empty() || !text.chars().all(is_plain) {
                     return Err(Error::new(
                         value.span(),
                         format!(

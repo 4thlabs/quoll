@@ -132,11 +132,16 @@ fn parse_segment(text: &str) -> std::result::Result<Segment, String> {
     Ok(Segment::Literal(text.into()))
 }
 
+/// Whether `c` is one of the unreserved characters of RFC 3986, which every router and client keep as they are: ASCII
+/// letters, digits, `-`, `_`, `.` and `~`.
+pub(crate) fn is_plain(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~')
+}
+
 /// What is wrong with a literal segment, if anything. A router reads other characters as syntax of its own (`:x`, `*x`)
 /// or as escapes, so a literal is limited to the characters every router and client agree on.
 pub(crate) fn literal_problem(text: &str) -> Option<String> {
-    let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~');
-    if text.chars().all(plain) && text != "." && text != ".." {
+    if text.chars().all(is_plain) && text != "." && text != ".." {
         return None;
     }
 
@@ -188,28 +193,32 @@ fn parse_query_item(item: &str) -> std::result::Result<QueryItem, String> {
 /// that hold the same or nothing, `expand[]`, `filter[name]`, `a[b][c]`: the keys of Rails, Stripe and JSON:API, which
 /// serde_html_form reads and writes as any other, escaped as `%5B` and `%5D`, as a browser's form writes them.
 fn key_problem(key: &str) -> Option<String> {
-    let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~');
-    let (base, mut brackets) = key.split_at(key.find('[').unwrap_or(key.len()));
-    let mut well_formed = !base.is_empty() && literal_problem(base).is_none();
-    while well_formed && !brackets.is_empty() {
+    let problem = || {
+        Some(format!(
+            "`{key}` is not a plain key: a literal key holds ASCII letters, digits, `-`, `_`, `.` and `~`, and is not `.` or `..`, then may end in brackets that hold the same or nothing, as in `expand[]` or `filter[name]`"
+        ))
+    };
+    let (name, mut brackets) = key.split_at(key.find('[').unwrap_or(key.len()));
+
+    if name.is_empty() || literal_problem(name).is_some() {
+        return problem();
+    }
+
+    while !brackets.is_empty() {
         let inner = brackets
             .strip_prefix('[')
             .and_then(|rest| rest.split_once(']'));
         let Some((inside, rest)) = inner else {
-            well_formed = false;
-            break;
+            return problem();
         };
+        if !inside.is_empty() && literal_problem(inside).is_some() {
+            return problem();
+        }
 
-        well_formed = inside.chars().all(plain);
         brackets = rest;
     }
-    if well_formed {
-        return None;
-    }
 
-    Some(format!(
-        "`{key}` is not a plain key: a literal key holds ASCII letters, digits, `-`, `_`, `.` and `~`, is not `.` or `..`, and may end in brackets that hold the same or nothing, as in `expand[]` or `filter[name]`"
-    ))
+    None
 }
 
 fn valid_name(name: &str) -> std::result::Result<&str, String> {
@@ -366,6 +375,9 @@ mod tests {
             "a[b c]",
             "a[b%5D]",
             "..[x]",
+            "a[.]",
+            "a[..]",
+            "a[b][..]",
             "a[b]]",
         ] {
             assert!(
