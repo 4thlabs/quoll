@@ -946,6 +946,27 @@ impl Returned {
             .wraps
             .map(|what| wrapped(&ty, known.name, what))
             .transpose()?;
+
+        // A `Created<T>` or an `Accepted<T>` answers the JSON of its `T`, which a type of quoll's is not.
+        if kind.unwrapped
+            && let Some(inner) = &inner
+            && let Some(other) = Known::of(inner)
+        {
+            return Err(Error::new_spanned(
+                inner,
+                format!(
+                    "a `{wrapper}<T>` answers the JSON of its `T`, which a `{other}` is not: write the type of the JSON value, or return `-> {other}` with the status its handler gives, `Status::{status}`",
+                    wrapper = known.name,
+                    other = other.name,
+                    status = if known.name == "Created" {
+                        "CREATED"
+                    } else {
+                        "ACCEPTED"
+                    },
+                ),
+            ));
+        }
+
         let value = match &inner {
             Some(inner) if kind.unwrapped => inner.clone(),
             _ => ty.clone(),
