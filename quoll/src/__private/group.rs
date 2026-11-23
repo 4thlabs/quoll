@@ -32,7 +32,8 @@ pub struct GroupInfo {
     pub reach: u8,
     /// Its visibility as the contract writes it, `pub`, which a message shows.
     pub vis: &'static str,
-    /// Whether it names the shape of its errors, `#[error(E)]`, which it cannot take from an api with one.
+    /// Whether each of its routes has the shape of its errors named, `#[error(E)]` on the group or on the route: a
+    /// route with none takes no api's, and has problems.
     pub error: bool,
     /// Its routes, in the order the contract writes them.
     pub routes: &'static [RouteInfo],
@@ -618,6 +619,7 @@ const fn check_schemes(api: &ApiInfo, group: &GroupInfo, route: &RouteInfo) -> O
         if let Some(error) = check_arguments(group, route, name, place) {
             return Some(error);
         }
+
         let header = match place {
             Reads::Header(name) => Some(name),
             Reads::Cookie(_) => Some("Cookie"),

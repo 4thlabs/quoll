@@ -390,7 +390,8 @@ fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
 
 The request is the one `retry` is given: the headers of its route are there, as an `Idempotency-Key` the route takes
 as an argument, but not those added after `retry`, the credentials and what `on_request` puts in. Whatever the closure
-decides, a call is tried `times` more at most, and a request whose body is a stream of the application's is sent once.
+decides, a call is tried `times` more at most, and a request whose body is a stream of the application's is sent once,
+without calling the closure.
 
 ## reqwest's client
 

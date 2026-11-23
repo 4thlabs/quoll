@@ -16,6 +16,8 @@ use std::borrow::Cow;
 
 use http::{HeaderMap, HeaderValue, header};
 
+use crate::__private::headers;
+
 /// A JSON body.
 pub const JSON: &str = "application/json";
 
@@ -75,17 +77,31 @@ pub(crate) fn is(headers: &HeaderMap, expected: &str, utf8: bool) -> bool {
         return false;
     }
 
-    let other_charset = value
-        .split(';')
-        .skip(1)
-        .filter_map(|param| param.split_once('='))
-        .any(|(name, value)| {
-            let value = value.trim().trim_matches('"');
+    let other_charset = params(value.as_bytes()).any(|param| {
+        let Some(at) = param.iter().position(|&byte| byte == b'=') else {
+            return false;
+        };
+        let (name, value) = param.split_at(at);
+        let value = headers::unquoted(value[1..].trim_ascii());
 
-            name.trim().eq_ignore_ascii_case("charset") && !value.eq_ignore_ascii_case("utf-8")
-        });
+        name.trim_ascii().eq_ignore_ascii_case(b"charset")
+            && value.is_none_or(|value| !value.eq_ignore_ascii_case(b"utf-8"))
+    });
 
     !(utf8 && other_charset)
+}
+
+/// The parameters of a content type, each cut at a `;` outside a quoted string, as the macro reads a fixed one:
+/// `profile="a;b"` is one.
+fn params(value: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let (_, mut rest) = headers::split_param(value);
+
+    std::iter::from_fn(move || {
+        let (param, after) = headers::split_param(rest?);
+
+        rest = after;
+        Some(param)
+    })
 }
 
 /// The one content type of `headers`, when it is a media type: none when it is missing, given more than once, or not
@@ -277,6 +293,32 @@ mod tests {
             &headers("text/plain; charset=iso-8859-1"),
             "text/plain",
             false
+        ));
+    }
+
+    #[test]
+    fn a_parameter_is_read_as_the_macro_reads_a_fixed_one() {
+        // A `;` in a quoted string cuts no parameter: the charset is the string's.
+        assert!(is(
+            &headers(r#"application/json; profile="a;charset=latin1""#),
+            "application/json",
+            true
+        ));
+        assert!(!is(
+            &headers(r#"text/plain; note="a;b"; charset=latin1"#),
+            "text/plain",
+            true
+        ));
+        // A charset that is not a token or a closed quoted string is not UTF-8.
+        assert!(!is(
+            &headers(r#"text/plain; charset="utf-8\""#),
+            "text/plain",
+            true
+        ));
+        assert!(!is(
+            &headers(r#"text/plain; charset=utf-8""#),
+            "text/plain",
+            true
         ));
     }
 

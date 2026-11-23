@@ -92,7 +92,10 @@ use crate::rest::{Problem, Response, Result};
 /// `async move` block: its `.timeout` does nothing, and its `.response()` gives a 200 with no headers, or the error
 /// with the status it has, as an answer of that status, and an error with none, a call that got no answer, as it is. A
 /// 200 even for a route that the server answers 201 or 202: a fake has no contract's status to read. A fake of an api
-/// with `#[error(E)]` builds the error of an answer with [`rest::Error::answered`](crate::rest::Error::answered).
+/// with `#[error(E)]` builds the error of an answer with [`rest::Error::answered`](crate::rest::Error::answered), and
+/// one of a status alone with [`into_shape`](crate::rest::Error::into_shape). The `E` of such a future is the one its
+/// `Err` has: a block that only returns `Ok`, where no signature says the shape, names it,
+/// `async { Ok::<_, rest::Error>(3) }.timeout(duration)`.
 ///
 /// ```
 /// use quoll::rest::{self, Call};
@@ -119,6 +122,7 @@ use crate::rest::{Problem, Response, Result};
 ///     }
 /// }
 /// ```
+#[must_use = "a call does nothing until it is awaited"]
 pub trait Call<T, E = Problem>:
     IntoFuture<Output = Result<T, E>, IntoFuture: Send> + Send + Sized
 {

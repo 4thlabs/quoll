@@ -7,7 +7,7 @@
 //!   out of a service, a handler of the wrong signature, a body that is not `Deserialize`, a service that does not
 //!   authenticate.
 //! - `tests/compile_fail_client/`, built with the feature `client`: what only the client's checks, a fake of the wrong
-//!   signature, a result that is not `Deserialize`, `build` or `key` on the wrong type.
+//!   signature, a result that is not `Deserialize`, `build` or `key` on the wrong type, a call not awaited.
 //! - `tests/compile_fail_neither/`, built with neither feature: what each side would repeat a message of its own for.
 //!   A type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines` or `ByteStream` that is not
 //!   quoll's; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to

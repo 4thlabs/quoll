@@ -54,7 +54,8 @@ pub(crate) fn expand(cx: &Cx) -> TokenStream {
     );
     let group_reach = reach(vis);
     let shown = shown_vis(vis);
-    let error = group.error.is_some();
+    // A route with no `#[error]` of its own or its group's has problems, which it cannot take from an api.
+    let error = group.error.is_some() || group.routes.iter().all(|route| route.error.is_some());
     let routes = group.routes.iter().map(|route| route_info(group, route));
 
     quote! {
@@ -440,10 +441,11 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
     }
 }
 
-/// For a group of the list of an api with an `#[error(E)]`, a check that the group names the shape of its errors: a
-/// `rest::group!` writes its client's trait before any api lists it, and cannot take the api's.
+/// For a group of the list of an api with an `#[error(E)]`, a check that each route of the group has the shape of its
+/// errors named: a `rest::group!` writes its client's trait before any api lists it, and cannot take the api's. An api
+/// whose shape is the default, `#[error(rest::Problem)]`, needs none: a route with none has problems.
 fn takes_error(api: &Api, group: &GroupRef) -> Option<TokenStream> {
-    let error = api.error.as_ref()?;
+    let error = api.error.as_ref().filter(|error| !is_problem(error))?;
     let descriptor = group.descriptor();
     let shown = quote! { #error }.to_string().replace(' ', "");
     let message = LitStr::new(
@@ -460,6 +462,32 @@ fn takes_error(api: &Api, group: &GroupRef) -> Option<TokenStream> {
             #message
         );
     })
+}
+
+/// Whether `ty` names quoll's `Problem`, the default shape: `Problem`, `rest::Problem`, `quoll::rest::Problem` or
+/// `::quoll::rest::Problem`, as the macro can tell it by its path alone.
+fn is_problem(ty: &syn::Type) -> bool {
+    let syn::Type::Path(syn::TypePath { qself: None, path }) = ty else {
+        return false;
+    };
+    let names: Vec<String> = path
+        .segments
+        .iter()
+        .map(|segment| {
+            if !segment.arguments.is_none() {
+                return String::new();
+            }
+
+            segment.ident.unraw().to_string()
+        })
+        .collect();
+
+    match names.as_slice() {
+        [problem] => problem == "Problem" && path.leading_colon.is_none(),
+        [rest, problem] => rest == "rest" && problem == "Problem" && path.leading_colon.is_none(),
+        [quoll, rest, problem] => quoll == "quoll" && rest == "rest" && problem == "Problem",
+        _ => false,
+    }
 }
 
 /// For each group of the list, a check that its path names a group: its descriptor, named as its path names it, from

@@ -262,3 +262,15 @@ async fn an_internal_error_logs_no_key_of_a_reqwest_error() {
         assert!(shown.contains("/api/keyed"), "{shown}");
     }
 }
+
+#[tokio::test]
+async fn retry_leaves_the_url_of_a_request_of_no_contract_whole() {
+    let url = format!("{}/feed?page=2", dead_url().await);
+    let http = ClientBuilder::new(reqwest::Client::new())
+        .with(quoll::client::retry(0))
+        .build();
+
+    let error = http.get(&url).send().await.expect_err("no response");
+
+    assert_eq!(error.url().map(reqwest::Url::as_str), Some(url.as_str()));
+}

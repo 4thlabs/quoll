@@ -300,8 +300,14 @@ impl Repos for FakeRepos {
         async { Ok(vec!["rust".to_owned()]) }
     }
 
-    fn token(&self, _code: String) -> impl Call<String, OAuthError> {
-        async { Ok("token".to_owned()) }
+    fn token(&self, code: String) -> impl Call<String, OAuthError> {
+        async move {
+            if code.is_empty() {
+                return Err(Error::bad_request("no code").into_shape());
+            }
+
+            Ok("token".to_owned())
+        }
     }
 }
 
@@ -321,6 +327,11 @@ async fn a_fake_answers_an_error_of_the_shape() -> Result<()> {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert!(response.into_value().is_err());
     assert_eq!(repos.get("quoll".into()).await?.name, "quoll");
+
+    let refused = repos.token(String::new()).await.expect_err("a 400");
+
+    assert_eq!(refused.status(), Some(StatusCode::BAD_REQUEST));
+    assert!(refused.detail().is_none());
     Ok(())
 }
 

@@ -232,7 +232,7 @@ An api that asks every request for headers of its own, a version or a media type
 `#[header("name" = value)]`, on the api, a group or a route:
 
 ```rust
-use quoll::rest::{self, Bytes};
+use quoll::rest::{self, Bytes, Text};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -255,9 +255,10 @@ rest::api! {
         #[header("Accept" = "application/vnd.github.raw+json")]
         GET "/repos/{owner}/{repo}/readme" => readme(owner: String, repo: String) -> Bytes;
 
-        // Leaves one header of the api.
+        // Leaves two headers of the api: a `Text` is read from `text/plain`.
+        #[header("Accept" = none)]
         #[header("X-GitHub-Api-Version" = none)]
-        GET "/zen" => zen() -> String;
+        GET "/zen" => zen() -> Text;
     }
 
     // Leaves every header of the api.
@@ -272,10 +273,13 @@ rest::api! {
   call is an argument, `header("Stripe-Account") account: Option<String>`, and one of a deployment, a signature or a
   tenant, goes through `client::on_request`.
 - A group or a route takes its parent's headers, and the nearest to the call wins: an argument of the same header the
-  caller gives, then the route, the group and the api. quoll's own `Accept` comes last.
+  caller gives, then the route, the group and the api. quoll's own `Accept` comes last: a route whose result is
+  `Text`, `Events` or `JsonLines` takes `#[header("Accept" = none)]` under an api that fixes one, as `/zen` does above,
+  or its answer, of the api's media type, is not its result.
 - `#[header("X" = none)]` leaves one header the group or the route would take, `#[header(none)]` all of them; the
   headers written beside it are its own. A `none` never removes what quoll writes: `#[header("Accept" = none)]` gives
-  the route quoll's `Accept` back. In the api's block, a `none` on a header the parent does not fix does not compile.
+  the route quoll's `Accept` back. In the api's block, a `none` on a header the parent does not fix does not compile,
+  and in any block, a route's `none` on a header its group already leaves.
 - A `Content-Type` keeps the media type of the body, adding a parameter: `application/json; charset=utf-8` on a JSON
   body. A request with no body sends none.
 - A group of another block takes the headers of the api that lists it, and any api may list it: a `none` of the group

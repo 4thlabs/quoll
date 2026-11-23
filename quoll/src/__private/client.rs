@@ -6,7 +6,6 @@ use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
 use std::future::{Future, IntoFuture};
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +26,7 @@ use crate::__private::join::{self, Join};
 use crate::__private::known::{IsByteStream, IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
 use crate::__private::read::{Deserialized, Read};
 use crate::__private::text;
-use crate::client::CallTimeout;
+use crate::client::{CallTimeout, KeepsDeadline};
 use crate::rest::{self, Error, Problem, Result, Route};
 
 mod redact;
@@ -474,15 +473,15 @@ impl<'a> Request<'a> {
     /// The answer with its status, its detail of the shape `E` and the first 64 KiB of its body, when its status is
     /// not a success; an error with no status when the request got no response or the body of an error could not be
     /// read.
-    async fn send<E: Shape>(self) -> Result<Answer, E> {
+    async fn send<E>(self, shape: Shaped<E>) -> Result<Answer, E> {
         let route = self.route;
-        let response = self.dispatch().await.map_err(Error::cast)?;
+        let response = self.dispatch().await.map_err(Error::into_shape)?;
 
         if response.status().is_success() {
             return Ok(Answer { response, route });
         }
 
-        Err(answered_error(response, route).await?)
+        Err(answered_error(response, route, shape).await?)
     }
 
     /// Sends the request, with the route in its extensions, and its deadline when the call has one, and gives the
@@ -491,8 +490,9 @@ impl<'a> Request<'a> {
     /// The deadline of a call is the request's own, which [`client::retry`](crate::client::retry) and
     /// [`client::redirects`](crate::client::redirects) copy, and the one [`client::timeout`](crate::client::timeout)
     /// takes in place of its own. On a stream, it bounds the head of the answer alone: `client::timeout`, which
-    /// [`client::builder`](crate::client::builder) always puts, keeps it for each attempt; a chain without it, built
-    /// otherwise or with no middleware, has it kept here, for the whole call.
+    /// [`client::builder`](crate::client::builder) always puts, keeps it for each attempt, which the builder's chain
+    /// says before the request is sent, with a mark on each request; a chain without the mark, built otherwise or with
+    /// no middleware, has it kept here, for the whole call, unless a `client::timeout` of its own has kept it by then.
     ///
     /// # Errors
     ///
@@ -537,6 +537,7 @@ impl<'a> Request<'a> {
         };
 
         let deadline = CallTimeout::new(duration);
+        let kept = request.extensions().get::<KeepsDeadline>().is_some();
 
         request = request.with_extension(deadline.clone());
 
@@ -545,7 +546,7 @@ impl<'a> Request<'a> {
         }
 
         let sent = request.send();
-        let answer = if route.streams {
+        let answer = if route.streams && !kept {
             deadline.kept_or_bounding(sent).await
         } else {
             sent.await
@@ -560,14 +561,15 @@ impl<'a> Request<'a> {
 /// `Deserialize`, `Display` and `Debug`, and is `Send`, `Sync` and `'static`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not the shape of an api's errors",
-    label = "`#[error(...)]` names a type that implements `Deserialize`, `Display` and `Debug`",
+    label = "`#[error(...)]` names a type that implements `Deserialize`, `Display` and `Debug`, and is `Send`, `Sync` and `'static`",
     note = "the client reads the body of an error answer as the JSON of the type, and its `Display` gives the error's message"
 )]
 pub trait Shape: fmt::Debug + Send + Sync + Sized + 'static {
     /// The detail an answer with `headers` and `body`, of an error status, holds, when it is one.
     fn read(headers: &HeaderMap, body: &[u8]) -> Option<Self>;
 
-    /// What the error of the answer says after its status: `another api answered 401: Bad credentials`.
+    /// What the error of the answer says after its status: `another api answered 401: Bad credentials`. `None` when
+    /// it says nothing, so that the error says its status alone.
     fn message(&self) -> Option<String>;
 }
 
@@ -583,12 +585,14 @@ impl Shape for Problem {
     }
 
     fn message(&self) -> Option<String> {
-        self.detail().map(str::to_owned)
+        self.detail()
+            .filter(|detail| !detail.is_empty())
+            .map(str::to_owned)
     }
 }
 
 /// Any other shape is read as JSON, whatever the answer's content type, as APIs label their errors in many ways, and
-/// says its `Display`.
+/// says its `Display`, unless it is empty.
 impl<E> Shape for E
 where
     E: DeserializeOwned + fmt::Display + fmt::Debug + Send + Sync + 'static,
@@ -598,12 +602,33 @@ where
     }
 
     fn message(&self) -> Option<String> {
-        Some(self.to_string())
+        Some(self.to_string()).filter(|message| !message.is_empty())
     }
 }
 
-/// Checks at compile time that `E`, which an `#[error(E)]` names, is the shape of an api's errors.
-pub const fn is_shape<E: Shape>() {}
+/// How the client reads the errors of the shape `E`: the detail an answer holds, and what it says, as [`Shape`] has
+/// them. The client of a group names one per shape its routes have, once, so that a type that is not a shape is one
+/// error, on its `#[error(...)]`, rather than one per route, which a bound of each call would give.
+pub struct Shaped<E> {
+    read: fn(&HeaderMap, &[u8]) -> Option<E>,
+    message: fn(&E) -> Option<String>,
+}
+
+/// The reading of `E`, which checks at compile time that it is the shape of an api's errors.
+pub const fn shaped<E: Shape>() -> Shaped<E> {
+    Shaped {
+        read: E::read,
+        message: E::message,
+    }
+}
+
+impl<E> Clone for Shaped<E> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<E> Copy for Shaped<E> {}
 
 /// The error of an answer with an error status, or a redirection: its status, its detail when its body is an `E`, and
 /// the first 64 KiB of its body.
@@ -611,18 +636,19 @@ pub const fn is_shape<E: Shape>() {}
 /// # Errors
 ///
 /// An error with no status when the body cannot be read.
-async fn answered_error<E: Shape>(
+async fn answered_error<E>(
     response: reqwest::Response,
     route: &Route,
+    shape: Shaped<E>,
 ) -> Result<Error<E>, E> {
     let status = response.status();
     let version = response.version();
     let headers = response.headers().clone();
     let body = read_up_to_limit(response).await.map_err(|error| {
-        no_answer(route, "got an error whose body cannot be read", error).cast()
+        no_answer(route, "got an error whose body cannot be read", error).into_shape()
     })?;
-    let detail = E::read(&headers, &body);
-    let message = detail.as_ref().and_then(Shape::message);
+    let detail = (shape.read)(&headers, &body);
+    let message = detail.as_ref().and_then(shape.message);
     let answer = detail.map(|detail| rest::Response::from_parts(status, version, headers, detail));
 
     Ok(Error::upstream(status, answer, Some(body), message))
@@ -631,29 +657,36 @@ async fn answered_error<E: Shape>(
 /// A call of a route, described and not sent yet: the request the route's arguments write, or why they could not,
 /// and how its answer is read, its errors of the shape `E`. It is what each method of a group's client returns, a
 /// [`rest::Call`].
+#[must_use = "a call does nothing until it is awaited"]
 pub struct Pending<'a, T, E = Problem> {
     request: Result<Request<'a>>,
     read: fn(Answer) -> Read<T>,
-    shape: PhantomData<fn() -> E>,
+    shape: Shaped<E>,
 }
 
 impl<'a, T, E> Pending<'a, T, E> {
-    /// The call that sends `request`, once written, and reads its answer with `read`, an error's as an `E`.
-    pub fn new(request: Result<Request<'a>>, read: fn(Answer) -> Read<T>) -> Self {
+    /// The call that sends `request`, once written, and reads its answer with `read`, an error's with `shape`.
+    pub fn new(
+        request: Result<Request<'a>>,
+        read: fn(Answer) -> Read<T>,
+        shape: Shaped<E>,
+    ) -> Self {
         Self {
             request,
             read,
-            shape: PhantomData,
+            shape,
         }
     }
-}
 
-impl<T, E: Shape> Pending<'_, T, E> {
     /// Sends the call, and reads its answer as the route's result when its status is a success.
     async fn send(self) -> Result<T, E> {
-        let answer = self.request.map_err(Error::cast)?.send().await?;
+        let answer = self
+            .request
+            .map_err(Error::into_shape)?
+            .send(self.shape)
+            .await?;
 
-        (self.read)(answer).await.map_err(Error::cast)
+        (self.read)(answer).await.map_err(Error::into_shape)
     }
 }
 
@@ -665,7 +698,7 @@ impl<T, E> fmt::Debug for Pending<'_, T, E> {
     }
 }
 
-impl<'a, T: Send + 'static, E: Shape> IntoFuture for Pending<'a, T, E> {
+impl<'a, T: Send + 'static, E: Send + 'static> IntoFuture for Pending<'a, T, E> {
     type Output = Result<T, E>;
     type IntoFuture = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
@@ -674,12 +707,16 @@ impl<'a, T: Send + 'static, E: Shape> IntoFuture for Pending<'a, T, E> {
     }
 }
 
-impl<T: Send + 'static, E: Shape> rest::Call<T, E> for Pending<'_, T, E> {
+impl<T: Send + 'static, E: Send + 'static> rest::Call<T, E> for Pending<'_, T, E> {
     async fn response(self) -> Result<rest::Response<Result<T, E>>, E> {
-        let Self { request, read, .. } = self;
-        let request = request.map_err(Error::cast)?;
+        let Self {
+            request,
+            read,
+            shape,
+        } = self;
+        let request = request.map_err(Error::into_shape)?;
         let route = request.route;
-        let response = request.dispatch().await.map_err(Error::cast)?;
+        let response = request.dispatch().await.map_err(Error::into_shape)?;
         let status = response.status();
         let version = response.version();
         let headers = response.headers().clone();
@@ -687,9 +724,9 @@ impl<T: Send + 'static, E: Shape> rest::Call<T, E> for Pending<'_, T, E> {
         let body = if status.is_success() {
             Ok(read(Answer { response, route })
                 .await
-                .map_err(Error::cast)?)
+                .map_err(Error::into_shape)?)
         } else {
-            Err(answered_error(response, route).await?)
+            Err(answered_error(response, route, shape).await?)
         };
 
         Ok(rest::Response::from_parts(status, version, headers, body))
@@ -1245,5 +1282,40 @@ mod tests {
         )));
         assert!(!is_problem(&headers("application/json")));
         assert!(!is_problem(&HeaderMap::new()));
+    }
+
+    /// A shape of another API's whose `Display` is its `message`.
+    #[derive(Debug, serde::Deserialize)]
+    struct Said {
+        message: String,
+    }
+
+    impl fmt::Display for Said {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.message)
+        }
+    }
+
+    #[test]
+    fn a_shape_that_says_nothing_has_no_message() {
+        let said = |message: &str| Said {
+            message: message.to_owned(),
+        };
+        let problem = |body: &[u8]| read_problem(body).expect("an object");
+
+        assert_eq!(
+            said("Bad credentials").message().as_deref(),
+            Some("Bad credentials")
+        );
+        assert_eq!(said("").message(), None);
+        assert_eq!(
+            problem(br#"{"detail": "gone"}"#).message().as_deref(),
+            Some("gone")
+        );
+        assert_eq!(problem(br#"{"detail": ""}"#).message(), None);
+        assert_eq!(
+            Error::answered(StatusCode::NOT_FOUND, said("")).to_string(),
+            "another api answered 404"
+        );
     }
 }

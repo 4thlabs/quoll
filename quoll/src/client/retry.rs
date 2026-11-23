@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use backon::{BackoffBuilder, ExponentialBuilder};
-use http::header::RETRY_AFTER;
+use http::header::{DATE, RETRY_AFTER};
 use http::{Extensions, HeaderMap, Method, StatusCode};
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next};
@@ -77,6 +77,9 @@ impl Retrying {
     /// [`Attempt::retry_after`] reads it from the answer. An attempt past the `times` of `retry` is never made: the
     /// last answer is the call's.
     ///
+    /// It is not called for a request whose body cannot be sent twice, a stream of the application's own: that
+    /// request is sent once, and its answer is the call's.
+    ///
     /// ```no_run
     /// use http::{Method, StatusCode};
     /// use quoll::client::{self, Attempt, Retry};
@@ -109,7 +112,7 @@ impl Retrying {
     /// Sets the longest wait [`Attempt::retry_after`] takes from a server, one minute unless set: a longer
     /// `Retry-After` is waited for that long only.
     ///
-    /// ```no_run
+    /// ```
     /// use std::time::Duration;
     ///
     /// use http::StatusCode;
@@ -148,12 +151,14 @@ impl Retrying {
             .with_max_times(usize::try_from(self.times).unwrap_or(usize::MAX))
             .build();
         let mut number = 1;
+        let contract = extensions.get::<Route>().is_some();
 
         loop {
             let mut result = next.clone().run(sent, extensions).await;
 
-            // The error the closure is given shows no key of a query scheme added after `retry`, as the call's own.
-            if let Err(error) = &mut result {
+            // The error the closure is given shows no key of a query scheme added after `retry`, as the call's own; a
+            // request that did not come from a contract keeps its URL whole, as reqwest gives it.
+            if contract && let Err(error) = &mut result {
                 strip_urls(error);
             }
 
@@ -313,6 +318,9 @@ impl Attempt<'_> {
     /// [`max_wait`](Retrying::max_wait): [`Retry::After`] that wait, or [`Retry::Backoff`] for an answer with no
     /// `Retry-After` that can be read, or an attempt with no answer.
     ///
+    /// A date is measured from the answer's `Date`, the server's clock, or from the client's when it has none, so that
+    /// a client whose clock is ahead waits as long as the server asks; a date that is not after it is the backoff.
+    ///
     /// It says when to try again, not whether the request may be sent twice: a `429` or a `503` with a `Retry-After`
     /// says the server did not act on it, which the closure of [`when`](Retrying::when) tells by the status.
     pub fn retry_after(&self) -> Retry {
@@ -331,12 +339,25 @@ impl Attempt<'_> {
         let wait = if seconds {
             value.parse().map_or(self.max_wait, Duration::from_secs)
         } else if let Ok(at) = httpdate::parse_http_date(value) {
-            at.duration_since(SystemTime::now()).unwrap_or_default()
+            match at.duration_since(self.answered_at()) {
+                Ok(wait) if !wait.is_zero() => wait,
+                _ => return Retry::Backoff,
+            }
         } else {
             return Retry::Backoff;
         };
 
         Retry::After(wait.min(self.max_wait))
+    }
+
+    /// When the server answered, by its clock: the answer's `Date`, or the client's clock when it has none that can be
+    /// read.
+    fn answered_at(&self) -> SystemTime {
+        self.headers()
+            .and_then(|headers| headers.get(DATE))
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| httpdate::parse_http_date(value.trim()).ok())
+            .unwrap_or_else(SystemTime::now)
     }
 }
 
@@ -402,10 +423,19 @@ mod tests {
 
     /// The decision of `retry_after` on an answer whose `Retry-After` is `value`, or that has none.
     fn after(value: Option<&str>, max_wait: Duration) -> Retry {
+        dated(value, None, max_wait)
+    }
+
+    /// The decision of `retry_after` on an answer whose `Retry-After` is `value`, or that has none, and whose `Date`
+    /// is `date`, or that has none.
+    fn dated(value: Option<&str>, date: Option<&str>, max_wait: Duration) -> Retry {
         let mut answer = http::Response::builder().status(StatusCode::TOO_MANY_REQUESTS);
 
         if let Some(value) = value {
             answer = answer.header(RETRY_AFTER, value);
+        }
+        if let Some(date) = date {
+            answer = answer.header(DATE, date);
         }
 
         let result = Ok(Response::from(answer.body("").expect("an answer")));
@@ -448,10 +478,28 @@ mod tests {
     }
 
     #[test]
-    fn retry_after_a_date_past_is_no_wait() {
+    fn retry_after_a_date_past_is_the_backoff() {
         assert_eq!(
             after(Some("Wed, 21 Oct 2015 07:28:00 GMT"), MAX_WAIT),
-            Retry::After(Duration::ZERO)
+            Retry::Backoff
+        );
+    }
+
+    #[test]
+    fn retry_after_a_date_is_measured_from_the_answers_date() {
+        // A server whose clock is a minute behind the client's asks for a wait of 20 s.
+        let now = SystemTime::now() - Duration::from_secs(60);
+        let date = httpdate::fmt_http_date(now);
+        let at = httpdate::fmt_http_date(now + Duration::from_secs(20));
+
+        assert_eq!(
+            dated(Some(&at), Some(&date), MAX_WAIT),
+            Retry::After(Duration::from_secs(20))
+        );
+        assert_eq!(
+            dated(Some(&date), Some(&date), MAX_WAIT),
+            Retry::Backoff,
+            "a date that is the answer's own"
         );
     }
 

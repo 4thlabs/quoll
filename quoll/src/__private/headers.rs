@@ -92,11 +92,8 @@ pub const fn keeps_media_type(value: &str, media_type: &str) -> bool {
             return false;
         }
 
-        let value = match value {
-            [b'"', inner @ .., b'"'] => inner,
-            // A quoted string is closed.
-            [b'"', ..] => return false,
-            _ => value,
+        let Some(value) = unquoted(value) else {
+            return false;
         };
 
         if same_ascii(name, b"charset") && !same_ascii(value, b"utf-8") {
@@ -108,9 +105,40 @@ pub const fn keeps_media_type(value: &str, media_type: &str) -> bool {
     true
 }
 
+/// The text of a parameter's value: a token, which holds no quote, or what a quoted string holds, whose last quote
+/// closes it and whose quotes inside are escaped, `"a \" b"`. `None` for any other, a quoted string left open, or
+/// closed by an escaped quote, `"\"`, or a token with a quote in it.
+pub(crate) const fn unquoted(value: &[u8]) -> Option<&[u8]> {
+    let [b'"', inner @ ..] = value else {
+        let mut i = 0;
+        while i < value.len() {
+            if value[i] == b'"' {
+                return None;
+            }
+            i += 1;
+        }
+
+        return Some(value);
+    };
+
+    let mut i = 0;
+    while i < inner.len() {
+        match inner[i] {
+            // A quoted pair, `\"`, is one character of the string.
+            b'\\' => i += 1,
+            b'"' if i == inner.len() - 1 => return Some(inner.split_at(i).0),
+            b'"' => return None,
+            _ => {}
+        }
+        i += 1;
+    }
+
+    None
+}
+
 /// `bytes` up to the first `;` outside a quoted string, as in `profile="a;b"`, and what follows it, `None` when there
 /// is none.
-const fn split_param(bytes: &[u8]) -> (&[u8], Option<&[u8]>) {
+pub(crate) const fn split_param(bytes: &[u8]) -> (&[u8], Option<&[u8]>) {
     let mut quoted = false;
     let mut i = 0;
 
@@ -234,6 +262,30 @@ mod tests {
             "application/json; profile=\"open",
             "application/json"
         ));
+        assert!(!keeps_media_type(
+            r#"application/json; x="\""#,
+            "application/json"
+        ));
+        assert!(!keeps_media_type(
+            r#"application/json; x=a"b"#,
+            "application/json"
+        ));
+        assert!(!keeps_media_type(
+            r#"application/json; x="a"b""#,
+            "application/json"
+        ));
+    }
+
+    #[test]
+    fn a_value_is_a_token_or_a_closed_quoted_string() {
+        assert_eq!(unquoted(b"utf-8"), Some(&b"utf-8"[..]));
+        assert_eq!(unquoted(br#""utf-8""#), Some(&b"utf-8"[..]));
+        assert_eq!(unquoted(br#""a \" ; b""#), Some(&br#"a \" ; b"#[..]));
+        assert_eq!(unquoted(br#""""#), Some(&b""[..]));
+        assert_eq!(unquoted(br#""open"#), None);
+        assert_eq!(unquoted(br#""\""#), None, "closed by an escaped quote");
+        assert_eq!(unquoted(br#""a"b""#), None, "a quote inside");
+        assert_eq!(unquoted(br#"a"b"#), None, "a quote in a token");
     }
 
     #[test]

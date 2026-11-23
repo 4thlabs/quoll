@@ -46,8 +46,15 @@ pub type Result<T, E = Problem> = std::result::Result<T, Error<E>>;
 /// A call that got no answer to read, a connection refused or an answer that is not the route's result, has no
 /// status. Its sources show the URL of the call by its origin and its path alone, without its credentials and its
 /// query, where a query scheme sends its key: the errors of reqwest and of reqwest-middleware, as the client and its
-/// middleware give them, are stripped. A reqwest error that a middleware of the application's own wraps in an error
-/// type of its own is out of reach: the middleware strips it, with `reqwest::Error::without_url`.
+/// middleware give them, are stripped. A reqwest error that a middleware of the application's, or of another crate,
+/// wraps in an error type of its own, as reqwest-retry's `RetryError`, is out of reach, in the error and in the span
+/// of [`client::trace`]: the middleware strips it, with `reqwest::Error::without_url`, or [`client::retry`] takes the
+/// place of reqwest-retry's.
+///
+#[cfg_attr(feature = "client", doc = "[`client::trace`]: crate::client::trace")]
+#[cfg_attr(feature = "client", doc = "[`client::retry`]: crate::client::retry")]
+#[cfg_attr(not(feature = "client"), doc = "[`client::trace`]: crate#features")]
+#[cfg_attr(not(feature = "client"), doc = "[`client::retry`]: crate#features")]
 ///
 /// A handler that returns an error its own client received answers 502, or 500 when it is the handler's own mistake,
 /// a URL that is not one: the status of another API is not passed on as this one's. An error of another shape goes up
@@ -167,7 +174,8 @@ impl<E> Error<E> {
     /// What another API answered with an error status, `detail`, as a fake of a group's client gives it: an error with
     /// `status`, whose [`response`](Error::response) has no headers, whose `Display` says the message of `detail`, and
     /// that has no [`body`](Error::body), as nothing came. It is for the shape of an api with `#[error(E)]`: a fake of
-    /// an api of problems returns [`Error::not_found`] and the others, with their status.
+    /// an api of problems returns [`Error::not_found`] and the others, with their status, and a fake of another shape
+    /// gives them its shape with [`into_shape`](Error::into_shape).
     ///
     /// ```
     /// use std::fmt;
@@ -197,10 +205,10 @@ impl<E> Error<E> {
     where
         E: fmt::Display,
     {
-        let message = detail.to_string();
+        let message = Some(detail.to_string()).filter(|message| !message.is_empty());
         let answer = Response::from_parts(status, Version::HTTP_11, HeaderMap::new(), detail);
 
-        Self::upstream(status, Some(answer), None, Some(message))
+        Self::upstream(status, Some(answer), None, message)
     }
 
     /// What another API answered with an error status: the answer with its detail when its body is an `E`, its body
@@ -219,9 +227,40 @@ impl<E> Error<E> {
         }))
     }
 
-    /// The error, as an error of the shape `F`: a call that got no answer as it is, and an answer, whose detail is
-    /// left, with its status, its body and its message.
-    pub(crate) fn cast<F>(self) -> Error<F> {
+    /// The error, as an error of the shape `F`: an error of a status, an internal one and a call that got no answer
+    /// as they are, and an answer, whose detail is left, with its status, its body and its message.
+    ///
+    /// A fake of an api with `#[error(F)]` so returns an error of a status alone, which has no detail, as an answer
+    /// whose body is not an `F`:
+    ///
+    /// ```
+    /// use std::fmt;
+    ///
+    /// use http::StatusCode;
+    /// use quoll::rest;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Debug, Deserialize)]
+    /// struct GitHubError {
+    ///     message: String,
+    /// }
+    ///
+    /// impl fmt::Display for GitHubError {
+    ///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///         f.write_str(&self.message)
+    ///     }
+    /// }
+    ///
+    /// let error: rest::Error<GitHubError> = rest::Error::not_found("no such repository").into_shape();
+    ///
+    /// assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
+    /// assert!(error.detail().is_none());
+    ///
+    /// let failed: rest::Error<GitHubError> = rest::Error::internal("the fake is down").into_shape();
+    ///
+    /// assert_eq!(failed.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
+    /// ```
+    pub fn into_shape<F>(self) -> Error<F> {
         Error(Box::new(match *self.0 {
             Repr::Problem { status, detail } => Repr::Problem { status, detail },
             Repr::Internal(source) => Repr::Internal(source),
@@ -302,7 +341,7 @@ where
     E: serde::de::DeserializeOwned + fmt::Display + fmt::Debug + Send + Sync + 'static,
 {
     fn from(error: Error<E>) -> Self {
-        error.cast()
+        error.into_shape()
     }
 }
 
@@ -494,7 +533,7 @@ mod tests {
         assert!(carried.detail().is_none(), "a shape that is not a problem");
 
         let failed: Error = Error::failed("got no response", None, StatusCode::BAD_GATEWAY)
-            .cast::<Shape>()
+            .into_shape::<Shape>()
             .into();
 
         assert_eq!(failed.status(), None);

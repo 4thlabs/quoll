@@ -199,6 +199,10 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                     "a scheme takes no `#[header(...)]`: put it on the api, a group or a route, whose requests send it",
                 ));
             }
+            // A `#[header(...)]` that does not parse says its own mistake too, where it would go elsewhere.
+            if let Err(error) = headers {
+                errors.push(error);
+            }
 
             match parse_scheme(input, docs, vis)? {
                 Ok(scheme) => schemes.push(scheme),
