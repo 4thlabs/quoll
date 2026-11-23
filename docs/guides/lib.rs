@@ -4,8 +4,9 @@
 //! A block that needs a network is `rust,no_run`, one of tests is `rust,test_harness`, so that its `#[tokio::test]`
 //! functions are compiled and run, and one that shows a mistake is `rust,compile_fail`.
 //!
-//! The README is read as `build.rs` writes it: a block of its own that follows `<!-- doctest NAME: WORD... -->` takes
-//! the preludes the comment names, hidden, which GitHub does not show.
+//! The README is read as `build.rs` writes it, into `OUT_DIR`: a block of its own that follows
+//! `<!-- doctest NAME: WORD... -->` takes the preludes the comment names, hidden, which GitHub does not show. A doctest
+//! of it that fails names that copy, whose lines are the README's: the test is named by the line of the comment.
 
 #[cfg(doctest)]
 #[doc = include_str!(concat!(env!("OUT_DIR"), "/README.md"))]

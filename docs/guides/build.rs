@@ -1,43 +1,53 @@
 //! Writes the README of the repository for the doctests, with the preludes its short blocks need.
 //!
-//! A Rust block of the README that follows a comment `<!-- doctest NAME: WORD... -->` takes, before its own lines and
-//! hidden as rustdoc hides `# ` lines, the code of each word in turn: a word ending in `.rs` is a file of `preludes/`,
-//! any other the lines of a block named so before it, without its own preludes. GitHub shows neither the comment nor
-//! the preludes, so that a block shows only what it is about, and compiles all the same.
+//! A Rust block of the README that follows a comment `<!-- doctest NAME: WORD... -->` begins with the code of each
+//! word in turn: a word ending in `.rs` is a file of `preludes/`, any other a block named so before it, without its
+//! own preludes. GitHub shows neither the comment nor the preludes, so that a block shows only what it is about, and
+//! compiles all the same.
+//!
+//! The preludes are one hidden line, a module of `include!`, written in the place of the comment, so that the lines of every
+//! block keep their numbers in the README: a doctest that fails is named by the line of its comment, and its errors
+//! point at the README's own lines.
 
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+type Error = Box<dyn std::error::Error>;
+
+fn main() -> Result<(), Error> {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let readme = manifest.join("../../README.md");
     let preludes = manifest.join("preludes");
+    let out = PathBuf::from(env::var("OUT_DIR")?);
 
     println!("cargo::rerun-if-changed={}", readme.display());
     println!("cargo::rerun-if-changed={}", preludes.display());
 
-    let written = with_preludes(&fs::read_to_string(&readme)?, &preludes)?;
-    let out = PathBuf::from(env::var("OUT_DIR")?);
+    let written = with_preludes(&fs::read_to_string(&readme)?, &preludes, &out)?;
 
     fs::write(out.join("README.md"), written)?;
     Ok(())
 }
 
-/// The Markdown, each block that follows a `doctest` comment preceded by its preludes, hidden.
-fn with_preludes(markdown: &str, preludes: &Path) -> Result<String, Box<dyn std::error::Error>> {
+/// The Markdown, each block that follows a `doctest` comment beginning with its preludes, hidden. The code of each
+/// such block is written to `out`, as `NAME.rs`, for the blocks after it.
+fn with_preludes(markdown: &str, preludes: &Path, out: &Path) -> Result<String, Error> {
     let mut written = String::new();
     let mut named = HashMap::new();
     let mut lines = markdown.lines();
 
     while let Some(line) = lines.next() {
-        written.push_str(line);
-        written.push('\n');
-
         let Some((name, words)) = doctest(line) else {
+            written.push_str(line);
+            written.push('\n');
             continue;
         };
+
+        if named.contains_key(name) {
+            return Err(format!("`{line}`: a block before it is named `{name}` already").into());
+        }
 
         let fence = lines.next().unwrap_or_default();
 
@@ -45,53 +55,90 @@ fn with_preludes(markdown: &str, preludes: &Path) -> Result<String, Box<dyn std:
             return Err(format!("`{line}` is not followed by a Rust block").into());
         }
 
-        written.push_str(fence);
-        written.push('\n');
+        let mut included = Vec::new();
 
         for word in words.split_whitespace() {
-            let code = prelude(word, preludes, &named)
+            let path = prelude(word, preludes, &named)
                 .map_err(|error| format!("`{line}` names `{word}`: {error}"))?;
 
-            for hidden in code.lines() {
-                written.push_str(if hidden.is_empty() { "#" } else { "# " });
-                written.push_str(hidden);
-                written.push('\n');
-            }
+            included.push(format!("include!({:?});", path.display().to_string()));
         }
 
-        let mut code = String::new();
+        // The fence takes the comment's line, and the preludes the fence's: the code keeps its lines. A module holds
+        // them: rustdoc puts a block without `main` in a function, where `include!` reads no items.
+        written.push_str(fence);
+        written.push('\n');
+        written.push_str(&format!(
+            "# mod preludes {{ {} }} use preludes::*;\n",
+            included.join(" ")
+        ));
 
-        for line in lines.by_ref() {
-            written.push_str(line);
-            written.push('\n');
+        let code =
+            block(&mut lines, fence, &mut written).map_err(|error| format!("`{line}`: {error}"))?;
+        let path = out.join(format!("{name}.rs"));
 
-            if line == "```" {
-                break;
-            }
-
-            code.push_str(line);
-            code.push('\n');
-        }
-
-        named.insert(name.to_owned(), code);
+        fs::write(&path, code)?;
+        named.insert(name.to_owned(), path);
     }
 
     Ok(written)
 }
 
-/// The code a word of a `doctest` comment names: a file of `preludes/`, or a block named before it.
+/// The code of a block, up to the fence that closes `fence`, written to `written` with that fence.
+fn block<'a>(
+    lines: &mut impl Iterator<Item = &'a str>,
+    fence: &str,
+    written: &mut String,
+) -> Result<String, Error> {
+    let ticks = fence.len() - fence.trim_start_matches('`').len();
+    let mut code = String::new();
+
+    for line in lines {
+        written.push_str(line);
+        written.push('\n');
+
+        if closes(line, ticks) {
+            return Ok(code);
+        }
+
+        // rustdoc would hide it, and GitHub show it: what a block hides goes in its preludes.
+        let hidden = line.trim_start();
+
+        if hidden == "#" || hidden.starts_with("# ") {
+            return Err(format!("its line `{line}` is one rustdoc hides").into());
+        }
+
+        code.push_str(line);
+        code.push('\n');
+    }
+
+    Err("its block is not closed".into())
+}
+
+/// Whether `line` closes a fence of `ticks` backticks: as many or more, indented by three spaces at most.
+fn closes(line: &str, ticks: usize) -> bool {
+    let fence = line.trim();
+    let indent = line.len() - line.trim_start().len();
+
+    indent <= 3 && fence.len() >= ticks && fence.bytes().all(|byte| byte == b'`')
+}
+
+/// The file a word of a `doctest` comment names: one of `preludes/`, or that of a block named before it.
 fn prelude(
     word: &str,
     preludes: &Path,
-    named: &HashMap<String, String>,
-) -> Result<String, Box<dyn std::error::Error>> {
+    named: &HashMap<String, PathBuf>,
+) -> Result<PathBuf, Error> {
     if word.ends_with(".rs") {
-        return Ok(fs::read_to_string(preludes.join(word))?);
+        let path = preludes.join(word);
+
+        fs::metadata(&path)?;
+        return Ok(path);
     }
 
-    let code = named.get(word).ok_or("no block before it is named so")?;
+    let path = named.get(word).ok_or("no block before it is named so")?;
 
-    Ok(code.clone())
+    Ok(path.clone())
 }
 
 /// The name of a `<!-- doctest NAME: WORD... -->` comment, and its words.

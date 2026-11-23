@@ -511,10 +511,12 @@ fn main() {
   import.
 - A group takes the fixed headers of the api that lists it. Any api may list it: a `none` of the group's leaves a
   header where that api fixes it, and does nothing elsewhere.
-- The api checks its groups against each other at compile time: one method and path twice, unless their
-  [fixed fields](#fixed-fields-of-the-body) tell them apart in an api with no document, one operation id twice, a
+- The api checks its groups against each other at compile time: one method and path twice, one operation id twice, a
   group less visible than the api, do not compile, and the error points at the group in the list.
 - Two apis may list one group: each serves it under its own prefix.
+
+Two routes of one method and path compile when their [fixed fields](#fixed-fields-of-the-body) tell them apart, in an
+api with no document, whichever groups they are in.
 
 ## Mistakes
 
