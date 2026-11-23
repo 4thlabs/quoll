@@ -178,23 +178,25 @@ impl Builder {
     /// The directory is read at each request, its path relative to the directory the server runs in: a page deployed
     /// anew is served at once, with no new build of the server.
     ///
+    /// The files are served by tower-http's `ServeDir`, with thin layers around it:
+    ///
     /// - A path answers the file of that path in `dir`, `/` its `index.html`, and a directory its own `index.html`,
-    ///   or a 308 to the path with a final `/`. Otherwise a `GET` or a `HEAD` whose `Accept` holds `text/html`, a
-    ///   browser's request of a page, answers `index.html`, so that the page's router takes it, but under
-    ///   `/.well-known/`. Any other request is a problem 404: a missing script is no HTML. The api's router answers a
-    ///   problem 404 for a path under its prefix that is no route: such a path never reaches the page.
-    /// - A file is sent with the content type of its extension and `X-Content-Type-Options: nosniff`, as `Bytes`
-    ///   are. Its `ETag` and `Last-Modified` answer a request's `If-None-Match` and `If-Modified-Since` with a 304.
-    ///   `HEAD` gets the headers alone. Any other method is a problem 405.
+    ///   or a 307 to the path with a final `/`. Otherwise a `GET` or a `HEAD` whose `Accept` holds `text/html`, a
+    ///   browser's request of a page, answers `index.html` with `Vary: Accept`, so that the page's router takes it,
+    ///   but under `/.well-known/`. Any other request is a problem 404: a missing script is no HTML. The api's router
+    ///   answers a problem 404 for a path under its prefix that is no route: such a path never reaches the page.
+    /// - A file is sent with the content type of its extension and `X-Content-Type-Options: nosniff`. Its
+    ///   `Last-Modified` answers `If-Modified-Since` with a 304, and `Range` a part of it; `index.html` is always
+    ///   sent whole. `HEAD` gets the headers alone. Any other method is a problem 405.
     /// - A file Vite names by its hash, `assets/index-BXa3kD9f.js`, is `Cache-Control: public, max-age=31536000,
-    ///   immutable`: one that `dir/.vite/manifest.json` names, which Vite writes with `build.manifest`, read again
-    ///   when it changes. With no manifest, a name under `assets/` with a `-`, eight characters of base64url with a
-    ///   digit, and a `.`. `index.html` and every other file are `no-cache`.
-    /// - A file stored compressed beside itself, `app.js.br` or `app.js.gz`, is sent in its place when the request
-    ///   accepts its coding, Brotli first. Every file carries `Vary: Accept-Encoding`.
-    /// - No file out of `dir` is ever sent: a path with `..` and a symbolic link whose target is out of `dir`
-    ///   answer a problem 404. A hidden file, whose real path below `dir` has a name that begins with a `.`, is a
-    ///   problem 404 too, but those of `/.well-known/`.
+    ///   immutable`: a name with a `-`, eight characters of base64url and a `.`, that `dir/.vite/manifest.json`
+    ///   names, which Vite writes with `build.manifest`. With no manifest, such a name under `assets/` whose eight
+    ///   characters hold a digit. `index.html` and every other file are `no-cache`.
+    /// - A copy stored compressed beside a file, `app.js.br`, `app.js.gz` or `app.js.zst`, is sent in its place when
+    ///   the request accepts its coding, with `Vary: Accept-Encoding`.
+    /// - No file out of `dir` is ever sent: a path with `..`, and a file or a copy whose real path is out of `dir`,
+    ///   answer a problem 404. So does a hidden file, whose real path below `dir` has a name that begins with a `.`,
+    ///   but those of `/.well-known/`, and a path with an empty segment.
     ///
     /// The page replaces any fallback of the router. [`serve`](Self::serve) and [`serve_on`](Self::serve_on) check
     /// that `dir` holds an `index.html` before they serve.

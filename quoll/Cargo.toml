@@ -19,17 +19,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 server = [
     "dep:axum",
     "dep:futures-util",
-    "dep:httpdate",
-    "dep:mime_guess",
     "dep:serde_html_form",
     "dep:tokio",
-    # The files of a page, each sent up to its length.
+    # The files of a page.
     "tokio/fs",
-    "tokio/io-util",
     # The signals a server stops on, and the start of its grace.
     "tokio/signal",
     "tokio/sync",
-    "dep:tokio-util",
     "dep:tower-http",
     "dep:tower-layer",
     "dep:tower-service",
@@ -65,12 +61,10 @@ futures-core = { version = "0.3", default-features = false }
 # What each side builds its streams with.
 futures-util = { version = "0.3", default-features = false, optional = true }
 http = "1"
-# The HTTP date of a `Retry-After`, which `client::Attempt::retry_after` reads, and the `Last-Modified` of a page's file.
+# The HTTP date of a `Retry-After`, which `client::Attempt::retry_after` reads.
 httpdate = { version = "1", optional = true }
 # The errors of a connection closed before its answer, which `client::retry` tries again: reqwest's own are hyper's.
 hyper = { version = "1", default-features = false, optional = true }
-# The content type of a page's file, by its extension.
-mime_guess = { version = "2", default-features = false, optional = true }
 # The key of a query scheme, which the server reads with neither feature.
 percent-encoding = "2"
 # The values of a stream result written as results, with no box of their own.
@@ -91,16 +85,16 @@ serde_json = "1"
 sync_wrapper = "1"
 # `time` for the keep-alive comments of server-sent events, and the deadline of the head of a stream's answer.
 tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
-# The span of `server::trace`, CORS and compression, each behind a layer of quoll's own.
+# The span of `server::trace`, CORS and compression, each behind a layer of quoll's own, and `ServeDir`, which serves
+# the files of a page.
 tower-http = { version = "0.6", default-features = false, features = [
     "compression-br",
     "compression-gzip",
     "compression-zstd",
     "cors",
+    "fs",
     "trace",
 ], optional = true }
-# A page's file sent as it is read.
-tokio-util = { version = "0.7", default-features = false, features = ["io"], optional = true }
 # The traits of the layers of `server`, which axum's `Router::layer` takes.
 tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }

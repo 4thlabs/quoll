@@ -8,8 +8,8 @@ use std::path::Path;
 use quoll::{Response, Result, server};
 use reqwest::StatusCode;
 use reqwest::header::{
-    ACCEPT, ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, ETAG,
-    IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED, VARY,
+    ACCEPT, ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
+    IF_MODIFIED_SINCE, LAST_MODIFIED, LOCATION, RANGE, VARY,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -52,8 +52,8 @@ const INDEX: &str = "<!doctype html><title>notes</title>";
 const SCRIPT: &str = "console.log('notes')";
 const HASHED: &str = "assets/index-BXa3kD9f.js";
 
-/// A page as Vite builds it: its `index.html`, a script named by its hash, stored compressed beside itself too, and
-/// a file of `public/`.
+/// A page as Vite builds it: its `index.html`, a script named by its hash, stored compressed beside itself too, a file
+/// of `public/`, a hidden file, a well-known file and a directory of a multi-page build.
 fn page() -> TempDir {
     let dir = tempfile::tempdir().expect("a temporary directory is made");
 
@@ -61,6 +61,7 @@ fn page() -> TempDir {
     write(dir.path(), HASHED, SCRIPT.as_bytes());
     write(dir.path(), &format!("{HASHED}.br"), b"brotli bytes");
     write(dir.path(), &format!("{HASHED}.gz"), b"gzip bytes");
+    write(dir.path(), &format!("{HASHED}.zst"), b"zstd bytes");
     write(dir.path(), "robots.txt", b"User-agent: *");
     write(dir.path(), ".env", b"SECRET=1");
     write(dir.path(), ".well-known/security.txt", b"Contact: ops");
@@ -111,6 +112,27 @@ async fn browse(url: &str) -> reqwest::Response {
         .expect("the server answers")
 }
 
+/// The values of every `Vary` of `response`, in lowercase.
+fn varies(response: &reqwest::Response) -> Vec<String> {
+    response
+        .headers()
+        .get_all(VARY)
+        .iter()
+        .flat_map(|value| value.to_str().expect("an ASCII header").split(','))
+        .map(|value| value.trim().to_ascii_lowercase())
+        .collect()
+}
+
+/// Checks that `response` is a problem 404 of `detail`.
+async fn not_found(response: reqwest::Response, detail: &str) {
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(header(&response, CONTENT_TYPE), "application/problem+json");
+
+    let problem: Value = response.json().await.expect("a problem");
+
+    assert_eq!(problem["detail"], detail);
+}
+
 fn header(response: &reqwest::Response, name: impl reqwest::header::AsHeaderName) -> &str {
     response
         .headers()
@@ -141,21 +163,23 @@ async fn raw(url: &str, target: &str) -> String {
 }
 
 #[tokio::test]
-async fn a_file_is_sent_with_the_content_type_of_its_extension() {
+async fn a_file_is_sent_with_the_content_type_of_its_extension_and_nosniff() {
     let dir = page();
     let url = serve(dir.path()).await;
 
     let response = get(&format!("{url}/robots.txt")).await;
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(header(&response, CONTENT_TYPE), "text/plain; charset=utf-8");
+    assert_eq!(header(&response, CONTENT_TYPE), "text/plain");
     assert_eq!(header(&response, "x-content-type-options"), "nosniff");
     assert_eq!(header(&response, CONTENT_LENGTH), "13");
+    assert!(!header(&response, LAST_MODIFIED).is_empty());
+    assert!(response.headers().get("etag").is_none());
     assert_eq!(response.text().await.expect("a text"), "User-agent: *");
 }
 
 #[tokio::test]
-async fn a_hashed_file_is_immutable_and_index_html_is_checked_again() {
+async fn a_hashed_file_is_immutable_and_any_other_no_cache() {
     let dir = page();
     let url = serve(dir.path()).await;
 
@@ -167,15 +191,62 @@ async fn a_hashed_file_is_immutable_and_index_html_is_checked_again() {
         header(&script, CACHE_CONTROL),
         "public, max-age=31536000, immutable"
     );
-    assert_eq!(
-        header(&script, CONTENT_TYPE),
-        "text/javascript; charset=utf-8"
-    );
+    assert_eq!(header(&script, CONTENT_TYPE), "text/javascript");
     assert_eq!(header(&root, CACHE_CONTROL), "no-cache");
-    assert_eq!(header(&root, CONTENT_TYPE), "text/html; charset=utf-8");
+    assert_eq!(header(&root, CONTENT_TYPE), "text/html");
     assert_eq!(header(&robots, CACHE_CONTROL), "no-cache");
     assert_eq!(script.text().await.expect("a text"), SCRIPT);
     assert_eq!(root.text().await.expect("a text"), INDEX);
+}
+
+#[tokio::test]
+async fn with_a_manifest_only_the_hashed_files_it_names_are_immutable() {
+    let dir = page();
+
+    write(
+        dir.path(),
+        "assets/main-abcdefgh.js",
+        b"named by the manifest",
+    );
+    write(dir.path(), "assets/main-abcdefgh.js.map", b"{}");
+    write(
+        dir.path(),
+        ".vite/manifest.json",
+        br#"{"index.html": {"file": "assets/main-abcdefgh.js", "isEntry": true}}"#,
+    );
+
+    let url = serve(dir.path()).await;
+    let cache = |path: &'static str| {
+        let url = url.clone();
+
+        async move { header(&get(&format!("{url}/{path}")).await, CACHE_CONTROL).to_owned() }
+    };
+
+    assert_eq!(
+        cache("assets/main-abcdefgh.js").await,
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(
+        cache("assets/main-abcdefgh.js.map").await,
+        "public, max-age=31536000, immutable"
+    );
+    // Named as a hash, but not by the manifest.
+    assert_eq!(cache(HASHED).await, "no-cache");
+    not_found(
+        get(&format!("{url}/.vite/manifest.json")).await,
+        "the page serves no hidden file, whose name begins with a `.`",
+    )
+    .await;
+
+    // A new deployment writes a new manifest, read again.
+    write(
+        dir.path(),
+        ".vite/manifest.json",
+        format!(r#"{{"index.html": {{"file": "{HASHED}", "isEntry": true}}}}"#).as_bytes(),
+    );
+
+    assert_eq!(cache(HASHED).await, "public, max-age=31536000, immutable");
+    assert_eq!(cache("assets/main-abcdefgh.js").await, "no-cache");
 }
 
 #[tokio::test]
@@ -188,7 +259,9 @@ async fn a_request_of_a_page_that_is_no_file_answers_index_html() {
 
         assert_eq!(response.status(), StatusCode::OK, "{path}");
         assert_eq!(header(&response, CACHE_CONTROL), "no-cache");
-        assert_eq!(header(&response, CONTENT_TYPE), "text/html; charset=utf-8");
+        assert_eq!(header(&response, CONTENT_TYPE), "text/html");
+        assert_eq!(header(&response, "x-content-type-options"), "nosniff");
+        assert!(varies(&response).contains(&"accept".to_owned()), "{path}");
         assert_eq!(response.text().await.expect("a text"), INDEX);
     }
 }
@@ -212,12 +285,8 @@ async fn a_request_that_accepts_no_html_is_a_problem_404_when_no_file() {
             .await
             .expect("the server answers");
 
-        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path} {accept}");
-        assert_eq!(header(&response, CONTENT_TYPE), "application/problem+json");
-
-        let problem: Value = response.json().await.expect("a problem");
-
-        assert_eq!(problem["detail"], "the page has no file of this path");
+        assert_eq!(varies(&response), ["accept"], "{path} {accept}");
+        not_found(response, "the page has no file of this path").await;
     }
 }
 
@@ -226,143 +295,66 @@ async fn a_missing_file_of_the_well_known_directory_is_never_index_html() {
     let dir = page();
     let url = serve(dir.path()).await;
 
-    let response = browse(&format!("{url}/.well-known/change-password")).await;
+    let found = browse(&format!("{url}/.well-known/security.txt")).await;
+    let missing = browse(&format!("{url}/.well-known/change-password")).await;
 
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    assert_eq!(header(&response, CONTENT_TYPE), "application/problem+json");
+    assert_eq!(found.text().await.expect("a text"), "Contact: ops");
+    not_found(missing, "the page has no file of this path").await;
 }
 
 #[tokio::test]
-async fn a_directory_answers_its_index_html() {
+async fn index_html_is_always_sent_whole() {
     let dir = page();
     let url = serve(dir.path()).await;
 
-    let response = browse(&format!("{url}/docs/")).await;
+    let modified = header(&get(&format!("{url}/")).await, LAST_MODIFIED).to_owned();
 
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(header(&response, CONTENT_TYPE), "text/html; charset=utf-8");
-    assert_eq!(header(&response, CACHE_CONTROL), "no-cache");
-    assert_eq!(
-        response.text().await.expect("a text"),
-        "<title>docs</title>"
-    );
-}
+    for path in ["/", "/index.html", "/docs/", "/notes/3"] {
+        let response = client()
+            .get(format!("{url}{path}"))
+            .header(ACCEPT, BROWSER)
+            .header(IF_MODIFIED_SINCE, &modified)
+            .header(RANGE, "bytes=0-3")
+            .send()
+            .await
+            .expect("the server answers");
 
-#[tokio::test]
-async fn a_directory_without_its_slash_is_redirected_with_its_query() {
-    let dir = page();
-    let url = serve(dir.path()).await;
-
-    for (path, location) in [
-        ("/docs", "/docs/"),
-        ("/docs?tab=a%20b&x", "/docs/?tab=a%20b&x"),
-    ] {
-        let response = browse(&format!("{url}{path}")).await;
-
-        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT, "{path}");
-        assert_eq!(header(&response, "location"), location);
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert!(response.text().await.expect("a text").len() > 4, "{path}");
     }
 }
 
 #[tokio::test]
-async fn with_a_manifest_only_the_files_it_names_are_immutable() {
-    let dir = page();
-
-    write(
-        dir.path(),
-        "assets/main-abcdefgh.js",
-        b"named by the manifest",
-    );
-    write(
-        dir.path(),
-        ".vite/manifest.json",
-        br#"{"index.html": {"file": "assets/main-abcdefgh.js", "isEntry": true}}"#,
-    );
-
-    let url = serve(dir.path()).await;
-    let cache = |path: &'static str| {
-        let url = url.clone();
-
-        async move { header(&get(&format!("{url}/{path}")).await, CACHE_CONTROL).to_owned() }
-    };
-
-    assert_eq!(
-        cache("assets/main-abcdefgh.js").await,
-        "public, max-age=31536000, immutable"
-    );
-    // Named as a hash, but not by the manifest.
-    assert_eq!(cache(HASHED).await, "no-cache");
-    assert_eq!(
-        get(&format!("{url}/.vite/manifest.json")).await.status(),
-        StatusCode::NOT_FOUND
-    );
-
-    // A new deployment writes a new manifest, read again.
-    write(
-        dir.path(),
-        ".vite/manifest.json",
-        format!(r#"{{"index.html": {{"file": "{HASHED}", "isEntry": true}}}}"#).as_bytes(),
-    );
-
-    assert_eq!(cache(HASHED).await, "public, max-age=31536000, immutable");
-    assert_eq!(cache("assets/main-abcdefgh.js").await, "no-cache");
-}
-
-#[tokio::test]
-async fn a_hidden_file_is_refused_but_the_well_known_directory() {
+async fn another_file_is_not_modified_since_its_date() {
     let dir = page();
     let url = serve(dir.path()).await;
+    let robots = format!("{url}/robots.txt");
 
-    let hidden = get(&format!("{url}/.env")).await;
-    let well_known = get(&format!("{url}/.well-known/security.txt")).await;
-
-    assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
-    assert_eq!(header(&hidden, CONTENT_TYPE), "application/problem+json");
-    assert!(!hidden.text().await.expect("a body").contains("SECRET"));
-    assert_eq!(well_known.status(), StatusCode::OK);
-    assert_eq!(well_known.text().await.expect("a text"), "Contact: ops");
-}
-
-#[tokio::test]
-async fn a_path_not_utf8_says_so() {
-    let dir = page();
-    let url = serve(dir.path()).await;
-
-    let response = get(&format!("{url}/%FF.js")).await;
-
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-
-    let problem: Value = response.json().await.expect("a problem");
-
-    assert_eq!(
-        problem["detail"],
-        "the path is not UTF-8 once decoded, which no file of the page is named in"
-    );
-}
-
-#[tokio::test]
-async fn a_file_modified_before_1970_has_no_last_modified() {
-    let dir = page();
-    let before = std::time::UNIX_EPOCH - std::time::Duration::from_secs(86_400);
-
-    fs::File::options()
-        .write(true)
-        .open(dir.path().join("robots.txt"))
-        .and_then(|file| file.set_modified(before))
-        .expect("the time is set");
-
-    let url = serve(dir.path()).await;
-    let response = client()
-        .get(format!("{url}/robots.txt"))
-        .header(IF_MODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:00 GMT")
+    let modified = header(&get(&robots).await, LAST_MODIFIED).to_owned();
+    let again = client()
+        .get(&robots)
+        .header(IF_MODIFIED_SINCE, &modified)
         .send()
         .await
         .expect("the server answers");
 
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(response.headers().get(LAST_MODIFIED).is_none());
-    assert!(!header(&response, ETAG).is_empty());
-    assert_eq!(response.text().await.expect("a text"), "User-agent: *");
+    assert_eq!(again.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(header(&again, CACHE_CONTROL), "no-cache");
+}
+
+#[tokio::test]
+async fn a_directory_answers_its_index_html_and_without_its_slash_a_307() {
+    let dir = page();
+    let url = serve(dir.path()).await;
+
+    let slashed = browse(&format!("{url}/docs/")).await;
+    let bare = browse(&format!("{url}/docs?tab=a%20b")).await;
+
+    assert_eq!(slashed.status(), StatusCode::OK);
+    assert_eq!(header(&slashed, CACHE_CONTROL), "no-cache");
+    assert_eq!(slashed.text().await.expect("a text"), "<title>docs</title>");
+    assert_eq!(bare.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(header(&bare, LOCATION), "/docs/?tab=a%20b");
 }
 
 #[tokio::test]
@@ -376,14 +368,11 @@ async fn the_api_still_answers_and_its_prefix_keeps_its_problem_404() {
     assert_eq!(note.json::<String>().await.expect("a string"), "note 3");
 
     for path in ["/api", "/api/", "/api/nope", "/api/notes/3/more"] {
-        let response = get(&format!("{url}{path}")).await;
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
-        assert_eq!(header(&response, CONTENT_TYPE), "application/problem+json");
-
-        let problem: Value = response.json().await.expect("a problem");
-
-        assert_eq!(problem["detail"], "no route of the api serves this path");
+        not_found(
+            browse(&format!("{url}{path}")).await,
+            "no route of the api serves this path",
+        )
+        .await;
     }
 
     let wrong_method = client()
@@ -417,8 +406,9 @@ async fn a_file_stored_compressed_is_sent_when_its_coding_is_accepted() {
     let script = format!("{url}/{HASHED}");
 
     for (accepted, encoding, body) in [
-        ("gzip, deflate, br", "br", "brotli bytes"),
+        ("br", "br", "brotli bytes"),
         ("gzip", "gzip", "gzip bytes"),
+        ("zstd", "zstd", "zstd bytes"),
         ("br;q=0.5, gzip", "gzip", "gzip bytes"),
         ("identity", "", SCRIPT),
     ] {
@@ -430,24 +420,16 @@ async fn a_file_stored_compressed_is_sent_when_its_coding_is_accepted() {
             .expect("the server answers");
 
         assert_eq!(header(&response, CONTENT_ENCODING), encoding, "{accepted}");
-        assert_eq!(header(&response, VARY), "accept-encoding");
-        assert_eq!(
-            header(&response, CONTENT_TYPE),
-            "text/javascript; charset=utf-8"
-        );
+        assert_eq!(header(&response, CONTENT_TYPE), "text/javascript");
+
+        if encoding.is_empty() {
+            assert!(varies(&response).is_empty(), "{accepted}");
+        } else {
+            assert_eq!(varies(&response), ["accept-encoding"], "{accepted}");
+        }
+
         assert_eq!(response.text().await.expect("a body"), body);
     }
-
-    // `index.html` has no compressed copy: it is sent as it is, and still varies.
-    let root = client()
-        .get(format!("{url}/"))
-        .header(ACCEPT_ENCODING, "br")
-        .send()
-        .await
-        .expect("the server answers");
-
-    assert_eq!(header(&root, CONTENT_ENCODING), "");
-    assert_eq!(header(&root, VARY), "accept-encoding");
 }
 
 #[tokio::test]
@@ -463,8 +445,7 @@ async fn head_gets_the_headers_alone() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(header(&response, CONTENT_LENGTH), "13");
-    assert_eq!(header(&response, CONTENT_TYPE), "text/plain; charset=utf-8");
-    assert!(!header(&response, ETAG).is_empty());
+    assert_eq!(header(&response, CONTENT_TYPE), "text/plain");
     assert!(response.bytes().await.expect("a body").is_empty());
 }
 
@@ -485,74 +466,68 @@ async fn another_method_is_a_problem_405() {
 }
 
 #[tokio::test]
-async fn a_copy_of_the_same_tag_or_date_is_not_modified() {
+async fn a_hidden_file_is_refused_but_the_well_known_directory() {
     let dir = page();
     let url = serve(dir.path()).await;
-    let robots = format!("{url}/robots.txt");
 
-    let first = get(&robots).await;
-    let tag = header(&first, ETAG).to_owned();
-    let modified = header(&first, LAST_MODIFIED).to_owned();
+    let hidden = browse(&format!("{url}/.env")).await;
+    let well_known = get(&format!("{url}/.well-known/security.txt")).await;
 
-    assert!(tag.starts_with("W/\""), "{tag}");
-
-    let by_tag = client()
-        .get(&robots)
-        .header(IF_NONE_MATCH, format!("\"other\", {tag}"))
-        .send()
-        .await
-        .expect("the server answers");
-    let by_date = client()
-        .get(&robots)
-        .header(IF_MODIFIED_SINCE, &modified)
-        .send()
-        .await
-        .expect("the server answers");
-    // A tag that is not the file's wins over a date that is.
-    let other_tag = client()
-        .get(&robots)
-        .header(IF_NONE_MATCH, "\"other\"")
-        .header(IF_MODIFIED_SINCE, &modified)
-        .send()
-        .await
-        .expect("the server answers");
-
-    assert_eq!(by_tag.status(), StatusCode::NOT_MODIFIED);
-    assert_eq!(header(&by_tag, ETAG), tag);
-    assert_eq!(header(&by_tag, CACHE_CONTROL), "no-cache");
-    assert!(by_tag.bytes().await.expect("a body").is_empty());
-    assert_eq!(by_date.status(), StatusCode::NOT_MODIFIED);
-    assert_eq!(other_tag.status(), StatusCode::OK);
-    assert_eq!(other_tag.text().await.expect("a text"), "User-agent: *");
+    assert_eq!(well_known.status(), StatusCode::OK);
+    assert_eq!(well_known.text().await.expect("a text"), "Contact: ops");
+    not_found(
+        hidden,
+        "the page serves no hidden file, whose name begins with a `.`",
+    )
+    .await;
 }
 
 #[tokio::test]
-async fn a_coding_has_a_tag_of_its_own() {
+async fn a_path_not_utf8_says_so() {
     let dir = page();
     let url = serve(dir.path()).await;
-    let script = format!("{url}/{HASHED}");
-    let tag = |accepted: &'static str| {
-        let script = script.clone();
 
-        async move {
-            let response = client()
-                .get(script)
-                .header(ACCEPT_ENCODING, accepted)
-                .send()
-                .await
-                .expect("the server answers");
+    not_found(
+        get(&format!("{url}/%FF.js")).await,
+        "the path is not UTF-8 once decoded, which no file of the page is named in",
+    )
+    .await;
+}
 
-            header(&response, ETAG).to_owned()
-        }
-    };
+#[tokio::test]
+async fn a_path_of_two_slashes_is_refused_before_it_is_redirected_to_another_host() {
+    let dir = page();
 
-    let brotli = tag("br").await;
-    let gzip = tag("gzip").await;
-    let plain = tag("identity").await;
+    write(dir.path(), "evil.example/index.html", b"a directory");
 
-    assert_ne!(brotli, gzip);
-    assert_ne!(gzip, plain);
-    assert_ne!(brotli, plain);
+    let url = serve(dir.path()).await;
+    let answer = raw(&url, "//evil.example").await;
+
+    assert!(answer.starts_with("HTTP/1.1 404"), "{answer}");
+    assert!(
+        !answer.to_ascii_lowercase().contains("location"),
+        "{answer}"
+    );
+}
+
+#[tokio::test]
+async fn a_file_modified_before_1970_is_a_problem_500_not_a_panic() {
+    let dir = page();
+    let before = std::time::UNIX_EPOCH - std::time::Duration::from_secs(86_400);
+
+    fs::File::options()
+        .write(true)
+        .open(dir.path().join("robots.txt"))
+        .and_then(|file| file.set_modified(before))
+        .expect("the time is set");
+
+    let url = serve(dir.path()).await;
+    let undated = get(&format!("{url}/robots.txt")).await;
+    let other = get(&format!("{url}/{HASHED}")).await;
+
+    assert_eq!(undated.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(header(&undated, CONTENT_TYPE), "application/problem+json");
+    assert_eq!(other.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -583,23 +558,29 @@ async fn a_path_with_dot_dot_is_refused() {
 async fn a_symbolic_link_out_of_the_directory_is_refused() {
     let outer = tempfile::tempdir().expect("a temporary directory is made");
     let dir = outer.path().join("dist");
+    let link = |target: &Path, name: &str| {
+        std::os::unix::fs::symlink(target, dir.join(name)).expect("the link is made");
+    };
 
     write(&dir, "index.html", INDEX.as_bytes());
-    write(outer.path(), "secret.txt", b"the secret");
     write(&dir, "inside/real.txt", b"inside");
-    std::os::unix::fs::symlink(outer.path().join("secret.txt"), dir.join("linked.txt"))
-        .expect("the link is made");
-    std::os::unix::fs::symlink(outer.path(), dir.join("up")).expect("the link is made");
-    std::os::unix::fs::symlink(dir.join("inside/real.txt"), dir.join("within.txt"))
-        .expect("the link is made");
-    // A compressed copy out of the directory is passed over, the file sent as it is.
-    std::os::unix::fs::symlink(outer.path().join("secret.txt"), dir.join("within.txt.gz"))
-        .expect("the link is made");
+    write(&dir, "within.txt", b"within");
+    write(outer.path(), "secret.txt", b"the secret");
+    link(&outer.path().join("secret.txt"), "linked.txt");
+    link(outer.path(), "up");
+    link(&dir.join("inside/real.txt"), "linked-within.txt");
+    // A compressed copy that `ServeDir` would send in the file's place.
+    link(&outer.path().join("secret.txt"), "within.txt.gz");
 
     let url = serve(&dir).await;
 
-    for path in ["/linked.txt", "/up/secret.txt"] {
-        let response = get(&format!("{url}{path}")).await;
+    for path in ["/linked.txt", "/up/secret.txt", "/within.txt"] {
+        let response = client()
+            .get(format!("{url}{path}"))
+            .header(ACCEPT_ENCODING, "gzip")
+            .send()
+            .await
+            .expect("the server answers");
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         assert!(
@@ -611,15 +592,9 @@ async fn a_symbolic_link_out_of_the_directory_is_refused() {
         );
     }
 
-    let within = client()
-        .get(format!("{url}/within.txt"))
-        .header(ACCEPT_ENCODING, "gzip")
-        .send()
-        .await
-        .expect("the server answers");
+    let within = get(&format!("{url}/linked-within.txt")).await;
 
     assert_eq!(within.status(), StatusCode::OK);
-    assert_eq!(header(&within, CONTENT_ENCODING), "");
     assert_eq!(within.text().await.expect("a text"), "inside");
 }
 
@@ -651,40 +626,6 @@ async fn a_symbolic_link_to_a_hidden_file_is_refused() {
                 .contains("the secret")
         );
     }
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn a_file_written_anew_at_the_same_time_has_a_new_tag() {
-    let dir = page();
-    let fixed = std::time::UNIX_EPOCH + std::time::Duration::from_secs(315_532_800);
-    let path = dir.path().join("robots.txt");
-    let set_time = |path: &Path| {
-        fs::File::options()
-            .write(true)
-            .open(path)
-            .and_then(|file| file.set_modified(fixed))
-            .expect("the time is set");
-    };
-
-    set_time(&path);
-
-    let url = serve(dir.path()).await;
-    let first = header(&get(&format!("{url}/robots.txt")).await, ETAG).to_owned();
-
-    // A build with `SOURCE_DATE_EPOCH` writes a new file of the same length and the same time.
-    write(dir.path(), "robots.new", b"User-agent: x");
-    set_time(&dir.path().join("robots.new"));
-    fs::rename(dir.path().join("robots.new"), &path).expect("the file is replaced");
-
-    let second = get(&format!("{url}/robots.txt")).await;
-
-    assert_eq!(
-        header(&second, LAST_MODIFIED),
-        "Tue, 01 Jan 1980 00:00:00 GMT"
-    );
-    assert_ne!(header(&second, ETAG), first);
-    assert_eq!(second.text().await.expect("a text"), "User-agent: x");
 }
 
 #[tokio::test]
