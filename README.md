@@ -1,5 +1,5 @@
 <div align="center">
-  <h1><img src="docs/assets/quoll.svg" alt="" height="72" align="middle" /> Quoll</h1>
+  <h1><img src="docs/assets/quoll.svg" alt="" height="72" align="absmiddle" /> Quoll</h1>
 
   <p><strong>Contract-first REST for Rust: one contract, enforced by the compiler, from your server to your
   frontend.</strong><br />
