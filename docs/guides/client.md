@@ -117,11 +117,14 @@ async fn find(api: &ApiClient, id: i64) -> quoll::Result<Option<String>> {
 ```
 
 The `Err` of `.response()` is a call that got no answer it can read: a connection refused, a deadline passed, an
-answer with a success status that is not the route's result. A 204 or a 205 is a success, `()`, `None`, an empty text
-or bytes, or a stream that ends at once; on a route of a value, as another API may answer it, the `.response()` keeps its status and its
-headers, and its value is the error of a body that is not the result. A 304 Not Modified, which comes to a call that sent
-`If-None-Match`, is an error of its own: its status and the headers of the `.response()`, with no
-[detail](errors.md#another-apis-errors), which `.into_value()` gives; `.await` gives that error too.
+answer with a success status that is not the route's result.
+
+- A 204 or a 205 is a success on a route whose value may be empty: `()`, `None`, an empty text or bytes, or a stream
+  that ends at once. On a route of a value that must be one, as another API may answer it, the `.response()` keeps
+  its status and its headers, and its value is the error of a body that is not the result.
+- A 304 Not Modified, which comes to a call that sent `If-None-Match`, is an error of its own: its status and the
+  headers of the `.response()`, with no [detail](errors.md#another-apis-errors), which `.into_value()` gives.
+  `.await` gives that error too.
 
 ## Building a client
 
@@ -321,28 +324,29 @@ fn http() -> quoll::Result<reqwest_middleware::ClientWithMiddleware> {
   route whose result is a stream, it bounds the head of the answer alone.
 - A call's `.timeout(duration)` is a deadline for that call alone, in place of `timeout`'s, with the same meaning: a
   long call, a slow export, waits longer than the others, and a client with no `timeout` takes it too.
-
-```rust,no_run
-# use std::time::Duration;
-# use quoll::Call;
-# quoll::api! {
-#     pub api Api = "/api";
-#     pub group Exports {
-#         POST "/exports" => create(name: String) -> u64;
-#     }
-# }
-# async fn run(api: &ApiClient) -> quoll::Result<()> {
-let job = api
-    .exports()
-    .create("notes".into())
-    .timeout(Duration::from_secs(600))
-    .await?;
-# let _ = job;
-# Ok(())
-# }
-```
 - `redirects(hops)` follows up to `hops` redirects, each hop through the middleware after it. A hop to another origin
   carries no credential.
+
+```rust,no_run
+use std::time::Duration;
+
+use quoll::Call;
+
+quoll::api! {
+    pub api Api = "/api";
+
+    pub group Exports {
+        POST "/exports" => create(name: String) -> u64;
+    }
+}
+
+async fn export(api: &ApiClient) -> quoll::Result<u64> {
+    api.exports()
+        .create("notes".into())
+        .timeout(Duration::from_secs(600))
+        .await
+}
+```
 
 Given a credential, `bearer`, `bearer_from`, `basic`, `key` or `on_request`, and no `redirects`, the builder adds
 `redirects(10)` itself, so that redirects are still followed, and no hop to another origin carries a credential.

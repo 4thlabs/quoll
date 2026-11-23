@@ -1,7 +1,7 @@
 # OpenAPI
 
-`Api::openapi()` gives the OpenAPI 3.1 document of a contract, whatever the features of `quoll`. TypeScript generators
-such as orval read it.
+`Api::openapi()` gives the OpenAPI 3.1 document of a contract, whatever the features of `quoll`. Any OpenAPI generator
+reads it, to write the client of a frontend: orval, openapi-typescript, hey-api, Kiota...
 
 ## The document
 
@@ -71,7 +71,7 @@ cargo run -p notes-api --bin openapi > openapi.json
 The contract crate needs neither feature of `quoll`: it builds without axum and reqwest.
 
 `cargo quoll gen` builds and runs that binary, writes the document where the workspace's `Cargo.toml` says, and runs
-the generator that follows it, such as orval: [the TypeScript guide](typescript.md) says how, with `cargo quoll dev`,
+the generator the workspace names after it: [the TypeScript guide](typescript.md) says how, with `cargo quoll dev`,
 which runs the server and the page's dev server side by side.
 
 ## What it holds
@@ -81,16 +81,16 @@ which runs the server and the page's dev server side by side.
   tag, and the api's the document.
 - **Parameters**: path parameters, query keys and headers, required unless an `Option` or a `Vec`. A query struct is
   unfolded into one parameter per field. A [joined list](contract.md#joined-lists) is a parameter `explode: false`
-  of the style of its separator, `form`, `spaceDelimited` or `pipeDelimited`, which orval's clients write. A fixed header, `#[header("name" = value)]`, is a header parameter that is
-  not required, whose schema is its value, `const`, but `Accept`, `Content-Type` and `Authorization`, which OpenAPI
-  describes otherwise, and a header an argument of the route reads, which the argument describes.
+  of the style of its separator, `form`, `spaceDelimited` or `pipeDelimited`. A fixed header,
+  `#[header("name" = value)]`, is a header parameter that is not required, whose schema is its value, `const`, but
+  `Accept`, `Content-Type` and `Authorization`, which OpenAPI describes otherwise, and a header an argument of the
+  route reads, which the argument describes.
 - **Bodies**: `application/json`, `application/x-www-form-urlencoded` for `Form<T>`, `text/plain` for `Text`,
   `application/octet-stream` for `Bytes`.
 - **Results**: 200, 201 with an optional `Location`, 202 or 204, and a 204 beside them when the handler's value may
   be empty, an `Option<T>`, `()`, `Text`, `Bytes`, `Events`, `JsonLines` or `ByteStream`, in a `Created` or an
-  `Accepted` too. `Text` is `text/plain`, `Bytes` and
-  `ByteStream` are `*/*`. An `Events` or a `JsonLines` result carries the schema of its items in the extension
-  `x-item`.
+  `Accepted` too. `Text` is `text/plain`, `Bytes` and `ByteStream` are `*/*`. An `Events` or a `JsonLines` result
+  carries the schema of its items in the extension `x-item`.
 - **Errors**: each route lists the statuses quoll answers itself, and a `default`, each an `application/problem+json`
   problem.
 - **Security**: each scheme under `components/securitySchemes`, by its name, and each route's requirement, with its

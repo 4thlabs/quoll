@@ -154,14 +154,15 @@ It prints `note 1: Milk`. A call to a note that does not exist is an error with 
 curl -i http://127.0.0.1:8080/api/notes/9
 ```
 
-And the OpenAPI document, which orval turns into TypeScript:
+And the OpenAPI document, which any OpenAPI generator turns into the client of a frontend:
 
 ```bash
 cargo run -- openapi > openapi.json
 ```
 
-The notes example has a page on it, [`examples/notes/web`](../../examples/notes/web), whose hooks orval writes from
-that document: [the TypeScript guide](typescript.md) says how `cargo quoll` writes it and runs the page.
+The notes example has a page on it, [`examples/notes/web`](../../examples/notes/web), whose TanStack Query hooks
+orval, the generator it chose, writes from that document: [the TypeScript guide](typescript.md) says how `cargo quoll`
+writes it, runs the generator and runs the page.
 
 ## Crates by role
 
@@ -174,7 +175,7 @@ notes/
   api/      notes-api     the contract and its models: quoll, serde, schemars
   server/   notes-server  notes-api with the feature "server": tokio, axum
   cli/      notes-cli     notes-api with the feature "client": tokio, reqwest
-  web/                    the page, whose TypeScript orval writes from the document
+  web/                    the page, whose TypeScript a generator writes from the document
 ```
 
 The workspace's `Cargo.toml` names its members, and `cargo build` and `cargo test` in its directory build them all:

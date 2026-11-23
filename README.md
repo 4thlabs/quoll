@@ -1,11 +1,10 @@
 <div align="center">
-  <img src="docs/assets/quoll.svg" alt="" width="104" />
+  <h1><img src="docs/assets/quoll.svg" alt="" height="44" align="top" /> Quoll</h1>
 
-  <h1>Quoll</h1>
-
-  <p><strong>A REST contract for Rust, written once: an axum server, a reqwest client and an OpenAPI document come
-  from it.</strong><br />
-  TypeScript generators such as orval turn the document into TanStack Query hooks.</p>
+  <p><strong>Contract-first REST for Rust: one contract, enforced by the compiler, from your server to your
+  frontend.</strong><br />
+  An axum server, a reqwest client and an OpenAPI 3.1 document from one macro. <code>cargo quoll</code> writes the
+  document, runs your frontend's generator, and serves both while you work.</p>
 
   <p>
     <img src="https://img.shields.io/badge/Rust-2024-B7410E?logo=rust&logoColor=white" alt="Rust 2024" />
@@ -24,13 +23,17 @@
   </p>
 </div>
 
-## One contract, both sides
+## The contract
 
-An API is written once, in a macro. The server implements it, the client calls it, and a mistake on either side, a
-route without its handler, a call with the wrong arguments, does not compile.
+[The contract](docs/guides/contract.md) is a route table, written once in a macro: the method, the path, then the
+Rust function it becomes. `Note` and `NewNote` are serde types, with a JSON Schema for the document.
 
-```rust,ignore
+<!-- doctest contract: models.rs -->
+```rust
+use quoll::Created;
+
 quoll::api! {
+    /// Notes, kept per user.
     pub api Api = "/api";
 
     #[auth(Bearer)]
@@ -42,67 +45,96 @@ quoll::api! {
 }
 ```
 
-<table>
-<tr>
-<th>The server</th>
-<th>The client</th>
-</tr>
-<tr>
-<td>
+## A client
 
-```rust,ignore
-impl Authenticate<Bearer> for App {
-    type Caller = User;
+[The client](docs/guides/client.md) has a method per route, which takes the route's arguments and returns its
+result. A call that fails is a [`quoll::Error`](docs/guides/errors.md), with the status the server answered:
 
-    async fn authenticate(&self, token: String) -> Result<User> {
-        self.sessions
-            .user(&token)
-            .ok_or_else(|| Error::unauthorized("unknown or expired token"))
+<!-- doctest client: models.rs contract -->
+```rust,no_run
+use http::StatusCode;
+use quoll::client;
+
+#[tokio::main]
+async fn main() -> quoll::Result<()> {
+    let api = client::builder()
+        .with(client::bearer("ana-token"))
+        .build::<Api>("http://127.0.0.1:8080")?;
+
+    match api.notes().get(3).await {
+        Ok(note) => println!("{}", note.title),
+        Err(error) if error.status() == Some(StatusCode::NOT_FOUND) => println!("no note 3"),
+        Err(error) => return Err(error),
     }
+
+    Ok(())
 }
+```
+
+## A server
+
+[The server](docs/guides/server.md) implements a trait per group, with a handler per route, and serves them on axum.
+A handler receives the caller, the `User` that `Authenticate<Bearer>` makes of the token, as
+[Authentication](docs/guides/authentication.md) shows:
+
+<!-- doctest server: models.rs contract server.rs -->
+```rust,no_run
+use http::header::LOCATION;
+use quoll::{Error, Response, Result, server};
 
 impl NotesServer for App {
     async fn get(&self, user: &User, id: i64) -> Result<Response<Note>> {
         self.store
             .note(user.id, id)
-            .await
-            .map_err(Error::internal)?
             .map(Response::new)
             .ok_or_else(|| Error::not_found("no such note"))
     }
 
-    // create, remove...
+    async fn create(&self, user: &User, note: NewNote) -> Result<Response<Note>> {
+        let note = self.store.add(user.id, note);
+        let location = format!("/api/notes/{}", note.id);
+
+        Ok(Response::new(note).header(LOCATION, location))
+    }
+
+    async fn remove(&self, user: &User, id: i64) -> Result<Response<()>> {
+        self.store.remove(user.id, id);
+        Ok(Response::new(()))
+    }
 }
 
-server::builder()
-    .with(server::request_id())
-    .with(server::trace())
-    .serve("0.0.0.0:8080", Api::router(ApiServices { notes: app }))
-    .await?;
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let router = Api::router(ApiServices {
+        notes: App::default(),
+    });
+
+    server::builder()
+        .with(server::trace())
+        .serve("0.0.0.0:8080", router)
+        .await
+}
 ```
 
-</td>
-<td>
+## The document
 
-```rust,ignore
-let api = client::builder()
-    .with(client::bearer(token))
-    .with(client::retry(3))
-    .build::<Api>("http://127.0.0.1:8080")?;
+[The OpenAPI 3.1 document](docs/guides/openapi.md) comes from the contract, with the schemas of its types and its
+`///` comments, and a frontend's client from the document, as [TypeScript](docs/guides/typescript.md) shows. A binary
+of the contract's crate prints it:
 
-let note = api.notes().get(3).await?;
-
-println!("{}", note.title);
+<!-- doctest document: models.rs contract -->
+```rust
+println!("{}", Api::openapi().to_json_pretty());
 ```
 
-</td>
-</tr>
-</table>
+Any OpenAPI generator reads it: orval, openapi-typescript, hey-api, Kiota... The notes example's is orval, which
+writes TanStack Query hooks. `cargo quoll gen` writes the document and runs the generator the workspace names, and
+`cargo quoll dev` runs the server and the page's dev server side by side.
 
 ## Quick start
 
-quoll is used from git until it is published. A new crate, `cargo new notes`, takes it with both features in its
-`Cargo.toml`:
+[Getting started](docs/guides/getting-started.md) goes through this crate step by step. quoll is used from git until
+it is published. A new crate, `cargo new notes`, takes it with both features in its `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -211,21 +243,19 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 `cargo run -- serve` serves it, on `127.0.0.1:8080`. `cargo run`, in another terminal, calls it, and prints
 `note 1: Milk`. `cargo run -- openapi` prints its OpenAPI document.
 
-[Getting started](docs/guides/getting-started.md) goes through it, and [the guides](docs/README.md) cover each part.
+[The guides](docs/README.md) cover each part.
 
 ## What the contract gives
 
-| From the contract | What it is                                                                           |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `NotesServer`     | The trait the server implements: a method per route, the caller as a typed argument  |
-| `Api::router`     | An `axum::Router` of the services in `ApiServices`, which `server::builder()` serves |
-| `Notes`           | The trait the client implements, and a test's fake too                               |
-| `ApiClient`       | The client that `client::builder().build::<Api>(url)` gives, with its middleware     |
-| `Api::openapi`    | The OpenAPI 3.1 document, with the schemas of the types and the `///` comments       |
+| From the contract | What it is                                                                             |
+| ----------------- | -------------------------------------------------------------------------------------- |
+| `NotesServer`     | The trait the server implements: a method per route, the caller as a typed argument    |
+| `Api::router`     | An `axum::Router` of the services in `ApiServices`, which `server::builder()` serves   |
+| `Notes`           | The trait the client implements, and [a test's fake](docs/guides/testing.md#fakes) too |
+| `ApiClient`       | The client that `client::builder().build::<Api>(url)` gives, with its middleware       |
+| `Api::openapi`    | The OpenAPI 3.1 document, with the schemas of the types and the `///` comments         |
 
-No Rust is generated on disk: the macro expands at compile time, and `cargo expand` shows what it writes. `cargo
-quoll gen` writes the document, and runs the generator that turns it into TypeScript:
-[the TypeScript guide](docs/guides/typescript.md) says how.
+No Rust is generated on disk: the macro expands at compile time, and `cargo expand` shows what it writes.
 
 ## Examples
 
@@ -242,12 +272,22 @@ npm ci --prefix web
 cargo quoll dev
 ```
 
-[`examples/docker`](examples/docker) is a client alone, of the Docker Engine API, and a command line on it:
+[`examples/docker`](examples/docker) is a client alone, of the Docker Engine API, and a command line on it: a
+contract of an API that quoll did not write, as [Another API](docs/guides/another-api.md) shows.
 
 ```bash
 cd examples/docker
 cargo run -p docker-cli -- ps -a
 ```
+
+## Agents
+
+**Made for agents.** The contract is checked when it compiles: a route without its handler, a call with the wrong
+arguments, or a client out of step with the server is a compile error, spanned on the token at fault and saying what
+to write instead. An agent that gets it wrong finds out at once, and fixes it from the message.
+
+The compiler checks the contract, not what a handler does: [a test](docs/guides/testing.md) does, a server and its
+client in a few lines.
 
 ## Status
 
