@@ -9,7 +9,7 @@ use quoll::{Response, Result, server};
 use reqwest::StatusCode;
 use reqwest::header::{
     ACCEPT, ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
-    IF_MODIFIED_SINCE, LAST_MODIFIED, LOCATION, RANGE, VARY,
+    IF_MODIFIED_SINCE, LAST_MODIFIED, LOCATION, VARY,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -267,7 +267,7 @@ async fn a_request_of_a_page_that_is_no_file_answers_index_html() {
         assert_eq!(header(&response, CACHE_CONTROL), "no-cache");
         assert_eq!(header(&response, CONTENT_TYPE), "text/html");
         assert_eq!(header(&response, "x-content-type-options"), "nosniff");
-        assert!(varies(&response).contains(&"accept".to_owned()), "{path}");
+        assert_eq!(varies(&response), ["accept", "accept-encoding"], "{path}");
         assert_eq!(response.text().await.expect("a text"), INDEX);
     }
 }
@@ -291,7 +291,11 @@ async fn a_request_that_accepts_no_html_is_a_problem_404_when_no_file() {
             .await
             .expect("the server answers");
 
-        assert_eq!(varies(&response), ["accept"], "{path} {accept}");
+        assert_eq!(
+            varies(&response),
+            ["accept", "accept-encoding"],
+            "{path} {accept}"
+        );
         not_found(response, "the page has no file of this path").await;
     }
 }
@@ -319,54 +323,23 @@ async fn a_missing_file_of_the_well_known_directory_is_never_index_html() {
 }
 
 #[tokio::test]
-async fn index_html_is_always_sent_whole() {
+async fn a_file_is_not_modified_since_its_date_index_html_too() {
     let dir = page();
     let url = serve(dir.path()).await;
 
-    let modified = header(&get(&format!("{url}/")).await, LAST_MODIFIED).to_owned();
-
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(dir.path().join("index.html"), dir.path().join("start.html"))
-        .expect("the link is made");
-
-    // `start.html` is `index.html` by its real path.
-    let paths: &[&str] = if cfg!(unix) {
-        &["/", "/index.html", "/docs/", "/notes/3", "/start.html"]
-    } else {
-        &["/", "/index.html", "/docs/", "/notes/3"]
-    };
-
-    for path in paths {
-        let response = client()
-            .get(format!("{url}{path}"))
-            .header(ACCEPT, BROWSER)
+    for path in ["/robots.txt", "/", "/index.html"] {
+        let file = format!("{url}{path}");
+        let modified = header(&get(&file).await, LAST_MODIFIED).to_owned();
+        let again = client()
+            .get(&file)
             .header(IF_MODIFIED_SINCE, &modified)
-            .header(RANGE, "bytes=0-3")
             .send()
             .await
             .expect("the server answers");
 
-        assert_eq!(response.status(), StatusCode::OK, "{path}");
-        assert!(response.text().await.expect("a text").len() > 4, "{path}");
+        assert_eq!(again.status(), StatusCode::NOT_MODIFIED, "{path}");
+        assert_eq!(header(&again, CACHE_CONTROL), "no-cache", "{path}");
     }
-}
-
-#[tokio::test]
-async fn another_file_is_not_modified_since_its_date() {
-    let dir = page();
-    let url = serve(dir.path()).await;
-    let robots = format!("{url}/robots.txt");
-
-    let modified = header(&get(&robots).await, LAST_MODIFIED).to_owned();
-    let again = client()
-        .get(&robots)
-        .header(IF_MODIFIED_SINCE, &modified)
-        .send()
-        .await
-        .expect("the server answers");
-
-    assert_eq!(again.status(), StatusCode::NOT_MODIFIED);
-    assert_eq!(header(&again, CACHE_CONTROL), "no-cache");
 }
 
 #[tokio::test]
@@ -449,14 +422,20 @@ async fn a_file_stored_compressed_is_sent_when_its_coding_is_accepted() {
         assert_eq!(header(&response, CONTENT_ENCODING), encoding, "{accepted}");
         assert_eq!(header(&response, CONTENT_TYPE), "text/javascript");
 
-        // Sent as it is or as a copy, the file has copies: its answer varies by the coding.
         assert_eq!(varies(&response), ["accept-encoding"], "{accepted}");
 
         assert_eq!(response.text().await.expect("a body"), body);
     }
 
-    // A file with no copy does not vary.
-    assert!(varies(&get(&format!("{url}/robots.txt")).await).is_empty());
+    // Every answer of the page varies by the coding, once.
+    assert_eq!(
+        varies(&get(&format!("{url}/robots.txt")).await),
+        ["accept-encoding"]
+    );
+    assert_eq!(
+        varies(&get(&format!("{url}/.env")).await),
+        ["accept-encoding"]
+    );
 }
 
 #[tokio::test]
@@ -568,32 +547,6 @@ async fn a_file_modified_before_1970_is_a_problem_500_not_a_panic() {
         get(&format!("{url}/{HASHED}")).await.status(),
         StatusCode::OK
     );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn a_file_there_but_unreadable_is_a_problem_500_that_names_it() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let dir = page();
-    let locked = dir.path().join("locked.js");
-
-    write(dir.path(), "locked.js", b"locked");
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("the mode is set");
-
-    // Run as root, the file reads all the same: there is nothing to test.
-    if fs::read(&locked).is_ok() {
-        return;
-    }
-
-    let url = serve(dir.path()).await;
-    let response = browse(&format!("{url}/locked.js")).await;
-
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(header(&response, CONTENT_TYPE), "application/problem+json");
-    assert!(!response.text().await.expect("a body").contains(INDEX));
-
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).expect("the mode is set");
 }
 
 #[tokio::test]

@@ -185,21 +185,19 @@ impl Builder {
     ///   browser's request of a page, answers `index.html` with `Vary: Accept`, so that the page's router takes it,
     ///   but under `/.well-known/`. Any other request is a problem 404: a missing script is no HTML. The api's router
     ///   answers a problem 404 for a path under its prefix that is no route: such a path never reaches the page.
-    /// - A file is sent with the content type of its extension, and every answer with `X-Content-Type-Options:
-    ///   nosniff`. Its
-    ///   `Last-Modified` answers `If-Modified-Since` with a 304, and `Range` a part of it; `index.html` is always
-    ///   sent whole. `HEAD` gets the headers alone. Any other method is a problem 405.
+    /// - A file is sent with the content type of its extension. Its `Last-Modified` answers `If-Modified-Since`
+    ///   with a 304, and `Range` gets a part of it. `HEAD` gets the headers alone. Any other method is a problem 405.
     /// - A file Vite names by its hash, `assets/index-BXa3kD9f.js`, is `Cache-Control: public, max-age=31536000,
     ///   immutable`: a name with a `-`, eight characters of base64url and a `.`, that `dir/.vite/manifest.json`
     ///   names, which Vite writes with `build.manifest`. With no manifest, such a name under `assets/` whose eight
     ///   characters hold a digit. `index.html` and every other file are `no-cache`.
     /// - A copy stored compressed beside a file, `app.js.br`, `app.js.gz` or `app.js.zst`, is sent in its place when
-    ///   the request accepts its coding. Every answer of a file with such copies carries `Vary: Accept-Encoding`.
+    ///   the request accepts its coding.
+    /// - Every answer of the page carries `X-Content-Type-Options: nosniff` and `Vary: Accept-Encoding`.
     /// - No file out of `dir` is ever sent: a path with `..`, and a file or a copy whose real path is out of `dir`,
     ///   answer a problem 404. So does a hidden file, whose real path below `dir` has a name that begins with a `.`,
-    ///   but those of `/.well-known/`, and a path with an empty segment. They are checked on the file `ServeDir`
-    ///   opens, found as it finds it. A file that cannot be opened, or whose time no HTTP date holds, is a problem
-    ///   500 that names it.
+    ///   but those of `/.well-known/`, and a path with an empty segment. A file whose time no HTTP date holds is a
+    ///   problem 500 that names it. A file the server cannot read is no file, as for `ServeDir`.
     ///
     /// The page replaces any fallback of the router. [`serve`](Self::serve) and [`serve_on`](Self::serve_on) check
     /// that `dir` holds an `index.html` before they serve.
