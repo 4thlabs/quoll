@@ -1,0 +1,5 @@
+error: POST on this path is already the route `Messages::create`: a method and a path belong to one route, unless a field both fix in their `#[body(...)]` tells them apart, and `stream` takes values of two kinds, which a form writes alike: give it values of one kind, two bools, two numbers or two strings
+  --> tests/compile_fail/fixed_field_values_of_two_kinds.rs:18:14
+   |
+18 |         POST "/messages" => stream(request: Request);
+   |              ^^^^^^^^^^^

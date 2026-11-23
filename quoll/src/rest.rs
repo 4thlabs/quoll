@@ -155,6 +155,35 @@
 //! }
 //! ```
 //!
+//! # Fixed fields of the body
+//!
+//! Two answers of one method and path that another API tells apart by a field of the body are two routes, each with
+//! the field it fixes: `#[body("name" = value)]` on a route, the value a bool, a number or a string. The client adds
+//! each field at the top of the body, its JSON or a [`Form`], which serializes as a struct or a map, a field of the
+//! body's own of that name replaced; the server picks the route whose fields the body holds, then reads the handler's
+//! type from the same bytes, which ignores them. Two routes of one method and path compile when a field both fix has
+//! two values of one kind, in an api `#[openapi(none)]`; the OpenAPI document describes the fields of a route alone on
+//! its path as `const` properties of its body.
+//!
+//! ```
+//! use std::collections::BTreeMap;
+//!
+//! use quoll::rest::{self, Events};
+//!
+//! rest::api! {
+//!     #[openapi(none)]
+//!     pub api Anthropic = "/v1";
+//!
+//!     pub group Messages {
+//!         #[body("stream" = false)]
+//!         POST "/messages" => create(request: BTreeMap<String, String>) -> String;
+//!
+//!         #[body("stream" = true)]
+//!         POST "/messages" => stream(request: BTreeMap<String, String>) -> Events<String>;
+//!     }
+//! }
+//! ```
+//!
 //! # Results
 //!
 //! | The route returns | The server answers                                      | The client returns |

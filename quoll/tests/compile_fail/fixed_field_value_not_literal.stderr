@@ -1,0 +1,5 @@
+error: a fixed field's value is a bool, a number or a string: write `#[body("stream" = true)]`, the field's name then its value
+  --> tests/compile_fail/fixed_field_value_not_literal.rs:16:27
+   |
+16 |         #[body("stream" = STREAM)]
+   |                           ^^^^^^

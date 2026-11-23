@@ -50,6 +50,16 @@ pub(crate) fn route_docs(prefix: Option<&str>, route: &Route) -> TokenStream {
         }
     }
 
+    if !route.fields.is_empty() {
+        let fields: Vec<String> = route
+            .fields
+            .iter()
+            .map(|field| format!("`{:?}: {}`", field.name.value(), field.value))
+            .collect();
+
+        line.push_str(&format!(", its body holding {}", fields.join(" and ")));
+    }
+
     let mut lines = route.docs.0.clone();
     if !lines.is_empty() {
         lines.push(String::new());

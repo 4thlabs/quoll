@@ -11,6 +11,7 @@ use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::descriptor::{Cx, descriptor_name, table};
 use crate::docs::{doc_attrs, route_docs};
+use crate::fields::route_fields;
 use crate::headers::{api_headers, route_headers};
 use crate::model::{Api, Param, Route};
 use crate::path::Segment;
@@ -250,8 +251,14 @@ fn method(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
         // Spanned on the type, as a type that is not `Serialize` is the mistake an error names then.
         let write = Ident::new(kind.method, ty.span());
         let fallible = kind.fallible.then(|| quote! { ? });
+        // A body that may hold fixed fields is written with the route's, which may be none.
+        let fields = kind.format.map(|_| {
+            let fields = route_fields(route);
 
-        quote_spanned! {ty.span()=> .#write(#name) #fallible }
+            quote! { , #fields }
+        });
+
+        quote_spanned! {ty.span()=> .#write(#name #fields) #fallible }
     });
     let fixed = route_headers(cx.group, route);
     let accept = route.reply.as_deref().map(|returned| {

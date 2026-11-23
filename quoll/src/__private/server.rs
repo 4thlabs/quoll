@@ -21,6 +21,7 @@ use serde::de::DeserializeOwned;
 use crate::__private::content_type::{
     self, FORM, JSON, MULTIPART, OCTET_STREAM, PROBLEM, TEXT, TEXT_UTF8, media_type_value,
 };
+use crate::__private::fields::{self, Field};
 use crate::__private::known::{IsAccepted, IsBytes, IsCreated, IsForm, IsText};
 use crate::__private::read::{Deserialized, Read};
 use crate::__private::text;
@@ -34,17 +35,170 @@ pub use axum::routing::MethodFilter;
 pub(crate) use stream::ended_on_stop;
 pub use stream::{Written, byte_stream, events, json_lines};
 
+/// The routes of an api, which its groups add theirs to: the router of the routes that have no fixed field in their
+/// body, and the routes that have, which [`Routes::finish`] serves once every group has added its own, as two of
+/// them, from two groups, may share a method and a path.
+#[derive(Default)]
+pub struct Routes {
+    router: Router,
+    fielded: Vec<Fielded>,
+}
+
+impl std::fmt::Debug for Routes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Routes")
+            .field("fielded", &self.fielded.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// What a route does with a request, once it is the one that serves it.
+type Endpoint = Arc<dyn Fn(axum::extract::Request) -> BoxFuture<Response> + Send + Sync>;
+
+/// A future of an answer, boxed.
+type BoxFuture<T> = std::pin::Pin<Box<dyn Future<Output = T> + Send>>;
+
+/// A route with fixed fields in its body, `#[body(...)]`.
+struct Fielded {
+    route: &'static Route,
+    fields: &'static [Field],
+    format: Format,
+    endpoint: Endpoint,
+}
+
+/// How a body with fixed fields is read: the format its fields are looked for in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// JSON.
+    Json,
+    /// A form, `Form<T>`.
+    Form,
+}
+
+impl Format {
+    /// Whether `body`, of this format, holds `fields`.
+    fn holds(self, body: &[u8], fields: &'static [Field]) -> bool {
+        match self {
+            Self::Json => fields::holds(&mut serde_json::Deserializer::from_slice(body), fields),
+            Self::Form => fields::holds(serde_html_form::Deserializer::from_bytes(body), fields),
+        }
+    }
+
+    /// Whether `headers` say the body is of this format, as the route reads it.
+    fn is_sent(self, headers: &HeaderMap) -> bool {
+        match self {
+            Self::Json => content_type::is_json(headers),
+            Self::Form => content_type::is(headers, FORM, true),
+        }
+    }
+}
+
+impl Routes {
+    /// No route yet.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The router, with every route: a route with fixed fields alone on its method and path is served as any other,
+    /// and the ones that share them by the one whose fields the body holds.
+    ///
+    /// # Panics
+    ///
+    /// When axum refuses a route's method or its path, which the macro has checked it would not.
+    pub fn finish(self) -> Router {
+        let mut router = self.router;
+        let mut fielded = self.fielded;
+
+        while !fielded.is_empty() {
+            let first = fielded.remove(0);
+            let (method, path) = (first.route.method().clone(), first.route.path());
+            let (mut shared, rest): (Vec<Fielded>, Vec<Fielded>) = fielded
+                .into_iter()
+                .partition(|other| *other.route.method() == method && other.route.path() == path);
+            fielded = rest;
+
+            let filter =
+                MethodFilter::try_from(method).expect("the macro writes a method axum serves");
+
+            if shared.is_empty() {
+                let endpoint = first.endpoint;
+
+                router = router.route(path, on(filter, move |request| endpoint(request)));
+                continue;
+            }
+
+            shared.insert(0, first);
+
+            let shared: Arc<[Fielded]> = shared.into();
+            router = router.route(
+                path,
+                on(filter, move |request| pick(Arc::clone(&shared), request)),
+            );
+        }
+
+        router
+    }
+}
+
+/// Serves `request` by the one of `routes`, of one method and path, whose fields its body holds. The body is read
+/// first, within the limit axum sets, as it picks the route, which then authenticates the request and reads it.
+async fn pick(routes: Arc<[Fielded]>, request: axum::extract::Request) -> Response {
+    let (parts, body) = request.into_parts();
+
+    // A body none of the routes reads is the first one's to refuse, as it is when it serves the path alone.
+    if !routes
+        .iter()
+        .any(|route| route.format.is_sent(&parts.headers))
+    {
+        return (routes[0].endpoint)(http::Request::from_parts(parts, body)).await;
+    }
+
+    let bytes =
+        match axum::body::Bytes::from_request(http::Request::from_parts(parts.clone(), body), &())
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(error) => return body_rejected(error.status(), error.body_text()).into_response(),
+        };
+
+    let picked = routes.iter().find(|route| {
+        route.format.is_sent(&parts.headers) && route.format.holds(&bytes, route.fields)
+    });
+    let Some(picked) = picked else {
+        let routes: Vec<String> = routes
+            .iter()
+            .map(|route| {
+                format!(
+                    "`{}` {}",
+                    route.route.operation_id,
+                    fields::shown(route.fields)
+                )
+            })
+            .collect();
+
+        return Error::bad_request(format!(
+            "the body holds the fields of none of the routes of `{} {}`, which they tell apart: {}",
+            parts.method,
+            parts.uri.path(),
+            routes.join("; ")
+        ))
+        .into_response();
+    };
+
+    (picked.endpoint)(http::Request::from_parts(parts, Body::from(bytes))).await
+}
+
 /// The routes of one group, each served by the group's service.
 pub struct Group<S> {
-    router: Router,
+    routes: Routes,
     service: Arc<S>,
 }
 
 impl<S: Send + Sync + 'static> Group<S> {
-    /// Starts adding the routes of `service` to `router`.
-    pub fn new(router: Router, service: S) -> Self {
+    /// Starts adding the routes of `service` to `routes`.
+    pub fn new(routes: Routes, service: S) -> Self {
         Self {
-            router,
+            routes,
             service: Arc::new(service),
         }
     }
@@ -57,7 +211,7 @@ impl<S: Send + Sync + 'static> Group<S> {
     /// # Panics
     ///
     /// When axum refuses the route's method or its path, which the macro has checked it would not.
-    pub fn route<C, F, Fut>(self, route: &'static Route, handler: F) -> Self
+    pub fn route<C, F, Fut>(mut self, route: &'static Route, handler: F) -> Self
     where
         C: Challenges,
         F: Fn(Arc<S>, Request) -> Fut + Clone + Send + Sync + 'static,
@@ -65,31 +219,69 @@ impl<S: Send + Sync + 'static> Group<S> {
     {
         let method = MethodFilter::try_from(route.method().clone())
             .expect("the macro writes a method axum serves");
+        let endpoint = self.endpoint::<C, F, Fut>(route, handler);
+
+        self.routes.router = self
+            .routes
+            .router
+            .route(route.path(), on(method, move |request| endpoint(request)));
+        self
+    }
+
+    /// Serves `route`, whose body, of `format`, holds the fixed `fields`, with `handler`, as [`Group::route`] serves
+    /// any other: by itself when no other route has its method and path, else beside the ones that have, each body
+    /// served by the route whose fields it holds.
+    pub fn route_with<C, F, Fut>(
+        mut self,
+        route: &'static Route,
+        fields: &'static [Field],
+        format: Format,
+        handler: F,
+    ) -> Self
+    where
+        C: Challenges,
+        F: Fn(Arc<S>, Request) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = Result<Response>> + Send + 'static,
+    {
+        let endpoint = self.endpoint::<C, F, Fut>(route, handler);
+
+        self.routes.fielded.push(Fielded {
+            route,
+            fields,
+            format,
+            endpoint,
+        });
+        self
+    }
+
+    /// What `route` does with a request, by `handler`.
+    fn endpoint<C, F, Fut>(&self, route: &'static Route, handler: F) -> Endpoint
+    where
+        C: Challenges,
+        F: Fn(Arc<S>, Request) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = Result<Response>> + Send + 'static,
+    {
         let service = Arc::clone(&self.service);
-        let endpoint = on(method, move |request: axum::extract::Request| {
+
+        Arc::new(move |request: axum::extract::Request| {
             trace::record_route(request.extensions(), route);
 
             let answer = handler(Arc::clone(&service), Request::new(request));
 
-            async move {
+            Box::pin(async move {
                 let mut response = answer
                     .await
                     .unwrap_or_else(|error| challenged::<C>(error.into_response()));
 
                 response.extensions_mut().insert(route.clone());
                 response
-            }
-        });
-
-        Self {
-            router: self.router.route(route.path(), endpoint),
-            service: self.service,
-        }
+            })
+        })
     }
 
-    /// The router, with the group's routes.
-    pub fn finish(self) -> Router {
-        self.router
+    /// The routes, with the group's.
+    pub fn finish(self) -> Routes {
+        self.routes
     }
 }
 
@@ -338,15 +530,37 @@ impl Request {
         })
     }
 
-    /// The body, read as the JSON of `T`.
+    /// The body, read as the JSON of `T`, which holds the route's fixed `fields`.
     ///
     /// # Errors
     ///
-    /// The read resolves to a 400 when the body is not the JSON of `T`, a 415 when the request does not say it sends
-    /// JSON or names more than one content type, and the status axum gives when the body cannot be read, as a 413 for
-    /// one too large.
-    pub fn json<T: Deserialized + Send + 'static>(self) -> Read<T> {
-        Read::new(self.read_json())
+    /// The read resolves to a 400 when the body is not the JSON of `T` or does not hold the fields, a 415 when the
+    /// request does not say it sends JSON or names more than one content type, the status axum gives when the body
+    /// cannot be read, as a 413 for one too large, and a 500 when `T` refuses a field the contract fixes.
+    pub fn json<T: Deserialized + Send + 'static>(self, fields: &'static [Field]) -> Read<T> {
+        if fields.is_empty() {
+            return Read::new(self.read_json());
+        }
+
+        Read::new(self.read_json_with(fields))
+    }
+
+    /// The body, read as JSON with its fixed fields: once for the fields, then into `T`, which ignores them.
+    async fn read_json_with<T: DeserializeOwned>(self, fields: &'static [Field]) -> Result<T> {
+        if !content_type::is_json(&self.parts.headers) {
+            return Err(unsupported(format!(
+                "the body is read as `{JSON}`: send it with one `Content-Type: {JSON}`"
+            )));
+        }
+
+        let body = self.read().await?;
+        check_fields(Format::Json.holds(&body, fields), fields)?;
+
+        match axum::Json::<T>::from_bytes(&body) {
+            Ok(axum::Json(value)) => Ok(value),
+            Err(JsonRejection::JsonDataError(error)) => Err(refused(error.body_text(), fields)),
+            Err(error) => Err(body_rejected(error.status(), error.body_text())),
+        }
     }
 
     /// The body, read as JSON, as [`Request::json`] reads it.
@@ -384,16 +598,17 @@ impl Request {
     /// The read resolves to a 415 when the request does not say it sends `application/x-www-form-urlencoded`, or names
     /// a charset other than UTF-8; a 400 when the form does not read as `T` or a value is not UTF-8 once decoded, and
     /// the status axum gives when the body cannot be read.
-    pub fn form<F>(self) -> Read<F>
+    pub fn form<F>(self, fields: &'static [Field]) -> Read<F>
     where
         F: IsForm + Send + 'static,
         F::Value: Deserialized,
     {
-        Read::new(self.read_form())
+        Read::new(self.read_form(fields))
     }
 
-    /// The body, read as a form, as [`Request::form`] reads it.
-    async fn read_form<F>(self) -> Result<F>
+    /// The body, read as a form, as [`Request::form`] reads it: once for its fixed fields, when it has some, then
+    /// into `T`, which ignores them.
+    async fn read_form<F>(self, fields: &'static [Field]) -> Result<F>
     where
         F: IsForm,
         F::Value: DeserializeOwned,
@@ -402,7 +617,16 @@ impl Request {
 
         let body = self.read().await?;
 
-        from_form(&body, "the form").map(F::from_value)
+        if fields.is_empty() {
+            return from_form(&body, "the form").map(F::from_value);
+        }
+
+        check_utf8(&body, "the form")?;
+        check_fields(Format::Form.holds(&body, fields), fields)?;
+
+        serde_html_form::from_bytes(&body)
+            .map(F::from_value)
+            .map_err(|error| refused(format!("the form is not valid: {error}"), fields))
     }
 
     /// The body, read as UTF-8 text.
@@ -497,8 +721,16 @@ fn unsupported(detail: String) -> Error {
 
 /// `form`, the query or a body, read as serde_html_form reads a form into `T`; `what` names it in the errors.
 fn from_form<T: DeserializeOwned>(form: &[u8], what: &str) -> Result<T> {
-    // serde_html_form decodes a value that is not UTF-8 with U+FFFD in it, which would reach the handler as text the
-    // caller never sent. `&` and `=` are ASCII, so the whole form decodes as UTF-8 when each value does.
+    check_utf8(form, what)?;
+
+    serde_html_form::from_bytes(form)
+        .map_err(|error| Error::bad_request(format!("{what} is not valid: {error}")))
+}
+
+/// A 400 unless `form` decodes as UTF-8: serde_html_form decodes a value that is not with U+FFFD in it, which would
+/// reach the handler as text the caller never sent. `&` and `=` are ASCII, so the whole form decodes as UTF-8 when
+/// each value does.
+fn check_utf8(form: &[u8], what: &str) -> Result<()> {
     if percent_encoding::percent_decode(form)
         .decode_utf8()
         .is_err()
@@ -508,8 +740,28 @@ fn from_form<T: DeserializeOwned>(form: &[u8], what: &str) -> Result<T> {
         )));
     }
 
-    serde_html_form::from_bytes(form)
-        .map_err(|error| Error::bad_request(format!("{what} is not valid: {error}")))
+    Ok(())
+}
+
+/// A 400 unless the body `holds` the route's fixed `fields`.
+fn check_fields(holds: bool, fields: &[Field]) -> Result<()> {
+    if holds {
+        return Ok(());
+    }
+
+    Err(Error::bad_request(format!(
+        "the body does not hold the fields this route fixes, each once: {}",
+        fields::shown(fields)
+    )))
+}
+
+/// The error of a body with fixed fields that its type does not read, `text` saying why: a 500 when the type refuses
+/// one of the fields, `#[serde(deny_unknown_fields)]`, a mistake of the server's, else a 400.
+fn refused(text: String, fields: &[Field]) -> Error {
+    match fields::refused_by(&text, fields) {
+        Some(name) => Error::internal(fields::refused_message(name)),
+        None => Error::bad_request(text),
+    }
 }
 
 /// What axum refused in a body: a 413 for one larger than its limit, said as `server::body_limit` says it but
@@ -1043,7 +1295,7 @@ mod tests {
             streams: false,
         };
 
-        let router = Group::new(Router::new(), ())
+        let router = Group::new(Routes::new(), ())
             .route::<(), _, _>(&UPSTREAM, |_, _| async {
                 Err(Error::upstream(
                     StatusCode::NOT_FOUND,
@@ -1052,6 +1304,7 @@ mod tests {
                     Some("the other api's secret".to_owned()),
                 ))
             })
+            .finish()
             .finish();
         let url = crate::test::spawn(router).await;
 

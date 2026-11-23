@@ -27,5 +27,5 @@ note: required by a bound in `quoll::__private::server::Request::json`
    |
    | impl Request {
 ...
-   |     pub fn json<T: Deserialized + Send + 'static>(self) -> Read<T> {
+   |     pub fn json<T: Deserialized + Send + 'static>(self, fields: &'static [Field]) -> Read<T> {
    |                    ^^^^^^^^^^^^ required by this bound in `Request::json`

@@ -7,6 +7,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::{Ident, LitStr, ext::IdentExt};
 
+use crate::fields::route_fields;
 use crate::headers::{api_headers, route_headers};
 use crate::model::{Api, Group, Method, Route, Scheme, SchemeKind, reach, shown_vis, snake_case};
 use crate::scheme::scheme_type;
@@ -114,6 +115,7 @@ fn route_info(group: &Group, route: &Route) -> TokenStream {
         Some(None) => quote! { ::quoll::__private::group::BodyInfo::Bytes },
     };
     let fixed = route_headers(group, route);
+    let fields = route_fields(route);
 
     quote! {
         ::quoll::__private::group::RouteInfo {
@@ -129,6 +131,7 @@ fn route_info(group: &Group, route: &Route) -> TokenStream {
             streams: #streams,
             body: #body,
             fixed: #fixed,
+            fields: #fields,
         }
     }
 }
@@ -383,6 +386,7 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
     let api_reach = reach(&api.vis);
     let shown = shown_vis(&api.vis);
     let headers = api_headers(&api.headers);
+    let openapi = api.openapi;
     let refs = api.refs();
     let written: Vec<TokenStream> = refs[api.listed.len()..]
         .iter()
@@ -441,6 +445,7 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
                 reach: #api_reach,
                 vis: #shown,
                 headers: #headers,
+                openapi: #openapi,
             };
 
             #(#checks)*

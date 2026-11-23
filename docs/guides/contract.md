@@ -287,6 +287,57 @@ rest::api! {
 - The server does not check them. The OpenAPI document describes each one as a header parameter of its value, which a
   caller need not send.
 
+## Fixed fields of the body
+
+An API that tells two answers of one method and path apart by a field of the body, Anthropic's `"stream": true`,
+says it in the contract with `#[body("name" = value)]`, on each route:
+
+```rust
+use quoll::rest::{self, Events};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageRequest {
+    pub model: String,
+    pub max_tokens: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Message {
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StreamEvent {
+    pub r#type: String,
+}
+
+rest::api! {
+    #[openapi(none)]
+    pub api Anthropic = "/v1";
+
+    pub group Messages {
+        #[body("stream" = false)]
+        POST "/messages" => create(request: MessageRequest) -> Message;
+
+        #[body("stream" = true)]
+        POST "/messages" => stream(request: MessageRequest) -> Events<StreamEvent>;
+    }
+}
+```
+
+- A route takes one `#[body(...)]` per field, its value a bool, a number or a string. The client adds each field at
+  the top of the body, its JSON or a `Form<T>`, which serializes as a struct or a map; a field of the body's own of
+  that name is replaced. Another body is refused before it is sent, and a `Text` or `Bytes` body does not compile.
+- Two routes share a method and a path when a field both fix has two values of one kind. The server reads the body's
+  fields first, which pick the route, then its handler's type from the same bytes, which ignores them: a type with
+  `#[serde(deny_unknown_fields)]` refuses them, and the server answers 500, logged with a message that says so. A
+  body that holds the fields of no route answers 400.
+- A route alone on its method and path checks its fields too, after it authenticates. Two routes that share them read
+  the body first, to pick one, then authenticate.
+- The OpenAPI document describes a route's fields as `const` properties of its body. It does not describe two routes of
+  one method and path yet: they compile in an api `#[openapi(none)]`, a contract of another API.
+
 ## Results
 
 | The route returns | The server answers                                               | The client returns |

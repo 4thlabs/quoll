@@ -11,6 +11,7 @@ use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::descriptor::{Cx, GroupRef, descriptor_name, table};
 use crate::docs::{doc_attrs, route_docs};
+use crate::fields::route_fields;
 use crate::model::{Api, Bounds, Param, Route, is_vec};
 use crate::scheme::{scheme_type, schemes_type};
 
@@ -222,10 +223,10 @@ fn router_fn(api: &Api) -> TokenStream {
             #[doc = #docs]
             #vis fn router(#services: #services_type<#(#bounds),*>) -> ::quoll::__private::axum::Router {
                 let #services_type { #(#fields: #locals),* } = #services;
-                let #router = ::quoll::__private::axum::Router::new();
+                let #router = ::quoll::__private::server::Routes::new();
                 #(#groups)*
 
-                #router
+                #router.finish()
             }
         }
     }
@@ -249,13 +250,13 @@ fn serve_fn(cx: &Cx) -> TokenStream {
 
     quote! {
         impl #descriptor {
-            /// Serves the group's routes by `service` on `router`, each with its route of `routes`, the table of the
-            /// api that lists the group.
+            /// Adds the group's routes, served by `service`, to `router`, each with its route of `routes`, the table
+            /// of the api that lists the group.
             pub fn serve(
-                #router: ::quoll::__private::axum::Router,
+                #router: ::quoll::__private::server::Routes,
                 #service: impl #server_trait,
                 #routes_table: &'static [::quoll::rest::Route; #count],
-            ) -> ::quoll::__private::axum::Router {
+            ) -> ::quoll::__private::server::Routes {
                 ::quoll::__private::server::Group::new(#router, #service)
                     #(#routes)*
                     .finish()
@@ -375,9 +376,11 @@ fn route_call(routes: &Ident, index: usize, route: &Route) -> TokenStream {
         let (name, ty) = (&param.name, &param.ty);
         // Spanned on the type, as a type that is not `Deserialize` is the mistake an error names then.
         let read = Ident::new(kind.method, ty.span());
+        // A body that may hold fixed fields is read with the route's, which may be none.
+        let fields = kind.format.map(|_| route_fields(route));
 
         reads.push(quote_spanned! {ty.span()=>
-            let #name = #request.#read::<#ty>().await?;
+            let #name = #request.#read::<#ty>(#fields).await?;
         });
     }
 
@@ -410,13 +413,33 @@ fn route_call(routes: &Ident, index: usize, route: &Route) -> TokenStream {
         quote! { mut #request }
     };
 
+    let handler = quote! {
+        |#service, #request_pattern| async move {
+            #(#reads)*
+            #answer
+        }
+    };
+
+    // A route with fixed fields is served beside the ones of its method and path, by the fields its body holds.
+    let format = route
+        .body()
+        .and_then(|(_, kind)| kind.format)
+        .filter(|_| !route.fields.is_empty());
+    let Some(format) = format else {
+        return quote! {
+            .route::<#challenges, _, _>(&#routes[#index], #handler)
+        };
+    };
+
+    let fields = route_fields(route);
+    let format = Ident::new(format, Span::call_site());
+
     quote! {
-        .route::<#challenges, _, _>(
+        .route_with::<#challenges, _, _>(
             &#routes[#index],
-            |#service, #request_pattern| async move {
-                #(#reads)*
-                #answer
-            },
+            #fields,
+            ::quoll::__private::server::Format::#format,
+            #handler,
         )
     }
 }

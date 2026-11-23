@@ -111,17 +111,22 @@ pub(crate) struct BodyKind {
     pub(crate) schema: bool,
     /// Its media type, which a fixed `Content-Type` keeps: none for `Bytes`, which carry their own.
     pub(crate) media_type: Option<&'static str>,
+    /// The variant of `quoll::__private::server::Format` it is read in, when it may hold fixed fields,
+    /// `#[body(...)]`: its JSON and a form, which serde writes as a struct or a map; not text or bytes.
+    pub(crate) format: Option<&'static str>,
 }
 
 impl BodyKind {
     /// Any type the macro does not recognize: its JSON, `application/json`.
-    pub(crate) const JSON: Self = Self::fallible("json", "Json", true, Some("application/json"));
+    pub(crate) const JSON: Self =
+        Self::fallible("json", "Json", true, Some("application/json"), Some("Json"));
     /// `Form<T>`: `application/x-www-form-urlencoded`.
     pub(crate) const FORM: Self = Self::fallible(
         "form",
         "Form",
         true,
         Some("application/x-www-form-urlencoded"),
+        Some("Form"),
     );
     /// `Text`: `text/plain`, UTF-8, which is always written.
     pub(crate) const TEXT: Self = Self {
@@ -130,15 +135,17 @@ impl BodyKind {
         document: "Text",
         schema: false,
         media_type: Some("text/plain"),
+        format: None,
     };
     /// `Bytes`: any content type but the three a browser sends to another site without asking.
-    pub(crate) const BYTES: Self = Self::fallible("bytes", "Bytes", false, None);
+    pub(crate) const BYTES: Self = Self::fallible("bytes", "Bytes", false, None, None);
 
     const fn fallible(
         method: &'static str,
         document: &'static str,
         schema: bool,
         media_type: Option<&'static str>,
+        format: Option<&'static str>,
     ) -> Self {
         Self {
             method,
@@ -146,6 +153,7 @@ impl BodyKind {
             document,
             schema,
             media_type,
+            format,
         }
     }
 }

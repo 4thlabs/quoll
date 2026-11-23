@@ -24,9 +24,9 @@ use syn::{
 };
 
 use crate::model::{
-    Api, ArgDecl, Auth, DeclaredScheme, Docs, ErrorList, Fixed, Group, HeaderAttr, Headers, Join,
-    JoinAttr, MAX_ALTERNATIVES, Method, Route, RouteAuth, RouteDecl, Scheme, Source, Value,
-    headers,
+    Api, ArgDecl, Auth, BodyField, DeclaredScheme, Docs, ErrorList, FieldValue, Fixed, Group,
+    HeaderAttr, Headers, Join, JoinAttr, MAX_ALTERNATIVES, Method, Route, RouteAuth, RouteDecl,
+    Scheme, Source, Value, fields, headers,
 };
 
 /// What the macro is given: one api, with its groups.
@@ -71,7 +71,9 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             openapi,
             error,
             headers,
+            body,
         } = parse_attrs(input)?;
+        refuse_body(errors, &body, "a group");
         let vis: Visibility = input.parse()?;
         let keyword = input.call(Ident::parse_any).map_err(|error| {
             Error::new(
@@ -127,6 +129,7 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     let mut api = Api::alone(group).map_err(|error| fold(errors, error))?;
     api.openapi = document;
     headers::check(&api.groups, None, errors);
+    fields::check_document(&api, "the group", errors);
 
     Ok(api)
 }
@@ -145,6 +148,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             openapi,
             error,
             headers,
+            body,
         } = parse_attrs(input)?;
         let vis: Visibility = input.parse()?;
         let keyword = input.call(Ident::parse_any).map_err(|error| {
@@ -153,6 +157,14 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 "expected `api`, `scheme` or `group`: an item of a contract starts with one of them",
             )
         })?;
+        let what = if keyword == "api" {
+            "an api"
+        } else if keyword == "scheme" {
+            "a scheme"
+        } else {
+            "a group"
+        };
+        refuse_body(errors, &body, what);
 
         if keyword == "api" {
             if let Some((attr, _)) = &auth {
@@ -251,8 +263,21 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     api.error = error;
     api.headers = api_headers;
     headers::check(&api.groups, Some((&api, &api.headers)), errors);
+    fields::check_document(&api, "the api", errors);
 
     Ok(api)
+}
+
+/// Refuses the `#[body(...)]`s on `what`, which is not a route.
+fn refuse_body(errors: &mut ErrorList, body: &[Attribute], what: &str) {
+    for attr in body {
+        errors.push(Error::new_spanned(
+            attr,
+            format!(
+                "{what} takes no `#[body(...)]`: put it on a route, whose body it adds a fixed field to"
+            ),
+        ));
+    }
 }
 
 /// Refuses an `#[openapi(...)]` on `what`, which is not the api.
@@ -451,6 +476,7 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
         openapi,
         error,
         headers,
+        body,
     } = parse_attrs(input)?;
     let method = parse_method(input)?;
     let path: LitStr = input.parse().map_err(|error| {
@@ -512,6 +538,27 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
         }
     };
 
+    let mut field_errors = ErrorList::default();
+    let fields: Vec<BodyField> = body
+        .iter()
+        .filter_map(|attr| {
+            parse_body(attr)
+                .map_err(|error| field_errors.push(error))
+                .ok()
+        })
+        .collect();
+    let fields = match field_errors.finish().and_then(|()| fields::unique(fields)) {
+        Ok(fields) => fields,
+        Err(refused) => {
+            match &mut attr_error {
+                Some(error) => error.combine(refused),
+                None => attr_error = Some(refused),
+            }
+
+            Vec::new()
+        }
+    };
+
     let route = Route::resolve(
         RouteDecl {
             docs,
@@ -523,6 +570,7 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
             auth,
             error,
             headers,
+            fields,
         },
         group_auth,
     );
@@ -655,6 +703,7 @@ struct Attrs {
     openapi: Option<(Attribute, Result<bool>)>,
     error: Option<(Attribute, Result<Type>)>,
     headers: Result<Headers>,
+    body: Vec<Attribute>,
 }
 
 /// The attributes before an item. Any attribute other than a comment, `#[auth(...)]`, `#[openapi(...)]`,
@@ -668,8 +717,14 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
     let mut error: Option<(Attribute, Result<Type>)> = None;
     let mut headers: Vec<HeaderAttr> = Vec::new();
     let mut header_errors = ErrorList::default();
+    let mut body = Vec::new();
 
     for attr in attrs {
+        if attr.path().is_ident("body") {
+            body.push(attr);
+            continue;
+        }
+
         if attr.path().is_ident("header") {
             match parse_header(&attr) {
                 Ok(header) => headers.push(header),
@@ -769,7 +824,7 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
         let Some(line) = line else {
             return Err(Error::new_spanned(
                 attr,
-                "an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, `#[error(...)]` and `#[header(...)]` on the api, a group or a route, and `#[openapi(none)]` on the api",
+                "an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, `#[error(...)]` and `#[header(...)]` on the api, a group or a route, `#[body(...)]` on a route, and `#[openapi(none)]` on the api",
             ));
         };
 
@@ -787,7 +842,94 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
         openapi,
         error,
         headers,
+        body,
     })
+}
+
+/// What a `#[body(...)]` says: a field the route fixes in its body, `#[body("stream" = true)]`, its value a bool, a
+/// number or a string.
+fn parse_body(attr: &Attribute) -> Result<BodyField> {
+    const WRITE: &str = "write `#[body(\"stream\" = true)]`, the field's name then its value";
+
+    let Meta::List(list) = &attr.meta else {
+        return Err(Error::new_spanned(
+            attr,
+            format!("`#[body]` names a field: {WRITE}"),
+        ));
+    };
+    let refused = || {
+        Error::new_spanned(
+            &list.tokens,
+            format!(
+                "`#[body(...)]` takes a field, its value a bool, a number or a string: {WRITE}"
+            ),
+        )
+    };
+
+    list.parse_args_with(|input: ParseStream| {
+        let name: LitStr = input.parse().map_err(|_| refused())?;
+        input.parse::<Token![=]>().map_err(|_| refused())?;
+
+        let negative = input.peek(Token![-]);
+        if negative {
+            input.parse::<Token![-]>()?;
+        }
+
+        let lit: Lit = input.parse().map_err(|error| {
+            Error::new(
+                error.span(),
+                format!("a fixed field's value is a bool, a number or a string: {WRITE}"),
+            )
+        })?;
+        let value = field_value(&lit, negative)?;
+
+        if !input.is_empty() {
+            return Err(refused());
+        }
+
+        Ok(BodyField { name, value })
+    })
+}
+
+/// The value of a fixed field, `-` before it for a negative number.
+fn field_value(lit: &Lit, negative: bool) -> Result<FieldValue> {
+    let number = "a fixed number is an integer of an `i64` or a `u64`, or a finite float";
+
+    match lit {
+        Lit::Int(int) => {
+            let digits = int.base10_digits();
+            let text = if negative {
+                format!("-{digits}")
+            } else {
+                digits.to_owned()
+            };
+
+            if let Ok(value) = text.parse::<i64>() {
+                return Ok(FieldValue::Int(value));
+            }
+            if let Ok(value) = text.parse::<u64>() {
+                return Ok(FieldValue::Uint(value));
+            }
+
+            Err(Error::new(int.span(), number))
+        }
+        Lit::Float(float) => {
+            let value: f64 = float.base10_parse()?;
+            let value = if negative { -value } else { value };
+
+            if !value.is_finite() {
+                return Err(Error::new(float.span(), number));
+            }
+
+            Ok(FieldValue::Float(value))
+        }
+        Lit::Bool(value) if !negative => Ok(FieldValue::Bool(value.value)),
+        Lit::Str(value) if !negative => Ok(FieldValue::Str(value.value())),
+        _ => Err(Error::new_spanned(
+            lit,
+            "a fixed field's value is a bool, a number or a string, as `true`, `1024` or `\"text\"`",
+        )),
+    }
 }
 
 /// What a `#[header(...)]` says: a header the item fixes, `#[header("X-GitHub-Api-Version" = "2022-11-28")]`, with a

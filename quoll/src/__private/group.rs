@@ -8,6 +8,7 @@ use std::marker::PhantomData;
 use http::Method;
 
 use crate::__private::auth::{Declared, Place};
+use crate::__private::fields::{Field, tell_apart};
 use crate::__private::headers::{Fixed, RouteHeaders, keeps_media_type};
 use crate::rest::{Problem, Route};
 
@@ -66,6 +67,9 @@ pub struct RouteInfo {
     pub body: BodyInfo,
     /// The fixed headers it takes, beside its api's.
     pub fixed: RouteHeaders,
+    /// The fixed fields of its body, `#[body("name" = value)]`, which tell it apart from a route of its method and
+    /// path.
+    pub fields: &'static [Field],
 }
 
 /// The body of a route, as a fixed `Content-Type` sees it.
@@ -353,6 +357,8 @@ pub struct ApiInfo {
     pub vis: &'static str,
     /// Its fixed headers, `#[header("name" = value)]`, which the routes of its groups take.
     pub headers: &'static [Fixed],
+    /// Whether it has an OpenAPI document, which does not describe two routes of one method and path yet.
+    pub openapi: bool,
 }
 
 /// Checks, at compile time, a group an api lists against the api and the groups before it: the message of the first
@@ -441,7 +447,28 @@ const fn check_pair(
         return None;
     }
 
-    if first.method as u8 == route.method as u8 {
+    let told_apart = tell_apart(first.fields, route.fields);
+
+    if first.method as u8 == route.method as u8 && told_apart && api.openapi {
+        return Some(
+            Message::new()
+                .push(route.method.as_str())
+                .push(" ")
+                .push(api.prefix)
+                .push(route.path)
+                .push(", the route `")
+                .push(group.name)
+                .push("::")
+                .push(route.function)
+                .push("`, is the route `")
+                .push(first_group.name)
+                .push("::")
+                .push(first.function)
+                .push("` too, told apart by their `#[body(...)]`, which the OpenAPI document does not describe yet: write `#[openapi(none)]` on the api, for a contract that is only called"),
+        );
+    }
+
+    if first.method as u8 == route.method as u8 && !told_apart {
         return Some(
             Message::new()
                 .push(route.method.as_str())
@@ -456,7 +483,11 @@ const fn check_pair(
                 .push(first_group.name)
                 .push("::")
                 .push(first.function)
-                .push("`: a method and a path belong to one route"),
+                .push(if first.fields.is_empty() && route.fields.is_empty() {
+                    "`: a method and a path belong to one route"
+                } else {
+                    "`: a method and a path belong to one route, unless a field both fix in their `#[body(...)]` tells them apart, of one kind and two values"
+                }),
         );
     }
 
@@ -986,6 +1017,7 @@ mod tests {
             streams: false,
             body: BodyInfo::None,
             fixed: NO_HEADERS,
+            fields: &[],
         },
         RouteInfo {
             id: "notes_home",
@@ -1003,6 +1035,7 @@ mod tests {
             streams: true,
             body: BodyInfo::None,
             fixed: NO_HEADERS,
+            fields: &[],
         },
     ];
 
