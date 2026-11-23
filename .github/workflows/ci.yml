@@ -94,7 +94,8 @@ jobs:
   # The crates on the oldest Rust they support, the `rust-version` of the root's Cargo.toml, with each feature
   # combination as in the job test. The lints and the messages are those of the latest stable, which the jobs above
   # check: warnings are not errors here, and trybuild writes the messages of this rustc instead of comparing them. It
-  # still fails when a mistake compiles or a valid contract does not.
+  # still fails when a mistake compiles or a valid contract does not. It does not check why a mistake fails on this
+  # rustc, only that it fails.
   msrv:
     name: msrv (${{ matrix.name }})
     runs-on: ubuntu-latest

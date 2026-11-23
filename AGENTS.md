@@ -132,6 +132,22 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
 - A pull request is merged with a rebase, and its branch deleted. Its description closes its issue with `Closes #N`.
 - There is no Codex review workflow in this repository.
 
+## Versions
+
+- A pull request that changes what users see adds its entry under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md).
+- `rust-version` is raised only in a minor version, with the dependency or the feature of Rust that needs it.
+- The pull request of a release:
+  - moves the entries of `[Unreleased]` under the new version and its date, and updates the links at the bottom;
+  - sets `version` in the root's `Cargo.toml`, then runs `cargo update --workspace` at the root and
+    `cargo update -p quoll -p quoll-macros` in each example;
+  - raises every tag written in the docs, the README and the examples' comments. This command finds them all:
+
+    ```bash
+    git grep -nE 'tag = "v|--tag v'
+    ```
+
+  The maintainer tags its merge, `v` and the version, with its notes from the changelog.
+
 ## Related projects
 
 - [quoll-http](https://github.com/4thlabs/quoll-http), archived (local checkout `../quoll-http`): the C++ framework
