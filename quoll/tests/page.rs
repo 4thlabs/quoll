@@ -8,7 +8,7 @@ use std::path::Path;
 use quoll::{Response, Result, server};
 use reqwest::StatusCode;
 use reqwest::header::{
-    ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, ETAG,
+    ACCEPT, ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, ETAG,
     IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED, VARY,
 };
 use serde_json::Value;
@@ -84,16 +84,31 @@ async fn serve(dir: &Path) -> String {
     quoll::test::spawn(router).await
 }
 
-/// A client that sends the `Accept-Encoding` it is told to, and reads the bytes as they come.
+/// A client that sends the `Accept-Encoding` it is told to, reads the bytes as they come, and follows no redirection.
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .no_gzip()
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("a client is built")
 }
 
+/// A request as a script or `fetch` sends it, which accepts `*/*`.
 async fn get(url: &str) -> reqwest::Response {
     client().get(url).send().await.expect("the server answers")
+}
+
+/// The `Accept` of a browser's request of a page.
+const BROWSER: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+
+/// A request as a browser sends it for a page.
+async fn browse(url: &str) -> reqwest::Response {
+    client()
+        .get(url)
+        .header(ACCEPT, BROWSER)
+        .send()
+        .await
+        .expect("the server answers")
 }
 
 fn header(response: &reqwest::Response, name: impl reqwest::header::AsHeaderName) -> &str {
@@ -164,12 +179,12 @@ async fn a_hashed_file_is_immutable_and_index_html_is_checked_again() {
 }
 
 #[tokio::test]
-async fn a_path_that_is_no_file_and_no_route_answers_index_html() {
+async fn a_request_of_a_page_that_is_no_file_answers_index_html() {
     let dir = page();
     let url = serve(dir.path()).await;
 
-    for path in ["/notes/3", "/settings", "/notes/3/"] {
-        let response = get(&format!("{url}{path}")).await;
+    for path in ["/notes/3", "/settings", "/notes/3/", "/users/jane.doe"] {
+        let response = browse(&format!("{url}{path}")).await;
 
         assert_eq!(response.status(), StatusCode::OK, "{path}");
         assert_eq!(header(&response, CACHE_CONTROL), "no-cache");
@@ -179,19 +194,25 @@ async fn a_path_that_is_no_file_and_no_route_answers_index_html() {
 }
 
 #[tokio::test]
-async fn a_missing_file_is_a_problem_404_not_index_html() {
+async fn a_request_that_accepts_no_html_is_a_problem_404_when_no_file() {
     let dir = page();
     let url = serve(dir.path()).await;
 
-    for path in [
-        "/assets/index-Gone1234.js",
-        "/assets/gone",
-        "/favicon.ico",
-        "/notes/v1.2",
+    for (path, accept) in [
+        ("/assets/index-Gone1234.js", "*/*"),
+        ("/assets/index-Gone1234.css", "text/css,*/*;q=0.1"),
+        ("/favicon.ico", "image/avif,image/webp,*/*"),
+        ("/notes/3", "application/json"),
+        ("/notes/3", "text/html;q=0"),
     ] {
-        let response = get(&format!("{url}{path}")).await;
+        let response = client()
+            .get(format!("{url}{path}"))
+            .header(ACCEPT, accept)
+            .send()
+            .await
+            .expect("the server answers");
 
-        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path} {accept}");
         assert_eq!(header(&response, CONTENT_TYPE), "application/problem+json");
 
         let problem: Value = response.json().await.expect("a problem");
@@ -201,21 +222,90 @@ async fn a_missing_file_is_a_problem_404_not_index_html() {
 }
 
 #[tokio::test]
+async fn a_missing_file_of_the_well_known_directory_is_never_index_html() {
+    let dir = page();
+    let url = serve(dir.path()).await;
+
+    let response = browse(&format!("{url}/.well-known/change-password")).await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(header(&response, CONTENT_TYPE), "application/problem+json");
+}
+
+#[tokio::test]
 async fn a_directory_answers_its_index_html() {
     let dir = page();
     let url = serve(dir.path()).await;
 
-    for path in ["/docs", "/docs/"] {
-        let response = get(&format!("{url}{path}")).await;
+    let response = browse(&format!("{url}/docs/")).await;
 
-        assert_eq!(response.status(), StatusCode::OK, "{path}");
-        assert_eq!(header(&response, CONTENT_TYPE), "text/html; charset=utf-8");
-        assert_eq!(header(&response, CACHE_CONTROL), "no-cache");
-        assert_eq!(
-            response.text().await.expect("a text"),
-            "<title>docs</title>"
-        );
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(header(&response, CONTENT_TYPE), "text/html; charset=utf-8");
+    assert_eq!(header(&response, CACHE_CONTROL), "no-cache");
+    assert_eq!(
+        response.text().await.expect("a text"),
+        "<title>docs</title>"
+    );
+}
+
+#[tokio::test]
+async fn a_directory_without_its_slash_is_redirected_with_its_query() {
+    let dir = page();
+    let url = serve(dir.path()).await;
+
+    for (path, location) in [
+        ("/docs", "/docs/"),
+        ("/docs?tab=a%20b&x", "/docs/?tab=a%20b&x"),
+    ] {
+        let response = browse(&format!("{url}{path}")).await;
+
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT, "{path}");
+        assert_eq!(header(&response, "location"), location);
     }
+}
+
+#[tokio::test]
+async fn with_a_manifest_only_the_files_it_names_are_immutable() {
+    let dir = page();
+
+    write(
+        dir.path(),
+        "assets/main-abcdefgh.js",
+        b"named by the manifest",
+    );
+    write(
+        dir.path(),
+        ".vite/manifest.json",
+        br#"{"index.html": {"file": "assets/main-abcdefgh.js", "isEntry": true}}"#,
+    );
+
+    let url = serve(dir.path()).await;
+    let cache = |path: &'static str| {
+        let url = url.clone();
+
+        async move { header(&get(&format!("{url}/{path}")).await, CACHE_CONTROL).to_owned() }
+    };
+
+    assert_eq!(
+        cache("assets/main-abcdefgh.js").await,
+        "public, max-age=31536000, immutable"
+    );
+    // Named as a hash, but not by the manifest.
+    assert_eq!(cache(HASHED).await, "no-cache");
+    assert_eq!(
+        get(&format!("{url}/.vite/manifest.json")).await.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // A new deployment writes a new manifest, read again.
+    write(
+        dir.path(),
+        ".vite/manifest.json",
+        format!(r#"{{"index.html": {{"file": "{HASHED}", "isEntry": true}}}}"#).as_bytes(),
+    );
+
+    assert_eq!(cache(HASHED).await, "public, max-age=31536000, immutable");
+    assert_eq!(cache("assets/main-abcdefgh.js").await, "no-cache");
 }
 
 #[tokio::test]
@@ -314,7 +404,7 @@ async fn an_api_with_no_prefix_leaves_every_other_path_to_the_page() {
     let url = quoll::test::spawn(router).await;
 
     let health = get(&format!("{url}/health")).await;
-    let other = get(&format!("{url}/notes/3")).await;
+    let other = browse(&format!("{url}/notes/3")).await;
 
     assert_eq!(health.json::<String>().await.expect("a string"), "up");
     assert_eq!(other.text().await.expect("a text"), INDEX);
@@ -531,6 +621,70 @@ async fn a_symbolic_link_out_of_the_directory_is_refused() {
     assert_eq!(within.status(), StatusCode::OK);
     assert_eq!(header(&within, CONTENT_ENCODING), "");
     assert_eq!(within.text().await.expect("a text"), "inside");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_symbolic_link_to_a_hidden_file_is_refused() {
+    let dir = page();
+
+    write(dir.path(), ".git/config", b"the secret");
+    std::os::unix::fs::symlink(
+        dir.path().join(".git/config"),
+        dir.path().join("config.txt"),
+    )
+    .expect("the link is made");
+    std::os::unix::fs::symlink(dir.path().join(".git"), dir.path().join("git"))
+        .expect("the link is made");
+
+    let url = serve(dir.path()).await;
+
+    for path in ["/config.txt", "/git/config"] {
+        let response = browse(&format!("{url}{path}")).await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert!(
+            !response
+                .text()
+                .await
+                .expect("a body")
+                .contains("the secret")
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_file_written_anew_at_the_same_time_has_a_new_tag() {
+    let dir = page();
+    let fixed = std::time::UNIX_EPOCH + std::time::Duration::from_secs(315_532_800);
+    let path = dir.path().join("robots.txt");
+    let set_time = |path: &Path| {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_modified(fixed))
+            .expect("the time is set");
+    };
+
+    set_time(&path);
+
+    let url = serve(dir.path()).await;
+    let first = header(&get(&format!("{url}/robots.txt")).await, ETAG).to_owned();
+
+    // A build with `SOURCE_DATE_EPOCH` writes a new file of the same length and the same time.
+    write(dir.path(), "robots.new", b"User-agent: x");
+    set_time(&dir.path().join("robots.new"));
+    fs::rename(dir.path().join("robots.new"), &path).expect("the file is replaced");
+
+    let second = get(&format!("{url}/robots.txt")).await;
+
+    assert_eq!(
+        header(&second, LAST_MODIFIED),
+        "Tue, 01 Jan 1980 00:00:00 GMT"
+    );
+    assert_ne!(header(&second, ETAG), first);
+    assert_eq!(second.text().await.expect("a text"), "User-agent: x");
 }
 
 #[tokio::test]

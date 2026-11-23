@@ -385,36 +385,60 @@ no `index.html`. `.page(dir)` replaces any fallback the router has.
 The server checks the real path of each file, its symbolic links followed, before it opens it. On Linux it checks
 the opened file again, through `/proc/self/fd`. Elsewhere it checks the path again after the open. A symbolic link
 swapped in and out again between those two checks is not seen. Only someone who can write in the directory can do
-that.
+that. A file replaced between the check and the open, as a deployment does, answers a plain 404.
 
-What the server answers:
+What the server answers, for a path outside the api's prefix:
 
-- `/` answers `index.html`. Any other path answers the file of that path in the directory.
-- A path that is a directory answers that directory's `index.html`, as a page of a multi-page build.
-- A path that is no file and looks like a route, `/notes/3`, answers `index.html` too. The page's router then shows
-  that path.
-- A path that names a file answers a problem 404 when the file is missing: a path under `assets/`, or whose last
-  segment has an extension, `/favicon.ico` or `/notes/v1.2`. A missing script is a 404, not `index.html`.
-- A path under the api's prefix that is no route answers a problem 404. It never reaches the page.
-- `HEAD` gets the headers alone. A method other than `GET` and `HEAD` is a problem 405.
-- A hidden file or directory, whose name begins with a `.`, is never sent: it answers a problem 404. Only
-  `/.well-known/` is served.
-- No file outside the directory is sent. A path with `..` answers a problem 404. So does a symbolic link whose target
-  is outside the directory.
+- A file of that path in the directory is sent. `/` sends `index.html`.
+- A directory with an `index.html` sends it, as a page of a multi-page build does. `/docs` without its final `/` is a
+  308 to `/docs/`, with the same query.
+- Otherwise, a request whose `Accept` holds `text/html` gets `index.html`. A browser sends that `Accept` when it loads
+  a page, so the page's router shows the path: `/notes/3`, or `/users/jane.doe` after F5. A script, a style, an image
+  or a `fetch` does not send it.
+- Everything else is a problem 404. A missing script is a 404, not `index.html` read as a script.
+- Under `/.well-known/`, a missing file is always a 404: programs read those files, not browsers.
+
+A path under the api's prefix that is no route answers a problem 404. It never reaches the page. `HEAD` gets the
+headers alone. A method other than `GET` and `HEAD` is a problem 405.
+
+What the server never sends:
+
+- A hidden file or directory, whose name begins with a `.`: `/.env`, `/.git/config` or `/.vite/manifest.json`. Only
+  `/.well-known/` is served. The server checks the real path, so a symbolic link to `.git` and a short name of
+  Windows, `GIT~1`, are refused too.
+- A file outside the directory. A path with `..` answers a problem 404. So does a symbolic link whose target is
+  outside the directory.
 
 The headers of a file:
 
 - `Content-Type` comes from the file's extension, with `charset=utf-8` for text. `X-Content-Type-Options: nosniff` is
   always set.
-- Vite names the files of `assets/` by their hash, like `assets/index-BXa3kD9f.js`. Their content never changes, so
-  they are `Cache-Control: public, max-age=31536000, immutable`. A name is taken for a hashed one when it is under
-  `assets/` and holds a `-`, then eight letters, digits, `-` or `_` with at least one digit, then a `.`. So
-  `assets/logo-Darkmode.svg` is not. About a quarter of Vite's hashes hold no digit: those files are `no-cache` too.
-- `index.html` and every other file are `no-cache`: the browser checks them again before each use.
-- `ETag` and `Last-Modified` answer `If-None-Match` and `If-Modified-Since` with a 304.
+- A file Vite names by its hash, like `assets/index-BXa3kD9f.js`, never changes under its name. It is
+  `Cache-Control: public, max-age=31536000, immutable`. `index.html` and every other file are `no-cache`: the browser
+  checks them again before each use.
+- `ETag` and `Last-Modified` answer `If-None-Match` and `If-Modified-Since` with a 304. On Unix, the `ETag` holds the
+  file's inode too, so a build that fixes the time of its files, with `SOURCE_DATE_EPOCH`, still changes it.
 - A compressed copy beside a file, `app.js.br` or `app.js.gz`, is sent in its place when the request accepts its
   coding. Brotli comes first. Vite does not write these copies by default. Every file carries
   `Vary: Accept-Encoding`.
+
+### Vite's manifest
+
+Turn on `build.manifest` in `vite.config.ts`, as the notes example does:
+
+```typescript
+export default defineConfig({
+  build: { manifest: true },
+});
+```
+
+Vite then writes `.vite/manifest.json`, which names every file it hashed. The server keeps exactly those files a
+year. It reads the manifest again when it changes, at each deployment. The manifest is hidden, so it is never sent.
+
+Without a manifest, the server guesses from the name. A name is taken for a hashed one when it is under `assets/` and
+holds a `-`, then eight letters, digits, `-` or `_` with at least one digit, then a `.`. A name written by hand, like
+`assets/logo-Darkmode.svg`, has no digit there and is not taken. But about a quarter of Vite's hashes hold no digit
+either: without the manifest, those files are `no-cache`, and the browser checks them again for nothing.
 
 ### The api's 404
 
