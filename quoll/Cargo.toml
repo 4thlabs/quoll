@@ -19,11 +19,16 @@ rustdoc-args = ["--cfg", "docsrs"]
 server = [
     "dep:axum",
     "dep:futures-util",
+    "dep:httpdate",
+    "dep:mime_guess",
     "dep:serde_html_form",
     "dep:tokio",
+    # The files of a page.
+    "tokio/fs",
     # The signals a server stops on, and the start of its grace.
     "tokio/signal",
     "tokio/sync",
+    "dep:tokio-util",
     "dep:tower-http",
     "dep:tower-layer",
     "dep:tower-service",
@@ -59,10 +64,12 @@ futures-core = { version = "0.3", default-features = false }
 # What each side builds its streams with.
 futures-util = { version = "0.3", default-features = false, optional = true }
 http = "1"
-# The HTTP date of a `Retry-After`, which `client::Attempt::retry_after` reads.
+# The HTTP date of a `Retry-After`, which `client::Attempt::retry_after` reads, and the `Last-Modified` of a page's file.
 httpdate = { version = "1", optional = true }
 # The errors of a connection closed before its answer, which `client::retry` tries again: reqwest's own are hyper's.
 hyper = { version = "1", default-features = false, optional = true }
+# The content type of a page's file, by its extension.
+mime_guess = { version = "2", default-features = false, optional = true }
 # The key of a query scheme, which the server reads with neither feature.
 percent-encoding = "2"
 # The values of a stream result written as results, with no box of their own.
@@ -91,6 +98,8 @@ tower-http = { version = "0.6", default-features = false, features = [
     "cors",
     "trace",
 ], optional = true }
+# A page's file sent as it is read.
+tokio-util = { version = "0.7", default-features = false, features = ["io"], optional = true }
 # The traits of the layers of `server`, which axum's `Router::layer` takes.
 tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }
@@ -112,6 +121,8 @@ reqwest-middleware = "0.5"
 rmp-serde = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The directories of a page, made for a test and removed after it.
+tempfile = "3"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 trybuild = "1"

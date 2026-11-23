@@ -12,7 +12,7 @@ use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, FromRequestParts, Path};
 use axum::response::{IntoResponse, Response};
-use axum::routing::on;
+use axum::routing::{any, on};
 use http::request::Parts;
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use serde::Serialize;
@@ -42,6 +42,8 @@ pub use stream::{Written, byte_stream, events, json_lines};
 pub struct Routes {
     router: Router,
     fielded: Vec<Fielded>,
+    prefix: &'static str,
+    paths: Vec<&'static str>,
 }
 
 impl std::fmt::Debug for Routes {
@@ -124,13 +126,24 @@ impl Format {
 }
 
 impl Routes {
-    /// No route yet.
+    /// No route yet, of an api with no prefix.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// No route yet, of an api under `prefix`, `/api`, whose router answers a problem 404 for a path under it that
+    /// no route serves.
+    pub fn under(prefix: &'static str) -> Self {
+        Self {
+            prefix,
+            ..Self::default()
+        }
+    }
+
     /// The router, with every route: a route with fixed fields alone on its method and path is served as any other,
-    /// and the ones that share them by the one whose fields the body holds.
+    /// and the ones that share them by the one whose fields the body holds. Under a prefix, a path no route serves
+    /// answers a problem 404, the prefix itself among them, so that a page served beside the api never answers there;
+    /// a path a route serves keeps axum's 405 for another method.
     ///
     /// # Panics
     ///
@@ -138,6 +151,22 @@ impl Routes {
     pub fn finish(self) -> Router {
         let mut router = self.router;
         let mut fielded = self.fielded;
+
+        if !self.prefix.is_empty() {
+            let prefix = self.prefix;
+            let slashed = format!("{prefix}/");
+            let served = self.paths.contains(&slashed.as_str())
+                || fielded.iter().any(|route| route.route.path() == slashed);
+
+            // A wildcard among the routes would clash with a parameter of a route at its place, `/api/{id}`: a nested
+            // router's fallback sits apart from the routes, under the prefix and every path below it, and stays when
+            // `fallback_service` replaces the router's own. Its wildcard needs a segment, so `/api/` is a route.
+            if !served {
+                router = router.route(&slashed, any(no_route));
+            }
+
+            router = router.nest(prefix, Router::new().fallback(no_route));
+        }
 
         while !fielded.is_empty() {
             let first = fielded.remove(0);
@@ -168,6 +197,11 @@ impl Routes {
 
         router
     }
+}
+
+/// The answer of a path under an api's prefix that no route serves.
+async fn no_route() -> Response {
+    Error::not_found("no route of the api serves this path").into_response()
 }
 
 /// Serves `request` by the one of `routes`, of one method and path, whose fields its body holds. The body is read
@@ -259,6 +293,7 @@ impl<S: Send + Sync + 'static> Group<S> {
             .expect("the macro writes a method axum serves");
         let endpoint = self.endpoint::<C, F, Fut>(route, handler);
 
+        self.routes.paths.push(route.path());
         self.routes.router = self
             .routes
             .router
@@ -1346,6 +1381,73 @@ mod tests {
         assert_eq!(log, "");
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(detail.as_deref(), Some("no such note"));
+    }
+
+    #[tokio::test]
+    async fn a_parameter_beside_the_prefix_keeps_its_route_and_the_rest_its_404() {
+        static NAMED: Route = Route {
+            operation_id: "named",
+            group: "Named",
+            method: http::Method::GET,
+            path: "/api/{name}",
+            schemes: &[],
+            scheme_types: &[],
+            streams: false,
+        };
+
+        let router = Group::new(Routes::under("/api"), ())
+            .route::<(), _, _>(&NAMED, |_, _| async { Ok(Response::new(Body::empty())) })
+            .finish()
+            .finish();
+        let url = crate::test::spawn(router).await;
+        let status = |path: &'static str| {
+            let url = url.clone();
+
+            async move {
+                let response = reqwest::get(format!("{url}{path}"))
+                    .await
+                    .expect("the server answers");
+
+                (
+                    response.status(),
+                    response.headers().get(header::CONTENT_TYPE).cloned(),
+                )
+            }
+        };
+
+        assert_eq!(status("/api/ana").await.0, StatusCode::OK);
+
+        for path in ["/api", "/api/", "/api/ana/more"] {
+            let (status, content_type) = status(path).await;
+
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(
+                content_type.as_ref().map(HeaderValue::as_bytes),
+                Some(PROBLEM.as_bytes())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn two_apis_of_two_prefixes_merge_each_with_its_404() {
+        let first = Routes::under("/one").finish();
+        let second = Routes::under("/two").finish();
+        let elsewhere = Router::new().fallback(|| async { "the application's" });
+        let url = crate::test::spawn(first.merge(second).merge(elsewhere)).await;
+
+        for path in ["/one/nope", "/two/nope"] {
+            let response = reqwest::get(format!("{url}{path}"))
+                .await
+                .expect("the server answers");
+
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+
+        let other = reqwest::get(format!("{url}/three"))
+            .await
+            .expect("the server answers");
+
+        assert_eq!(other.text().await.expect("a text"), "the application's");
     }
 
     #[tokio::test]

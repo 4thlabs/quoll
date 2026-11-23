@@ -189,7 +189,7 @@ fn router_fn(api: &Api) -> TokenStream {
             .to_owned()
     } else {
         format!(
-            " An axum router serving every route of the api under `{prefix}`, each by the service of its group."
+            " An axum router serving every route of the api under `{prefix}`, each by the service of its group, and a problem 404 for any other path under it."
         )
     };
     let services = Ident::new("services", Span::mixed_site());
@@ -223,7 +223,7 @@ fn router_fn(api: &Api) -> TokenStream {
             #[doc = #docs]
             #vis fn router(#services: #services_type<#(#bounds),*>) -> ::quoll::__private::axum::Router {
                 let #services_type { #(#fields: #locals),* } = #services;
-                let #router = ::quoll::__private::server::Routes::new();
+                let #router = ::quoll::__private::server::Routes::under(#prefix);
                 #(#groups)*
 
                 #router.finish()
