@@ -4,8 +4,8 @@ This guide builds a first contract, its server and its client, in one crate, and
 
 ## The crate
 
-quoll is used from git until it is published. A new crate takes it with both features, and the crates a contract
-needs: serde for the bodies, schemars for the OpenAPI document, and tokio to run.
+quoll is used from git until it is published. A new crate adds it with both features. It also needs the crates that a
+contract uses: serde for the bodies, schemars for the OpenAPI document, and tokio to run.
 
 ```bash
 cargo new notes
@@ -126,13 +126,13 @@ What each part does:
 - **The models**, `Note` and `NewNote`, are serde types, with a JSON Schema for the document.
 - **The contract**, `quoll::api!`, is a route table: `GET "/notes/{id}"` becomes a function `get(id: i64)`, which
   returns a `Note`. [The contract](contract.md) covers what a contract says.
-- **The server** implements `NotesServer`, the trait the group `Notes` gives, with a handler per route.
-  `Api::router` makes an `axum::Router` of it, which `server::builder()` serves until Ctrl-C.
+- **The server** implements `NotesServer`, the trait that the group `Notes` gives, with one handler per route.
+  `Api::router` makes an `axum::Router` of it, and `server::builder()` serves that router until Ctrl-C.
   [The server](server.md) covers services, layers and shutdown.
-- **The client** is built by `client::builder()`: `api.notes()` has a method per route, which returns what the route
-  returns. [The client](client.md) covers its middleware.
-- **A handler's error**, `Error::not_found`, is answered 404 with an RFC 9457 problem, which the client reads back as
-  a `quoll::Error` with that status. [Errors](errors.md) covers both sides.
+- **The client** is built by `client::builder()`. `api.notes()` has one method per route, which returns what the
+  route returns. [The client](client.md) covers its middleware.
+- **A handler's error**, `Error::not_found`, is answered 404 with an RFC 9457 problem. The client reads it back as a
+  `quoll::Error` with that status. [Errors](errors.md) covers both sides.
 
 ## Run it
 
@@ -154,19 +154,19 @@ It prints `note 1: Milk`. A call to a note that does not exist is an error with 
 curl -i http://127.0.0.1:8080/api/notes/9
 ```
 
-And the OpenAPI document, which any OpenAPI generator turns into the client of a frontend:
+This writes the OpenAPI document. Any OpenAPI generator turns it into the client of a frontend:
 
 ```bash
 cargo run -- openapi > openapi.json
 ```
 
-The notes example has a page on it, [`examples/notes/web`](../../examples/notes/web), whose TanStack Query hooks
-orval, the generator it chose, writes from that document: [the TypeScript guide](typescript.md) says how `cargo quoll`
-writes it, runs the generator and runs the page.
+The notes example has a page built on that document: [`examples/notes/web`](../../examples/notes/web). The example
+uses orval, which writes the page's TanStack Query hooks from the document. [The TypeScript guide](typescript.md) says
+how `cargo quoll` writes the document, runs the generator and runs the page.
 
 ## Crates by role
 
-An application splits into crates by role, as [the notes example](../../examples/notes) does:
+An application splits into crates by role. [The notes example](../../examples/notes) is split this way:
 
 ```text
 notes/
@@ -178,7 +178,7 @@ notes/
   web/                    the page, whose TypeScript a generator writes from the document
 ```
 
-The workspace's `Cargo.toml` names its members, and `cargo build` and `cargo test` in its directory build them all:
+The workspace's `Cargo.toml` names its members. `cargo build` and `cargo test` in its directory build them all:
 
 ```toml
 [workspace]
@@ -186,7 +186,7 @@ members = ["api", "server", "cli"]
 resolver = "3"
 ```
 
-The contract crate turns on neither feature of `quoll`, and passes them on:
+The contract crate turns on neither feature of `quoll`. It passes them on instead:
 
 ```toml
 [features]
@@ -199,8 +199,8 @@ schemars = "1"
 serde = { version = "1", features = ["derive"] }
 ```
 
-The server depends on it with `features = ["server"]`, the command line with `features = ["client"]`: the command
-line never links axum, nor the server reqwest.
+The server depends on it with `features = ["server"]`, and the command line with `features = ["client"]`. So the
+command line never links axum, and the server never links reqwest.
 
 ## Next
 
