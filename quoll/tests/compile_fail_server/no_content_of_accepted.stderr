@@ -1,0 +1,27 @@
+error[E0277]: a 204 or a 205 says there is no body, and a `Note` is a value that the route answers
+  --> tests/compile_fail_server/no_content_of_accepted.rs:24:54
+   |
+24 |         Ok(Response::new(Note { title }).with_status(Status::NO_CONTENT))
+   |                                          ----------- ^^^^^^^^^^^^^^^^^^ a status of no content, on a route of a `Note`
+   |                                          |
+   |                                          required by a bound introduced by this call
+   |
+   = help: the trait `Allows<Note>` is not implemented for `rest::response::sealed::NoBody`
+   = note: a route that may answer no content returns an `Option`: in the contract, `-> Option<Note>` in place of `-> Note`, `-> Created<Note>` or `-> Accepted<Note>`, and in the handler, `Response::new(None)` with this status
+   = help: `rest::response::sealed::NoBody` implements trait `Allows<T>`:
+             Allows<()>
+             Allows<ByteStream>
+             Allows<Events<T>>
+             Allows<JsonLines<T>>
+             Allows<Text>
+             Allows<quoll::rest::Bytes>
+             Allows<std::option::Option<T>>
+note: required by a bound in `Response::<T>::with_status`
+  --> src/rest/response.rs
+   |
+   | impl<T> Response<T> {
+...
+   |     pub fn with_status<S>(mut self, status: S) -> Self
+...
+   |         S::Body: Allows<T>,
+   |                  ^^^^^^^^^ required by this bound in `Response::<T>::with_status`

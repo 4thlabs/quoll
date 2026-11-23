@@ -289,17 +289,21 @@ rest::api! {
 
 ## Results
 
-| The route returns | The server answers                   | The client returns |
-| ----------------- | ------------------------------------ | ------------------ |
-| nothing           | 204, no body                         | `()`               |
-| `T`               | 200, the JSON of `T`                 | `T`                |
-| `Created<T>`      | 201, the JSON of `T`, a `Location`   | `T`                |
-| `Accepted<T>`     | 202, the JSON of `T`                 | `T`                |
-| `Text`            | 200, `text/plain; charset=utf-8`     | `Text`             |
-| `Bytes`           | 200, their content type              | `Bytes`            |
-| `Events<T>`       | 200, server-sent events              | a stream of `T`    |
-| `JsonLines<T>`    | 200, one JSON value per line         | a stream of `T`    |
-| `ByteStream`      | 200, bytes as they come              | a stream of bytes  |
+| The route returns | The server answers                         | The client returns |
+| ----------------- | ------------------------------------------ | ------------------ |
+| nothing           | 204, no body                               | `()`               |
+| `T`               | 200, the JSON of `T`                       | `T`                |
+| `Option<T>`       | 200, the JSON of the option, or 204        | `Option<T>`        |
+| `Created<T>`      | 201, the JSON of `T`, a `Location`         | `T`                |
+| `Accepted<T>`     | 202, the JSON of `T`                       | `T`                |
+| `Text`            | 200, `text/plain; charset=utf-8`, or 204   | `Text`             |
+| `Bytes`           | 200, their content type, or 204            | `Bytes`            |
+| `Events<T>`       | 200, server-sent events, or 204            | a stream of `T`    |
+| `JsonLines<T>`    | 200, one JSON value per line, or 204       | a stream of `T`    |
+| `ByteStream`      | 200, bytes as they come, or 204            | a stream of bytes  |
+
+A 204, `Status::NO_CONTENT`, is the handler's to give, on the results that may be empty alone, and the client reads
+it as `None`, an empty text or bytes, or a stream that ends at once.
 
 A handler returns each of them in a `Response`, the `T` alone for a `Created<T>` or an `Accepted<T>`, whose status
 the contract gives, with the headers it sends:

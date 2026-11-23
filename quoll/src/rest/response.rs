@@ -362,7 +362,7 @@ impl TryFrom<StatusCode> for NoContent {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a status a handler gives",
     label = "a `rest::Status` or a `rest::NoContent`",
-    note = "a status is one of `rest::Status`'s, `Status::CREATED`, or `Status::try_from(status)?` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT` or `NoContent::try_from(status)?`"
+    note = "a status is one of `rest::Status`'s, `Status::CREATED`, or `Status::try_from(status)` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT`, or `NoContent::try_from(status)`"
 )]
 pub trait IntoStatus: sealed::Sealed {
     /// What the status says of the body: any for a [`Status`], none for a [`NoContent`].
@@ -390,14 +390,14 @@ impl IntoStatus for NoContent {
     }
 }
 
-/// What a status says of the body, [`IntoStatus::Body`], allows of a [`Response`]'s value `T`: any, for a
+/// What a status says of the body allows of a [`Response`]'s value `T`: any, for a
 /// [`Status`]; for a 204 or a 205, a [`NoContent`], a result that may be empty alone, `()`, an `Option<T>`, a `Text`,
 /// `Bytes`, `Events<T>`, `JsonLines<T>` or a `ByteStream`. A value, `T`, a `Created<T>` or an `Accepted<T>`, is not:
 /// an `Option<T>` is.
 #[diagnostic::on_unimplemented(
     message = "a 204 or a 205 says there is no body, and a `{T}` is a value that the route answers",
     label = "a status of no content, on a route of a `{T}`",
-    note = "a route that may answer no content returns an `Option`: write `-> Option<{T}>` in the contract, and `Response::new(None)` with this status in the handler"
+    note = "a route that may answer no content returns an `Option`: in the contract, `-> Option<{T}>` in place of `-> {T}`, `-> Created<{T}>` or `-> Accepted<{T}>`, and in the handler, `Response::new(None)` with this status"
 )]
 pub trait Allows<T>: sealed::Sealed {}
 

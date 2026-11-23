@@ -295,10 +295,10 @@ fn route_description(group: &Group, route: &Route) -> TokenStream {
                 quote! {
                     {
                         #[allow(unused_imports)]
-                        use ::quoll::__private::openapi::NotOptional as _;
+                        use ::quoll::__private::known::NotNullable as _;
 
-                        if <::quoll::__private::openapi::Optional<#served>>::IS {
-                            ::quoll::__private::openapi::Reply::Optional(#schema)
+                        if <::quoll::__private::known::Nullable<#served>>::IS {
+                            ::quoll::__private::openapi::Reply::Nullable(#schema)
                         } else {
                             ::quoll::__private::openapi::Reply::Json(#schema)
                         }

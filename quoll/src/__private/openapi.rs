@@ -4,7 +4,6 @@
 use std::any::TypeId;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
-use std::marker::PhantomData;
 
 use schemars::generate::{Contract, SchemaSettings};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
@@ -162,8 +161,8 @@ pub enum Reply {
     Empty,
     /// The JSON of a type.
     Json(SchemaFn),
-    /// The JSON of an `Option<T>`, or a 204 with no body.
-    Optional(SchemaFn),
+    /// The JSON of a type that is `null` when empty, an `Option<T>`, or a 204 with no body.
+    Nullable(SchemaFn),
     /// `Created<T>`.
     Created(SchemaFn),
     /// `Accepted<T>`.
@@ -185,7 +184,7 @@ impl Reply {
     /// `rest::NoContent`, as `rest::Allows` says, but a route with no result, whose status is the 204.
     fn may_be_empty(&self) -> bool {
         match self {
-            Self::Optional(_)
+            Self::Nullable(_)
             | Self::Text
             | Self::Bytes
             | Self::Events(_)
@@ -195,25 +194,6 @@ impl Reply {
         }
     }
 }
-
-/// Whether a result's type `T` is an `Option`, which may be answered with a 204: [`IS`](Optional::IS) is `true` for
-/// an `Option<T>` alone, by its impl, and `false` for any other type, by [`NotOptional`], whose constant a path reaches
-/// only where no impl of the type's own has one.
-#[derive(Debug)]
-pub struct Optional<T>(PhantomData<fn() -> T>);
-
-impl<T> Optional<Option<T>> {
-    /// An `Option<T>`.
-    pub const IS: bool = true;
-}
-
-/// The constant of any type but an `Option<T>`, which the code of a contract brings into scope.
-pub trait NotOptional {
-    /// Not an `Option<T>`.
-    const IS: bool = false;
-}
-
-impl<T> NotOptional for Optional<T> {}
 
 /// The authentication of a route.
 #[derive(Debug)]
@@ -654,7 +634,7 @@ impl Builder {
     fn success(&mut self, reply: &Reply) -> (&'static str, Value) {
         match reply {
             Reply::Empty => ("204", json!({ "description": "No Content" })),
-            Reply::Json(schema) | Reply::Optional(schema) => ("200", self.json("OK", *schema)),
+            Reply::Json(schema) | Reply::Nullable(schema) => ("200", self.json("OK", *schema)),
             Reply::Created(schema) => {
                 let mut created = self.json("Created", *schema);
                 created["headers"] = json!({
