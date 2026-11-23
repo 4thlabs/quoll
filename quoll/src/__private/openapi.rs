@@ -10,7 +10,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde_json::{Map, Value, json};
 
 use crate::__private::headers::{Fixed, RouteHeaders};
-use crate::__private::join::{self, Join};
+use crate::__private::join::Join;
 use crate::rest::openapi::{Document, SecurityScheme};
 
 mod refs;
@@ -354,46 +354,8 @@ pub fn document(api: &'static Api) -> Document {
 
     let mut document = Value::Object(document);
     refs::rewrite(&mut document);
-    unmark(&mut document);
 
     Document::new(document)
-}
-
-/// The separator and the list's schema of a joined list's schema, from its mark.
-fn joined(schema: &Value) -> Option<(Join, &Value)> {
-    let mark = schema.get(join::MARK)?;
-    let join = mark
-        .get("separator")
-        .and_then(Value::as_str)
-        .and_then(Join::from_mark)?;
-
-    Some((join, mark.get("schema")?))
-}
-
-/// The keywords of a schema whose values are instances, not schemas, which may hold any key.
-const INSTANCES: &[&str] = &["const", "default", "enum", "example", "examples"];
-
-/// Removes the mark of each joined list still in the document, which describes the list as the string it is written
-/// as: in a query struct's own schema, under `components/schemas` when it is a body or a result too, or in the one
-/// parameter of a query struct that is not unfolded.
-fn unmark(value: &mut Value) {
-    if joined(value).is_some()
-        && let Some(object) = value.as_object_mut()
-    {
-        object.remove(join::MARK);
-    }
-
-    match value {
-        Value::Object(object) => {
-            for (key, value) in object.iter_mut() {
-                if !INSTANCES.contains(&key.as_str()) {
-                    unmark(value);
-                }
-            }
-        }
-        Value::Array(values) => values.iter_mut().for_each(unmark),
-        _ => {}
-    }
 }
 
 /// The schemes of `api`, each once by its name: the declared ones, in the order the contract writes them, then the
@@ -826,12 +788,6 @@ fn unfold(name: &str, schema: Value) -> Vec<(String, &'static str, Value)> {
             let description = property
                 .as_object_mut()
                 .and_then(|property| property.remove("description"));
-            // A joined list: the list's own schema in place of the string it is written as, and of its default.
-            let mut style = None;
-            if let Some((join, list)) = joined(&property) {
-                style = Some(join.style());
-                property = not_null(list.clone());
-            }
             let mut parameter = json!({
                 "name": key,
                 "in": "query",
@@ -841,10 +797,6 @@ fn unfold(name: &str, schema: Value) -> Vec<(String, &'static str, Value)> {
 
             if let Some(description) = description {
                 parameter["description"] = description;
-            }
-            if let Some(style) = style {
-                parameter["style"] = style.into();
-                parameter["explode"] = false.into();
             }
 
             (key.clone(), "query", parameter)

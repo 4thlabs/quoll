@@ -87,6 +87,7 @@ Decided by the maintainer:
   - taken with them as implementation, written in [Parameters, by name](#parameters-by-name): the client writes an argument's values escaped, as a path parameter's are, with the separator between them as is, a space as `%20`, and a query struct's field as serde_html_form writes its text, the separator escaped, `labels=bug%2Cdocs`; the server decodes a value before it splits it, so that it reads both, and the `%2C` of a browser's `URLSearchParams`, through which orval's clients write it; so a value cannot hold the separator, which the client refuses, as it refuses a list of one empty value, which reads as an empty list; an empty list leaves the key out; the values are read from text, as a path parameter is; a joined field is its joined text, or `null` when empty, in JSON too, and its schema says so, a string or `null`, with a mark holding the list's own schema, which the document puts in the query parameter it unfolds and removes elsewhere;
   - after #91, the rule on a `none` of a group of another block relaxed: a `#[header("X" = none)]` in a `rest::group!` leaves `X` where the api that lists the group fixes it and does nothing elsewhere, so that any api may list the group; in the api's own block, where the parent is known, a `none` on a header the parent does not fix stays a compile error, which catches a typo; the four defaults of #91 confirmed.
 - **2026-11-23**:
+  - a list is joined only on a route's argument, by `#[join(sep)]`, whose type the macro sees and of which nothing reaches the JSON of a body or a result; this replaces the joined field of a query struct decided on 2026-11-22: `#[rest::query]`, merged in #92, and the serde form that took its place, `rest::join::Comma<T>`, `Space<T>` and `Pipe<T>`, merged in #94, are both removed, with the mark their schema carried into the document; a `Vec` field of a query struct repeats its key, as before #92; a joined field of a query struct is reopened in #93;
   - taken with the brackets of a query key as implementation, written in [Methods and paths](#methods-and-paths): a key is a name of the characters of a literal segment, then brackets that hold the same or nothing, never `.` or `..`, `expand[]`, `filter[name]`, `a[b][c]`, and a bracket left open, a bracket first or text after one does not compile; the client escapes them, `expand%5B%5D=a`, as serde_html_form and a browser's `URLSearchParams` write a key, and the server reads them escaped or as they are, which curl sends; a query scheme's key keeps its rule, letters, digits and `-._~`.
 
 ## Stack and crates
@@ -158,34 +159,23 @@ An argument is matched to the string by its name, not its position. Each one is:
 
 - **a path parameter**: its name is a `{name}` of the path, read from text through serde as axum's `Path` reads it (integers, strings, UUIDs, unit enums);
 - **a query parameter**: its name is a `key={name}` of the query; an `Option` may be missing, a `Vec` repeats the key, or is joined into its one value by `#[join(sep)]`;
-- **a query struct**: `query filter: NoteFilter`, whose fields are the keys as serde names them; not with a query in the string; a `Vec` field is joined too by `#[serde(with = "rest::join::Comma::<T>")]`;
+- **a query struct**: `query filter: NoteFilter`, whose fields are the keys as serde names them; not with a query in the string; a `Vec` field repeats its key;
 - **a header**: `header("Last-Event-ID") last: Option<String>`;
 - **the body**: the one argument left, on `POST`, `PUT`, `PATCH` or `DELETE` only; JSON, or `Form<T>`, `Text`, `Bytes`. `Bytes` carries its content type, any media type but the three a browser sends to another site without a preflight (`application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`), which answer 415, as a missing one does.
 
-A list that another API reads as one value, `labels=bug,docs`, says so on its argument, with `#[join(sep)]`, or on the field of a query struct, in serde, its type staying a `Vec`:
+A list that another API reads as one value, `labels=bug,docs`, says so on its argument, with `#[join(sep)]`, its type staying a `Vec`:
 
 ```rust
 pub group Issues {
     GET "/repos/{owner}/{repo}/issues?labels={labels}&state={state}"
         => list(owner: String, repo: String, #[join(",")] labels: Vec<String>, state: Option<State>) -> Vec<Issue>;
-    GET "/search/issues" => search(query filter: IssueFilter) -> Vec<Issue>;
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Default)]
-#[serde(default)]
-pub struct IssueFilter {
-    #[serde(with = "rest::join::Comma::<String>")]
-    pub labels: Vec<String>,
-    #[serde(with = "rest::join::Space::<u32>")]
-    pub milestones: Vec<u32>,
-    pub state: Option<State>,
 }
 ```
 
-- `#[join(",")]` is `labels=bug,docs`, `style: form, explode: false` in OpenAPI; `#[join(" ")]` is `labels=bug%20docs`, `spaceDelimited`; `#[join("|")]` is `labels=bug|docs`, `pipeDelimited`. No other separator. `rest::join::Comma`, `Space` and `Pipe` are the same styles, their separator escaped by serde_html_form, `labels=bug%2Cdocs`, `bug+docs`, `bug%7Cdocs`.
-- The values are read from text, as a path parameter is. An empty list leaves the key out; a missing key is an empty list for an argument, and for a field that has `#[serde(default)]`, as any `Vec` of a query struct; `labels=` is an empty list too.
-- The client writes an argument's values escaped, with the separator between them as is, and a field as serde_html_form writes its text, the separator escaped, `labels=bug%2Cdocs`. The server decodes the value before it splits it, so that it reads both, and what orval's clients write through `URLSearchParams`. A value cannot hold the separator: the client refuses one, before sending, as it refuses a list of one empty value, which would read as an empty list.
-- serde infers the `T` of `Comma<T>` from the field; schemars takes the type as written, and `Comma` alone is `Comma<rest::join::Any>`, whose items have any schema: `Comma::<u32>` gives the exact one. A `#[schemars(with = ...)]` on the field would replace its schema and its style in the document, and nothing checks at compile time that the items of a field are read from text, as the macro does for an argument: a list of structs fails when it is written or read. In JSON a joined field is its joined text, `null` when it is empty, as its schema says where the struct is a body or a result.
+- `#[join(",")]` is `labels=bug,docs`, `style: form, explode: false` in OpenAPI; `#[join(" ")]` is `labels=bug%20docs`, `spaceDelimited`; `#[join("|")]` is `labels=bug|docs`, `pipeDelimited`. No other separator.
+- The values are read from text, as a path parameter is. An empty list leaves the key out; a missing key is an empty list, and so is `labels=`.
+- The client writes the values escaped, with the separator between them as is. The server decodes the value before it splits it, so that it reads both, and what orval's clients write through `URLSearchParams`. A value cannot hold the separator: the client refuses one, before sending, as it refuses a list of one empty value, which would read as an empty list.
+- Only an argument is joined: a `Vec` field of a query struct repeats its key, and a joined field is an open question, #93.
 
 ### Fixed headers
 
@@ -551,7 +541,7 @@ rest::api! {
 - `Api::openapi()` returns the OpenAPI 3.1 document: paths, parameters, bodies, results, schemas from schemars, security schemes, the problem shape of errors. A binary of the contract crate prints it: the schemas are known only once the types are compiled, which a macro does not see.
 - It is a `rest::openapi::Document`: `to_json_pretty()`, `to_json()`, `Serialize`, and `with_title(..)` and `with_version(..)` over its `info`, which is the contract crate's `CARGO_PKG_NAME` and `CARGO_PKG_VERSION`, or the api's name and `0.0.0` for a crate built without Cargo, with the api's `///` as its description.
 - An operation is `group_function`, tagged by its group, whose `///` describes the tag. The first paragraph of a route's `///` is its summary, the rest its description.
-- Path parameters, query keys and headers are parameters, required unless an `Option` or a `Vec`, never `null`. A fixed header a route sends is a header parameter, not required, whose schema is a string of its value, `const`: not `Accept`, `Content-Type` nor `Authorization`, which OpenAPI describes otherwise, nor a header an argument reads, which the argument describes. A query struct is unfolded into one query parameter per field of its schema, or is one parameter `style: form, explode: true`, not required, when its schema is not a plain object. A joined list, an argument's or a field's, is a parameter `explode: false` of the style of its separator, `form`, `spaceDelimited` or `pipeDelimited`, not required, whose schema is the list's. The key of a query scheme is no parameter: the security describes it.
+- Path parameters, query keys and headers are parameters, required unless an `Option` or a `Vec`, never `null`. A fixed header a route sends is a header parameter, not required, whose schema is a string of its value, `const`: not `Accept`, `Content-Type` nor `Authorization`, which OpenAPI describes otherwise, nor a header an argument reads, which the argument describes. A query struct is unfolded into one query parameter per field of its schema, or is one parameter `style: form, explode: true`, not required, when its schema is not a plain object. A joined argument is a parameter `explode: false` of the style of its separator, `form`, `spaceDelimited` or `pipeDelimited`, not required, whose schema is the list's. The key of a query scheme is no parameter: the security describes it.
 - Bodies: `application/json`, `application/x-www-form-urlencoded` for `Form<T>`, `text/plain` for `Text`, `application/octet-stream` for `Bytes`. Results: 200, 201 with an optional `Location`, 202, 204; `text/plain` for `Text`, `*/*` for `Bytes` and for `ByteStream`, whose description says it streams.
 - Every error is the `Problem` schema, `application/problem+json`. A route lists what quoll answers itself: 400 when it reads an argument, 401 when it takes a credential, 403 when it needs scopes or takes a cookie scheme the contract declares on a method other than `GET`, `HEAD` and `OPTIONS`, 415 when it reads a body, and `default` for any other.
 - Schemes sit under `securitySchemes` by their `NAME`. A route's requirement lists its schemes, any of which serves, each with its scopes, and `{}` when its credential is optional.
@@ -1551,4 +1541,3 @@ Decided, not in the first version. The first two change no contract already writ
 2. **Pagination by header.** GitHub pages with a `Link` header (`rel="next"`, `rel="last"`), which a result cannot say yet: a result `Paged<T>` carrying it, and on the client `.pages()`, a stream that follows the links.
 3. **A `rest::PathValue` derive** on unit enums and newtypes, so that a path parameter not read from text is refused at compile time: a struct of the application in a path no longer compiles.
 4. **A `subscribe` helper** for the web side, in an npm package of its own: `subscribe<T>(url, onItem, init)` reads a stream with `fetch`, so that it sends a header credential, calls `onItem` with each item parsed and returns the function that stops it. It reads `Events`, every event that has data an item whatever its name and `event: problem` an error, and `JsonLines`, an aborted body an error, not a clean end, and does not connect again after a clean end; `ByteStream` too, with `onChunk`.
-5. **A shorter form for a joined field of a query struct**, `#[join(sep)]` as on an argument, once schemars or a macro of quoll's sees the field: `#[serde(with = "rest::join::Comma::<u32>")]` stays valid.

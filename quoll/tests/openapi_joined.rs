@@ -15,37 +15,6 @@ enum State {
     Closed,
 }
 
-/// A query struct whose lists are joined.
-#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-struct IssueFilter {
-    /// The labels an issue has all of.
-    #[serde(with = "rest::join::Comma::<String>")]
-    labels: Vec<String>,
-    #[serde(rename = "milestone", with = "rest::join::Space::<u32>")]
-    milestones: Vec<u32>,
-    #[serde(with = "rest::join::Pipe::<State>")]
-    states: Vec<State>,
-    tag: Vec<String>,
-    #[serde(default = "open", with = "rest::join::Comma::<State>")]
-    opened: Vec<State>,
-    /// A list whose `T` is not written, inferred by serde and not by schemars.
-    #[serde(with = "rest::join::Comma")]
-    any: Vec<u32>,
-}
-
-/// A result with a property of the name of the mark, which is no mark.
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-struct Flags {
-    #[serde(rename = "x-quoll-join")]
-    flag: bool,
-}
-
-/// The states a search reads when none is given.
-fn open() -> Vec<State> {
-    vec![State::Open]
-}
-
 rest::api! {
     api Api = "/api";
 
@@ -57,8 +26,6 @@ rest::api! {
                 #[join("|")] states: Vec<State>,
                 tags: Vec<String>,
             ) -> Vec<String>;
-        GET "/search" => search(query filter: IssueFilter) -> IssueFilter;
-        GET "/flags" => flags() -> Flags;
     }
 }
 
@@ -67,12 +34,7 @@ static DOCUMENT: LazyLock<Value> =
 
 /// The parameter of `/api/issues` named `name`.
 fn parameter(name: &str) -> &'static Value {
-    parameter_of("/api/issues", name)
-}
-
-/// The parameter of `path` named `name`.
-fn parameter_of(path: &str, name: &str) -> &'static Value {
-    DOCUMENT["paths"][path]["get"]["parameters"]
+    DOCUMENT["paths"]["/api/issues"]["get"]["parameters"]
         .as_array()
         .expect("the route has parameters")
         .iter()
@@ -134,97 +96,4 @@ fn a_list_that_is_not_joined_repeats_its_key_as_before() {
     assert_eq!(tag.get("style"), None);
     assert_eq!(tag.get("explode"), None);
     assert_eq!(tag["schema"]["type"], "array");
-}
-
-#[test]
-fn a_joined_field_of_a_query_struct_is_a_parameter_of_its_style() {
-    assert_eq!(
-        *parameter_of("/api/search", "labels"),
-        json!({
-            "name": "labels",
-            "in": "query",
-            "required": false,
-            "description": "The labels an issue has all of.",
-            "style": "form",
-            "explode": false,
-            "schema": { "type": "array", "items": { "type": "string" } },
-        })
-    );
-    assert_eq!(
-        *parameter_of("/api/search", "milestone"),
-        json!({
-            "name": "milestone",
-            "in": "query",
-            "required": false,
-            "style": "spaceDelimited",
-            "explode": false,
-            "schema": {
-                "type": "array",
-                "items": { "type": "integer", "format": "uint32", "minimum": 0 },
-            },
-        })
-    );
-    assert_eq!(
-        parameter_of("/api/search", "states")["style"],
-        "pipeDelimited"
-    );
-    assert_eq!(
-        parameter_of("/api/search", "states")["schema"]["items"],
-        json!({ "$ref": "#/components/schemas/State" })
-    );
-
-    let tag = parameter_of("/api/search", "tag");
-    assert_eq!((tag.get("style"), tag.get("explode")), (None, None));
-}
-
-#[test]
-fn a_joined_field_without_its_t_has_items_of_any_schema() {
-    let any = parameter_of("/api/search", "any");
-
-    assert_eq!(any["style"], "form");
-    assert_eq!(any["explode"], false);
-    assert_eq!(
-        any["schema"],
-        json!({ "type": "array", "items": {} }),
-        "{any}"
-    );
-}
-
-#[test]
-fn a_joined_field_is_described_as_its_text_where_the_struct_is_json() {
-    let labels = &DOCUMENT["components"]["schemas"]["IssueFilter"]["properties"]["labels"];
-
-    assert_eq!(labels["type"], json!(["string", "null"]), "{labels}");
-    assert_eq!(labels["description"], "The labels an issue has all of.");
-}
-
-#[test]
-fn a_joined_field_with_a_default_is_described_with_the_lists_schema() {
-    let opened = parameter_of("/api/search", "opened");
-
-    assert_eq!(
-        opened["schema"],
-        json!({ "type": "array", "items": { "$ref": "#/components/schemas/State" } }),
-        "{opened}"
-    );
-}
-
-#[test]
-fn the_mark_of_a_joined_field_is_left_in_no_schema() {
-    let search = DOCUMENT["paths"]["/api/search"].to_string();
-    let filter = DOCUMENT["components"]["schemas"]["IssueFilter"].to_string();
-
-    assert!(!search.contains("x-quoll-join"), "{search}");
-    assert!(!filter.contains("x-quoll-join"), "{filter}");
-}
-
-#[test]
-fn a_property_of_the_name_of_the_mark_is_kept() {
-    let flags = &DOCUMENT["components"]["schemas"]["Flags"];
-
-    assert_eq!(
-        flags["properties"]["x-quoll-join"],
-        json!({ "type": "boolean" }),
-        "{flags}"
-    );
 }

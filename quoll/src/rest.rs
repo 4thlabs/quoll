@@ -98,8 +98,8 @@
 //! `#[join(" ")]` `labels=bug%20docs`, `#[join("|")]` `labels=bug|docs`, and the document says the style. The values
 //! are read from text, as a path parameter is; an empty list leaves the key out, and `labels=` reads as one. The server
 //! decodes the value before it splits it, so that it reads `labels=bug%2Cdocs` too: a value that holds the separator
-//! is refused by the client, before sending. A field of a query struct names a type of [`join`] in serde's `with`
-//! instead, `#[serde(with = "rest::join::Comma::<u32>")]`.
+//! is refused by the client, before sending. Only an argument is joined: a `Vec` field of a query struct repeats its
+//! key.
 //!
 //! ```
 //! use quoll::rest;
@@ -463,7 +463,6 @@ mod body;
 mod call;
 mod created;
 pub(crate) mod error;
-pub mod join;
 pub mod openapi;
 mod problem;
 mod response;

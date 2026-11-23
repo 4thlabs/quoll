@@ -207,7 +207,7 @@ impl<'a> Request<'a> {
     /// `None`; or when it is a segment a URL cannot hold: empty, `.` or `..`, which would call another route.
     pub fn segment<T: Serialize + ?Sized>(mut self, name: &str, value: &T) -> Result<Self> {
         let operation_id = self.route.operation_id;
-        let text = match text::to_text(value) {
+        let text = match text::write::to_text(value) {
             Some(Some(text)) => text,
             Some(None) => {
                 return Err(Error::misuse(
@@ -272,7 +272,7 @@ impl<'a> Request<'a> {
     /// read as two values; or when the list is one empty value, which the server would read as an empty list.
     pub fn join<T: Serialize>(mut self, key: &str, join: Join, values: &[T]) -> Result<Self> {
         let mut written = String::new();
-        let any = join::each_text(join, values, |first, text| {
+        let any = join::write::each_text(join, values, |first, text| {
             // The separator as it is, which the URL escapes when it is a space, `%20`.
             if !first {
                 written.push(join.separator());
@@ -392,7 +392,7 @@ impl<'a> Request<'a> {
     /// value.
     pub fn header<T: Serialize + ?Sized>(mut self, name: HeaderName, value: &T) -> Result<Self> {
         let operation_id = self.route.operation_id;
-        let Some(text) = text::to_text(value) else {
+        let Some(text) = text::write::to_text(value) else {
             return Err(Error::misuse(
                 format!("the header `{name}` of `{operation_id}` is not written as text"),
                 None,

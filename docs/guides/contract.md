@@ -174,8 +174,8 @@ The struct needs no `Default`, but its callers like one: they fill the keys they
 
 ### Joined lists
 
-An API that reads a list as one value, `labels=bug,docs`, says so with `#[join(sep)]` on an argument of the route, or
-with a type of `rest::join` in serde's `with` on a field of a query struct, whose type stays a `Vec`:
+An API that reads a list as one value, `labels=bug,docs`, says so with `#[join(sep)]` on an argument of the route,
+whose type stays a `Vec`:
 
 ```rust
 use quoll::rest;
@@ -189,39 +189,23 @@ pub enum State {
     Closed,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct IssueFilter {
-    #[serde(with = "rest::join::Comma::<String>")]
-    pub labels: Vec<String>,
-    #[serde(with = "rest::join::Space::<u32>")]
-    pub milestones: Vec<u32>,
-    pub state: Option<State>,
-}
-
 rest::api! {
     pub api Api = "";
 
     pub group Issues {
         GET "/repos/{owner}/{repo}/issues?labels={labels}&state={state}"
             => list(owner: String, repo: String, #[join(",")] labels: Vec<String>, state: Option<State>) -> Vec<String>;
-        GET "/search/issues" => search(query filter: IssueFilter) -> Vec<String>;
     }
 }
 ```
 
 - `#[join(",")]` writes `labels=bug,docs`, `#[join(" ")]` `labels=bug%20docs`, `#[join("|")]` `labels=bug|docs`:
-  the three styles OpenAPI describes, and no other separator. `rest::join::Comma`, `Space` and `Pipe` write the same
-  lists, their separator escaped by serde_html_form, `labels=bug%2Cdocs`, `bug+docs`, `bug%7Cdocs`.
+  the three styles OpenAPI describes, and no other separator.
 - The values are read from text, as a path parameter is. An empty list leaves the key out, and a missing key is an
-  empty list, for a field that has `#[serde(default)]` as for any `Vec` of a query struct.
+  empty list, as `labels=` is.
 - The server decodes the value before it splits it: it reads `labels=bug%2Cdocs` too, which a browser's
-  `URLSearchParams` writes, and which the client writes for a field of a query struct. So a value cannot hold the
-  separator, and the client refuses one before sending.
-- serde infers the `T` of `Comma<T>` from the field, but the schema needs it written: `rest::join::Comma` alone
-  documents items of any schema. A field takes no `#[schemars(with = ...)]`, which would drop its style from the
-  document, and nothing checks at compile time that its items are read from text. In JSON too a joined field is its
-  joined text, as its schema says.
+  `URLSearchParams` writes. So a value cannot hold the separator, and the client refuses one before sending.
+- Only an argument is joined: a `Vec` field of a query struct repeats its key.
 
 ### Headers
 
