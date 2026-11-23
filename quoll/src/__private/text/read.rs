@@ -1,6 +1,6 @@
-//! A header's value read as a value of its type: the text a path parameter is read from, for every integer, a float,
-//! a `bool`, a `char`, a string or a unit variant, and a newtype around one of them. An `Option` is `None` when the
-//! header is missing, and any other type is then an error of its own.
+//! A header's value, or a value of a joined list, read as a value of its type: the text a path parameter is read from,
+//! for every integer, a float, a `bool`, a `char`, a string or a unit variant, and a newtype around one of them. An
+//! `Option` is `None` when the header is missing, and any other type is then an error of its own.
 
 use std::fmt;
 use std::str::FromStr;
@@ -8,12 +8,12 @@ use std::str::FromStr;
 use serde::de::value::StrDeserializer;
 use serde::de::{self, DeserializeOwned, IntoDeserializer, Visitor};
 
-/// Why a header does not read as its type.
+/// Why a header, or a value of a joined list, does not read as its type.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TextError {
     /// The header is missing, and its type is not an `Option`.
     Missing,
-    /// The header's text is not a value of its type.
+    /// The text is not a value of its type.
     Invalid(String),
 }
 
@@ -34,7 +34,7 @@ impl de::Error for TextError {
     }
 }
 
-/// `text`, or `None` for a header that is missing, read as a `T`.
+/// `text`, a header's or a value of a joined list's, or `None` for a header that is missing, read as a `T`.
 pub(crate) fn from_text<T: DeserializeOwned>(text: Option<&str>) -> Result<T, TextError> {
     T::deserialize(Text(text))
 }

@@ -1,5 +1,6 @@
-//! A value written as the text of one path parameter or one header: what axum's `Path` reads back, for every integer,
-//! a float, a `bool`, a `char`, a string or a unit variant, and a newtype or an `Option` around one of them.
+//! A value written as the text of one path parameter, one header or one value of a joined list: what axum's `Path`
+//! reads back, for every integer, a float, a `bool`, a `char`, a string or a unit variant, and a newtype or an
+//! `Option` around one of them.
 
 use std::fmt;
 

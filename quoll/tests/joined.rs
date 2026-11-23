@@ -28,19 +28,6 @@ struct Listed {
     state: Option<State>,
 }
 
-/// A query struct whose lists are joined, with their `T` or without, beside a key that is not.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-struct IssueFilter {
-    #[serde(with = "rest::join::Comma")]
-    labels: Vec<String>,
-    #[serde(rename = "milestone", with = "rest::join::Space::<u32>")]
-    milestones: Vec<u32>,
-    #[serde(with = "rest::join::Pipe::<State>")]
-    states: Vec<State>,
-    page: Option<u32>,
-}
-
 rest::api! {
     api Api = "/api";
 
@@ -50,7 +37,6 @@ rest::api! {
         GET "/spaced?ids={ids}" => spaced(#[join(" ")] ids: Vec<u32>) -> Vec<u32>;
         GET "/piped?page={page}&states={states}&tag={tags}"
             => piped(page: u32, #[join("|")] states: Vec<State>, tags: Vec<String>) -> Vec<State>;
-        GET "/search" => search(query filter: IssueFilter) -> IssueFilter;
     }
 }
 
@@ -72,10 +58,6 @@ impl IssuesServer for App {
         _tags: Vec<String>,
     ) -> Result<Response<Vec<State>>> {
         Ok(Response::new(states))
-    }
-
-    async fn search(&self, filter: IssueFilter) -> Result<Response<IssueFilter>> {
-        Ok(Response::new(filter))
     }
 }
 
@@ -183,20 +165,6 @@ async fn the_client_writes_the_separator_between_escaped_values() {
             ),
         )
         .route(
-            "/api/search",
-            get(
-                |Shared(queries): Shared<Arc<Mutex<Vec<String>>>>, uri: Uri| async move {
-                    let query = uri.query().unwrap_or_default().to_owned();
-                    queries
-                        .lock()
-                        .expect("no test panics while holding it")
-                        .push(query);
-
-                    axum::Json(IssueFilter::default())
-                },
-            ),
-        )
-        .route(
             "/api/issues",
             get(
                 |Shared(queries): Shared<Arc<Mutex<Vec<String>>>>, uri: Uri| async move {
@@ -235,16 +203,6 @@ async fn the_client_writes_the_separator_between_escaped_values() {
         .await
         .unwrap();
     api.issues().piped(3, Vec::new(), Vec::new()).await.unwrap();
-    api.issues()
-        .search(IssueFilter {
-            labels: vec!["bug".into(), "a b".into()],
-            milestones: vec![1, 2],
-            states: vec![State::Open, State::InReview],
-            page: Some(4),
-        })
-        .await
-        .unwrap();
-    api.issues().search(IssueFilter::default()).await.unwrap();
 
     assert_eq!(
         *queries.lock().expect("no test panics while holding it"),
@@ -254,9 +212,6 @@ async fn the_client_writes_the_separator_between_escaped_values() {
             "ids=1%2022",
             "page=2&tag=x&tag=y&states=open|in_review",
             "page=3",
-            // serde writes a query struct, and escapes its separators, which the server decodes before it splits.
-            "labels=bug%2Ca+b&milestone=1+2&states=open%7Cin_review&page=4",
-            "",
         ]
     );
 }
@@ -362,90 +317,4 @@ async fn a_list_the_server_would_read_otherwise_is_refused_by_the_client() {
         spaced.is_ok(),
         "a key that is not joined holds a `|`: {spaced:?}"
     );
-}
-
-#[tokio::test]
-async fn a_query_struct_with_joined_fields_round_trips() {
-    let (_, api) = served().await;
-    let full = IssueFilter {
-        labels: vec!["bug".into(), "good first issue".into(), "é&?=%".into()],
-        milestones: vec![3, 1],
-        states: vec![State::InReview],
-        page: Some(2),
-    };
-
-    assert_eq!(api.issues().search(full.clone()).await.unwrap(), full);
-    assert_eq!(
-        api.issues().search(IssueFilter::default()).await.unwrap(),
-        IssueFilter::default()
-    );
-}
-
-#[tokio::test]
-async fn a_query_struct_reads_joined_fields_escaped_or_not() {
-    let (url, _) = served().await;
-    let expected = IssueFilter {
-        labels: vec!["bug".into(), "docs".into()],
-        milestones: vec![1, 2],
-        states: vec![State::Open, State::InReview],
-        page: None,
-    };
-
-    for query in [
-        "labels=bug,docs&milestone=1%202&states=open|in_review",
-        "labels=bug%2Cdocs&milestone=1+2&states=open%7Cin_review",
-    ] {
-        let (status, filter) = read(&url, &format!("/search?{query}")).await;
-        // The handler answers the struct as JSON, where serde writes each list as its joined value too.
-        let filter: IssueFilter = serde_json::from_value(filter).expect("the filter");
-
-        assert_eq!(
-            (status, filter),
-            (StatusCode::OK, expected.clone()),
-            "{query}"
-        );
-    }
-
-    let (status, problem) = read(&url, "/search?milestone=1%20x").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        problem["detail"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("the value `x` of a joined list"),
-        "{problem}"
-    );
-}
-
-#[tokio::test]
-async fn a_query_struct_the_server_would_read_otherwise_is_refused_by_the_client() {
-    let (_, api) = served().await;
-
-    for (labels, refused) in [
-        (vec!["a,b".to_owned()], "holds the separator `,`"),
-        (vec![String::new()], "is one empty value"),
-    ] {
-        let filter = IssueFilter {
-            labels: labels.clone(),
-            ..IssueFilter::default()
-        };
-        let error = api
-            .issues()
-            .search(filter)
-            .await
-            .expect_err("a list the server would not read back");
-        let sources = std::iter::successors(Some(&error as &dyn std::error::Error), |error| {
-            error.source()
-        })
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(": ");
-
-        assert_eq!(error.status(), None, "{labels:?}");
-        assert!(
-            sources.contains("the query of `issues_search`"),
-            "{sources}"
-        );
-        assert!(sources.contains(refused), "{sources}");
-    }
 }

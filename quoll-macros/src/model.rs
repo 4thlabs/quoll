@@ -263,13 +263,13 @@ impl Join {
         }
     }
 
-    /// What serde's `with` names for a list of `element`s: `::quoll::rest::join::Comma::<u32>`.
-    pub(crate) fn with(self, element: &Type) -> String {
-        format!(
-            "::quoll::rest::join::{}::<{}>",
-            self.variant(),
-            quote::quote!(#element)
-        )
+    /// What serde's `deserialize_with` names, whose `T` it infers from the field: `::quoll::__private::join::comma`.
+    pub(crate) fn deserialize_with(self) -> &'static str {
+        match self {
+            Self::Comma => "::quoll::__private::join::comma",
+            Self::Space => "::quoll::__private::join::space",
+            Self::Pipe => "::quoll::__private::join::pipe",
+        }
     }
 
     /// The variant of `quoll::__private::join::Join` the generated code names.
