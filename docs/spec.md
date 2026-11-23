@@ -4,7 +4,7 @@
 > [!NOTE]
 > **Validated** by the maintainer on 2026-11-23.
 
-Contract-first REST for Rust: one contract, enforced by the compiler, from your server to your frontend. A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI 3.1 document; the document feeds whatever generator of OpenAPI the frontend chooses, orval, openapi-typescript, hey-api, Kiota..., which `cargo quoll` runs. No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
+A modern, type-safe REST toolkit for Rust: from a client for any API to the server behind your frontend. A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI 3.1 document; the document feeds whatever generator of OpenAPI the frontend chooses, orval, openapi-typescript, hey-api, Kiota..., which `cargo quoll` runs. No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
 
 Decided by the maintainer:
 

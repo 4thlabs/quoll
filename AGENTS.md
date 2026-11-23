@@ -7,9 +7,9 @@ follows. **The design is in [`docs/spec.md`](docs/spec.md)**: read it first. It 
 crate does. **The work to do, and its order, is in the GitHub project
 [Quoll](https://github.com/users/4thlabs/projects/2)**: one issue per piece of work, grouped by milestone.
 
-**Contract-first REST for Rust: one contract, enforced by the compiler, from your server to your frontend.** An axum
-server, a reqwest client and an OpenAPI 3.1 document from one macro. `cargo quoll` writes the document, runs your
-frontend's generator, and serves both while you work. Any OpenAPI generator works: the notes example uses orval,
+**A modern, type-safe REST toolkit for Rust: from a client for any API to the server behind your frontend.** One
+contract gives you an axum server, a reqwest client and an OpenAPI 3.1 document. `cargo quoll` integrates it with your
+frontend and keeps both in sync as you work. Any OpenAPI generator works: the notes example uses orval,
 which writes TanStack Query hooks. There is no UI. The crate is `quoll`, with the contract at its root.
 
 The maintainer writes in French. Code, comments, docs and commit messages are in English.

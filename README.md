@@ -6,10 +6,10 @@
     </picture>
   </h1>
 
-  <p><strong>Contract-first REST for Rust: one contract, enforced by the compiler, from your server to your
+  <p><strong>A modern, type-safe REST toolkit for Rust: from a client for any API to the server behind your
   frontend.</strong><br />
-  An axum server, a reqwest client and an OpenAPI 3.1 document from one macro. <code>cargo quoll</code> writes the
-  document, runs your frontend's generator, and serves both while you work.</p>
+  One contract gives you an axum server, a reqwest client and an OpenAPI 3.1 document. <code>cargo quoll</code> integrates
+  it with your frontend and keeps both in sync as you work.</p>
 
   <p>
     <img src="https://img.shields.io/badge/Rust-2024-B7410E?logo=rust&logoColor=white" alt="Rust 2024" />
