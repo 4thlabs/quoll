@@ -17,11 +17,13 @@ impl fmt::Display for HubError {
 mod gists {
     use quoll::rest;
 
-    // Its trait is written before the api lists it: it cannot take the api's `#[error]`.
+    // Its trait is written before the api lists it: its second route cannot take the api's `#[error]`.
     rest::group! {
         #[openapi(none)]
         pub group Gists {
+            #[error(super::HubError)]
             GET "/gists" => list();
+            GET "/gists/{id}" => get(id: String) -> String;
         }
     }
 }

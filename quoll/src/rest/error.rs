@@ -139,6 +139,43 @@ impl Error {
         Self(Box::new(Repr::Internal(error)))
     }
 
+    /// The error, as an error of the shape `F`: an error of a status, an internal one and a call that got no answer
+    /// as they are, and the answer of another API, whose problem is left, with its status, its body and its message.
+    ///
+    /// A fake of an api with `#[error(F)]` so returns an error of a status alone, which has no detail, as an answer
+    /// whose body is not an `F`:
+    ///
+    /// ```
+    /// use std::fmt;
+    ///
+    /// use http::StatusCode;
+    /// use quoll::rest;
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Debug, Deserialize)]
+    /// struct GitHubError {
+    ///     message: String,
+    /// }
+    ///
+    /// impl fmt::Display for GitHubError {
+    ///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    ///         f.write_str(&self.message)
+    ///     }
+    /// }
+    ///
+    /// let error: rest::Error<GitHubError> = rest::Error::not_found("no such repository").into_shape();
+    ///
+    /// assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
+    /// assert!(error.detail().is_none());
+    ///
+    /// let failed: rest::Error<GitHubError> = rest::Error::internal("the fake is down").into_shape();
+    ///
+    /// assert_eq!(failed.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
+    /// ```
+    pub fn into_shape<F>(self) -> Error<F> {
+        self.cast()
+    }
+
     /// A call that got no answer to read, which a handler returning it answers with `answered`.
     #[cfg_attr(
         not(any(test, feature = "client")),
@@ -229,38 +266,7 @@ impl<E> Error<E> {
 
     /// The error, as an error of the shape `F`: an error of a status, an internal one and a call that got no answer
     /// as they are, and an answer, whose detail is left, with its status, its body and its message.
-    ///
-    /// A fake of an api with `#[error(F)]` so returns an error of a status alone, which has no detail, as an answer
-    /// whose body is not an `F`:
-    ///
-    /// ```
-    /// use std::fmt;
-    ///
-    /// use http::StatusCode;
-    /// use quoll::rest;
-    /// use serde::Deserialize;
-    ///
-    /// #[derive(Debug, Deserialize)]
-    /// struct GitHubError {
-    ///     message: String,
-    /// }
-    ///
-    /// impl fmt::Display for GitHubError {
-    ///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    ///         f.write_str(&self.message)
-    ///     }
-    /// }
-    ///
-    /// let error: rest::Error<GitHubError> = rest::Error::not_found("no such repository").into_shape();
-    ///
-    /// assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
-    /// assert!(error.detail().is_none());
-    ///
-    /// let failed: rest::Error<GitHubError> = rest::Error::internal("the fake is down").into_shape();
-    ///
-    /// assert_eq!(failed.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
-    /// ```
-    pub fn into_shape<F>(self) -> Error<F> {
+    pub(crate) fn cast<F>(self) -> Error<F> {
         Error(Box::new(match *self.0 {
             Repr::Problem { status, detail } => Repr::Problem { status, detail },
             Repr::Internal(source) => Repr::Internal(source),
@@ -341,7 +347,7 @@ where
     E: serde::de::DeserializeOwned + fmt::Display + fmt::Debug + Send + Sync + 'static,
 {
     fn from(error: Error<E>) -> Self {
-        error.into_shape()
+        error.cast()
     }
 }
 
@@ -533,7 +539,7 @@ mod tests {
         assert!(carried.detail().is_none(), "a shape that is not a problem");
 
         let failed: Error = Error::failed("got no response", None, StatusCode::BAD_GATEWAY)
-            .into_shape::<Shape>()
+            .cast::<Shape>()
             .into();
 
         assert_eq!(failed.status(), None);

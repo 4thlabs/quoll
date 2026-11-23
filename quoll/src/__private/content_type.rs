@@ -66,8 +66,9 @@ pub(crate) fn essence(content_type: &str) -> &str {
 }
 
 /// Whether `headers` say the body is `expected`, whatever the case and the parameters, but a charset other than UTF-8
-/// when `utf8` is set. A body without a content type, with more than one, or with one that is not text, is not
-/// `expected`.
+/// when `utf8` is set. A body without a content type, with more than one, with one that is not text, or with a
+/// parameter that is not `name=value`, the value a token or a closed quoted string, as a fixed one is read, is not
+/// `expected`; an empty parameter, `text/plain;`, which RFC 9110 allows, is skipped.
 pub(crate) fn is(headers: &HeaderMap, expected: &str, utf8: bool) -> bool {
     let Some(value) = single(headers) else {
         return false;
@@ -77,18 +78,25 @@ pub(crate) fn is(headers: &HeaderMap, expected: &str, utf8: bool) -> bool {
         return false;
     }
 
-    let other_charset = params(value.as_bytes()).any(|param| {
+    params(value.as_bytes()).all(|param| {
+        let param = param.trim_ascii();
+
+        if param.is_empty() {
+            return true;
+        }
+
         let Some(at) = param.iter().position(|&byte| byte == b'=') else {
             return false;
         };
         let (name, value) = param.split_at(at);
-        let value = headers::unquoted(value[1..].trim_ascii());
+        let (name, value) = (name.trim_ascii(), value[1..].trim_ascii());
+        let Some(text) = headers::unquoted(value).filter(|_| !name.is_empty() && !value.is_empty())
+        else {
+            return false;
+        };
 
-        name.trim_ascii().eq_ignore_ascii_case(b"charset")
-            && value.is_none_or(|value| !value.eq_ignore_ascii_case(b"utf-8"))
-    });
-
-    !(utf8 && other_charset)
+        !(utf8 && name.eq_ignore_ascii_case(b"charset") && !text.eq_ignore_ascii_case(b"utf-8"))
+    })
 }
 
 /// The parameters of a content type, each cut at a `;` outside a quoted string, as the macro reads a fixed one:
@@ -309,14 +317,23 @@ mod tests {
             "text/plain",
             true
         ));
-        // A charset that is not a token or a closed quoted string is not UTF-8.
-        assert!(!is(
-            &headers(r#"text/plain; charset="utf-8\""#),
-            "text/plain",
-            true
-        ));
-        assert!(!is(
-            &headers(r#"text/plain; charset=utf-8""#),
+        // A parameter that is not `name=value`, a token or a closed quoted string, is not one quoll reads.
+        for value in [
+            r#"text/plain; charset="utf-8\""#,
+            r#"text/plain; charset=utf-8""#,
+            r#"text/plain; x="\"; charset=latin1"#,
+            "text/plain; charset",
+            "text/plain; =utf-8",
+            "text/plain; x=",
+        ] {
+            assert!(!is(&headers(value), "text/plain", true), "{value}");
+            assert!(!is(&headers(value), "text/plain", false), "{value}");
+        }
+
+        // An empty one is skipped.
+        assert!(is(&headers("text/plain;"), "text/plain", true));
+        assert!(is(
+            &headers("text/plain; ; charset=utf-8"),
             "text/plain",
             true
         ));

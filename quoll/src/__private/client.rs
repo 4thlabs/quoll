@@ -475,7 +475,7 @@ impl<'a> Request<'a> {
     /// read.
     async fn send<E>(self, shape: Shaped<E>) -> Result<Answer, E> {
         let route = self.route;
-        let response = self.dispatch().await.map_err(Error::into_shape)?;
+        let response = self.dispatch().await.map_err(Error::cast)?;
 
         if response.status().is_success() {
             return Ok(Answer { response, route });
@@ -645,7 +645,7 @@ async fn answered_error<E>(
     let version = response.version();
     let headers = response.headers().clone();
     let body = read_up_to_limit(response).await.map_err(|error| {
-        no_answer(route, "got an error whose body cannot be read", error).into_shape()
+        no_answer(route, "got an error whose body cannot be read", error).cast()
     })?;
     let detail = (shape.read)(&headers, &body);
     let message = detail.as_ref().and_then(shape.message);
@@ -680,13 +680,9 @@ impl<'a, T, E> Pending<'a, T, E> {
 
     /// Sends the call, and reads its answer as the route's result when its status is a success.
     async fn send(self) -> Result<T, E> {
-        let answer = self
-            .request
-            .map_err(Error::into_shape)?
-            .send(self.shape)
-            .await?;
+        let answer = self.request.map_err(Error::cast)?.send(self.shape).await?;
 
-        (self.read)(answer).await.map_err(Error::into_shape)
+        (self.read)(answer).await.map_err(Error::cast)
     }
 }
 
@@ -714,9 +710,9 @@ impl<T: Send + 'static, E: Send + 'static> rest::Call<T, E> for Pending<'_, T, E
             read,
             shape,
         } = self;
-        let request = request.map_err(Error::into_shape)?;
+        let request = request.map_err(Error::cast)?;
         let route = request.route;
-        let response = request.dispatch().await.map_err(Error::into_shape)?;
+        let response = request.dispatch().await.map_err(Error::cast)?;
         let status = response.status();
         let version = response.version();
         let headers = response.headers().clone();
@@ -724,7 +720,7 @@ impl<T: Send + 'static, E: Send + 'static> rest::Call<T, E> for Pending<'_, T, E
         let body = if status.is_success() {
             Ok(read(Answer { response, route })
                 .await
-                .map_err(Error::into_shape)?)
+                .map_err(Error::cast)?)
         } else {
             Err(answered_error(response, route, shape).await?)
         };

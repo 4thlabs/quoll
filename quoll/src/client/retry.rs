@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use backon::{BackoffBuilder, ExponentialBuilder};
-use http::header::{DATE, RETRY_AFTER};
+use http::header::{AGE, DATE, RETRY_AFTER};
 use http::{Extensions, HeaderMap, Method, StatusCode};
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next};
@@ -318,8 +318,9 @@ impl Attempt<'_> {
     /// [`max_wait`](Retrying::max_wait): [`Retry::After`] that wait, or [`Retry::Backoff`] for an answer with no
     /// `Retry-After` that can be read, or an attempt with no answer.
     ///
-    /// A date is measured from the answer's `Date`, the server's clock, or from the client's when it has none, so that
-    /// a client whose clock is ahead waits as long as the server asks; a date that is not after it is the backoff.
+    /// A date is measured from the answer's `Date`, the server's clock, plus its `Age` when a cache or a CDN served
+    /// it, or from the client's clock when it has no `Date`, so that a client whose clock is ahead waits as long as
+    /// the server asks; a date that is not after it is the backoff.
     ///
     /// It says when to try again, not whether the request may be sent twice: a `429` or a `503` with a `Retry-After`
     /// says the server did not act on it, which the closure of [`when`](Retrying::when) tells by the status.
@@ -350,14 +351,23 @@ impl Attempt<'_> {
         Retry::After(wait.min(self.max_wait))
     }
 
-    /// When the server answered, by its clock: the answer's `Date`, or the client's clock when it has none that can be
-    /// read.
+    /// Now, by the server's clock: the answer's `Date` plus its `Age`, the seconds a cache kept it, or the client's
+    /// clock when it has no `Date` that can be read.
     fn answered_at(&self) -> SystemTime {
-        self.headers()
-            .and_then(|headers| headers.get(DATE))
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| httpdate::parse_http_date(value.trim()).ok())
-            .unwrap_or_else(SystemTime::now)
+        let header = |name| {
+            self.headers()
+                .and_then(|headers| headers.get(name))
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+        };
+        let Some(date) = header(DATE).and_then(|date| httpdate::parse_http_date(date).ok()) else {
+            return SystemTime::now();
+        };
+        let age = header(AGE)
+            .and_then(|age| age.parse().ok())
+            .map_or(Duration::ZERO, Duration::from_secs);
+
+        date.checked_add(age).unwrap_or(date)
     }
 }
 
@@ -429,6 +439,16 @@ mod tests {
     /// The decision of `retry_after` on an answer whose `Retry-After` is `value`, or that has none, and whose `Date`
     /// is `date`, or that has none.
     fn dated(value: Option<&str>, date: Option<&str>, max_wait: Duration) -> Retry {
+        aged(value, date, None, max_wait)
+    }
+
+    /// [`dated`], with the `Age` `age`, or none.
+    fn aged(
+        value: Option<&str>,
+        date: Option<&str>,
+        age: Option<&str>,
+        max_wait: Duration,
+    ) -> Retry {
         let mut answer = http::Response::builder().status(StatusCode::TOO_MANY_REQUESTS);
 
         if let Some(value) = value {
@@ -436,6 +456,9 @@ mod tests {
         }
         if let Some(date) = date {
             answer = answer.header(DATE, date);
+        }
+        if let Some(age) = age {
+            answer = answer.header(AGE, age);
         }
 
         let result = Ok(Response::from(answer.body("").expect("an answer")));
@@ -500,6 +523,29 @@ mod tests {
             dated(Some(&date), Some(&date), MAX_WAIT),
             Retry::Backoff,
             "a date that is the answer's own"
+        );
+    }
+
+    #[test]
+    fn retry_after_a_date_counts_the_age_of_a_cached_answer() {
+        // A CDN kept for 15 s an answer that asked for a wait of 20 s from its `Date`.
+        let date = SystemTime::now() - Duration::from_secs(60);
+        let at = httpdate::fmt_http_date(date + Duration::from_secs(20));
+        let date = httpdate::fmt_http_date(date);
+
+        assert_eq!(
+            aged(Some(&at), Some(&date), Some("15"), MAX_WAIT),
+            Retry::After(Duration::from_secs(5))
+        );
+        assert_eq!(
+            aged(Some(&at), Some(&date), Some("30"), MAX_WAIT),
+            Retry::Backoff,
+            "a wait a cache kept past"
+        );
+        assert_eq!(
+            aged(Some(&at), Some(&date), Some("soon"), MAX_WAIT),
+            Retry::After(Duration::from_secs(20)),
+            "an age that cannot be read"
         );
     }
 
