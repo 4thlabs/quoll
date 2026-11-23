@@ -280,7 +280,7 @@ impl<T> fmt::Debug for JsonLines<T> {
 /// The server builds it from a stream of chunks, [`ByteStream::new`], or of results, [`ByteStream::try_new`], of
 /// `application/octet-stream` unless [`ByteStream::with_content_type`] says another. The client gets the same type: a
 /// [`Stream`] of `Result<Vec<u8>>`, the chunks of the body as they arrive, and the [content type](Self::content_type)
-/// of the answer.
+/// of the answer; a 204 or a 205 gives a stream that ends at once, of `application/octet-stream`.
 ///
 /// ```
 /// use futures_util::{StreamExt, stream};

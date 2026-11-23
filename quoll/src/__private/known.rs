@@ -8,12 +8,14 @@
 //! built with neither feature checks them too.
 //!
 //! [`Nullable`] and [`MayBeEmpty`] tell a result's type at compile time, by the impls of the types they name: whether
-//! a 204 reads as `null`, and whether a 204 may answer it at all, which a `Created<T>` or an `Accepted<T>` may not.
+//! a 204 reads as `null`, and whether a 204 may answer it at all, as the handler's value says, whatever wraps it.
 
 use std::borrow::Cow;
 use std::marker::PhantomData;
 
-use crate::rest::{Accepted, ByteStream, Bytes, Created, Events, Form, JsonLines, Text};
+use crate::rest::{
+    Accepted, Allows, ByteStream, Bytes, Created, Events, Form, JsonLines, NoBody, Text,
+};
 
 pub use crate::rest::stream::Items;
 
@@ -34,33 +36,19 @@ impl Nullable<()> {
     pub const IS: bool = true;
 }
 
-/// Whether a type `T` may be empty, a result a 204 answers as `rest::Allows` lists them: [`IS`](MayBeEmpty::IS) is
-/// `true` for `()`, an `Option<T>`, `Text`, `Bytes`, `Events<T>`, `JsonLines<T>` and `ByteStream`, by their impls, and
-/// `false` for any other, by [`NotEmpty`]. The `T` of a `Created<T>` or an `Accepted<T>` is none of them: its status
-/// carries a value, which a 204 would not.
+/// Whether the value `T` of a handler's response may be empty, a result a 204 answers: [`IS`](MayBeEmpty::IS) is
+/// `true` for each type `rest::Allows` gives a 204, the one list of them, by the impl whose bound says so, and `false`
+/// for any other, by [`NotEmpty`]. The OpenAPI document lists a 204 for it, whatever the result wraps it in, a
+/// `Created<T>` or an `Accepted<T>` among them.
 #[derive(Debug)]
 pub struct MayBeEmpty<T>(PhantomData<fn() -> T>);
 
-/// Gives `MayBeEmpty` of each result that may be empty its constant, `T` its parameter where it has one.
-macro_rules! may_be_empty {
-    ($($ty:ty $(=> $param:ident)?),* $(,)?) => {
-        $(
-            impl$(<$param>)? MayBeEmpty<$ty> {
-                /// A result that may be empty.
-                pub const IS: bool = true;
-            }
-        )*
-    };
-}
-
-may_be_empty! {
-    (),
-    Option<T> => T,
-    Text,
-    Bytes,
-    Events<T> => T,
-    JsonLines<T> => T,
-    ByteStream,
+impl<T> MayBeEmpty<T>
+where
+    NoBody: Allows<T>,
+{
+    /// A value that may be empty.
+    pub const IS: bool = true;
 }
 
 /// The constant of any type that is not empty, which the code of a contract brings into scope.

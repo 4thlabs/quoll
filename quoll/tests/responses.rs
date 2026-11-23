@@ -17,8 +17,8 @@ use http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, LOCATION, X_CONTENT_TYPE_O
 use http::{HeaderValue, StatusCode};
 use quoll::client;
 use quoll::rest::{
-    self, ByteStream, Bytes, Call, Created, Error, Events, JsonLines, Response, Result, Status,
-    Text,
+    self, Accepted, ByteStream, Bytes, Call, Created, Error, Events, JsonLines, Response, Result,
+    Status, Text,
 };
 use reqwest_middleware::ClientBuilder;
 use schemars::JsonSchema;
@@ -35,6 +35,9 @@ struct Note {
     title: String,
 }
 
+/// A note that may be missing, under a name of its own: its type, not its name, may be empty.
+type MaybeNote = Option<Note>;
+
 rest::api! {
     api Api = "/api";
 
@@ -48,6 +51,9 @@ rest::api! {
         GET  "/events"         => events() -> Events<u32>;
         GET  "/logo"           => logo() -> Bytes;
         GET  "/drafts/{id}"    => draft(id: i64) -> Option<Note>;
+        GET  "/maybe/{id}"     => maybe(id: i64) -> MaybeNote;
+        POST "/drafts"         => publish(title: String) -> Created<Option<Note>>;
+        PUT  "/jobs/{id}"      => start(id: i64) -> Accepted<()>;
     }
 
     /// Results that may be empty, each answered with a 204 by the server below.
@@ -67,6 +73,7 @@ rest::api! {
         GET "/reset/text" => reset_text() -> Text;
         GET "/reset/events" => reset_events() -> Events<u32>;
         GET "/reset/bytes" => reset_bytes() -> Bytes;
+        GET "/reset/output" => reset_output() -> ByteStream;
     }
 }
 
@@ -174,6 +181,26 @@ impl NotesServer for App {
         Ok(Response::new(Some(note)))
     }
 
+    async fn maybe(&self, id: i64) -> Result<Response<MaybeNote>> {
+        self.draft(id).await
+    }
+
+    async fn publish(&self, title: String) -> Result<Response<Option<Note>>> {
+        if title.is_empty() {
+            return Ok(Response::new(None).with_status(Status::NO_CONTENT));
+        }
+
+        Ok(Response::new(Some(Note { id: 8, title })))
+    }
+
+    async fn start(&self, id: i64) -> Result<Response<()>> {
+        if id == 0 {
+            return Ok(Response::new(()).with_status(Status::NO_CONTENT));
+        }
+
+        Ok(Response::new(()))
+    }
+
     async fn logo(&self) -> Result<Response<Bytes>> {
         let logo = Bytes::new(b"<svg/>".to_vec()).with_content_type("image/svg+xml");
 
@@ -232,6 +259,10 @@ impl PagesServer for App {
     }
 
     async fn reset_bytes(&self) -> Result<Response<Bytes>> {
+        unreachable!("the 205 is served by a router of its own")
+    }
+
+    async fn reset_output(&self) -> Result<Response<ByteStream>> {
         unreachable!("the 205 is served by a router of its own")
     }
 }
@@ -423,6 +454,68 @@ async fn a_204_of_a_route_of_an_option_is_none() -> Result<()> {
 }
 
 #[tokio::test]
+async fn a_204_is_given_by_the_handlers_value_whatever_the_result_wraps_it_in() -> Result<()> {
+    let url = serve(&App::default()).await;
+    let notes = Api::client(&url)?.notes();
+
+    let published = notes.publish(String::new()).response().await?;
+
+    assert_eq!(published.status(), StatusCode::NO_CONTENT);
+    assert_eq!(published.into_value()?, None);
+    assert_eq!(
+        notes.publish("Milk".into()).await?.map(|note| note.id),
+        Some(8)
+    );
+
+    let started = notes.start(1).response().await?;
+    let skipped = notes.start(0).response().await?;
+
+    assert_eq!(started.status(), StatusCode::ACCEPTED);
+    assert_eq!(skipped.status(), StatusCode::NO_CONTENT);
+    skipped.into_value()?;
+
+    assert_eq!(notes.maybe(0).await?, None);
+    assert_eq!(notes.maybe(3).await?.map(|note| note.id), Some(3));
+    Ok(())
+}
+
+#[test]
+fn the_document_lists_a_204_by_the_handlers_value() {
+    let document = serde_json::to_value(Api::openapi()).expect("a document");
+    let listed = |path: &str, method: &str| -> Vec<String> {
+        document["paths"][path][method]["responses"]
+            .as_object()
+            .expect("its responses")
+            .keys()
+            .cloned()
+            .collect()
+    };
+
+    for (path, method, status) in [
+        ("/api/drafts", "post", "201"),
+        ("/api/jobs/{id}", "put", "202"),
+        ("/api/maybe/{id}", "get", "200"),
+    ] {
+        let listed = listed(path, method);
+
+        assert!(
+            listed.iter().any(|listed| listed == status),
+            "{method} {path}: {listed:?}"
+        );
+        assert!(
+            listed.iter().any(|listed| listed == "204"),
+            "{method} {path}: {listed:?}"
+        );
+    }
+
+    assert!(
+        !listed("/api/notes", "post")
+            .iter()
+            .any(|listed| listed == "204")
+    );
+}
+
+#[tokio::test]
 async fn a_204_of_a_result_that_may_be_empty_is_read_empty() -> Result<()> {
     let url = serve(&App::default()).await;
     let quiet = Api::client(&url)?.quiet();
@@ -512,6 +605,16 @@ async fn the_body_another_api_sends_with_a_205_is_dropped() -> Result<()> {
             }),
         )
         .route(
+            "/api/reset/output",
+            axum::routing::get(|| async {
+                (
+                    StatusCode::RESET_CONTENT,
+                    [(CONTENT_TYPE, "text/x-log")],
+                    "unsent",
+                )
+            }),
+        )
+        .route(
             "/api/reset/events",
             axum::routing::get(|| async {
                 (
@@ -531,6 +634,11 @@ async fn the_body_another_api_sends_with_a_205_is_dropped() -> Result<()> {
 
     assert_eq!(bytes.content_type(), "application/octet-stream");
     assert!(bytes.into_vec().is_empty());
+
+    let output = pages.reset_output().await?;
+
+    assert_eq!(output.content_type(), "application/octet-stream");
+    assert!(output.collect::<Vec<_>>().await.is_empty());
     assert!(
         pages
             .reset_events()

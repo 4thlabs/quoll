@@ -112,7 +112,8 @@ impl fmt::Display for Text {
 /// As a result, the server answers them with their content type, and `X-Content-Type-Options: nosniff`, so that a
 /// browser does not read them as another type. The client reads an answer of any content type into them, whole, as it
 /// does a JSON result, and keeps that type: an answer without one, or with one that is not a media type, is
-/// `application/octet-stream`, bytes of no known type, as RFC 9110 lets a recipient assume.
+/// `application/octet-stream`, bytes of no known type, as RFC 9110 lets a recipient assume. A 204 or a 205 is no bytes,
+/// of `application/octet-stream`, whatever a body a 205 carries said.
 ///
 /// As a body, the client sends them with their content type. The server reads a body of any media type into them, but
 /// the three a browser sends to another site without asking it first, `application/x-www-form-urlencoded`,
@@ -156,7 +157,7 @@ impl Bytes {
     }
 
     /// What the bytes are, as `Content-Type` writes it, as it was given or received: `application/octet-stream` when
-    /// nothing said it.
+    /// nothing said it, and for the empty bytes of a 204 or a 205.
     pub fn content_type(&self) -> &str {
         &self.content_type
     }

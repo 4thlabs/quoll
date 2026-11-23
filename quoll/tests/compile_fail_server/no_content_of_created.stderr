@@ -2,12 +2,12 @@ error[E0277]: a 204 or a 205 says there is no body, and a `Note` is a value that
   --> tests/compile_fail_server/no_content_of_created.rs:24:54
    |
 24 |         Ok(Response::new(Note { title }).with_status(Status::NO_CONTENT))
-   |                                          ----------- ^^^^^^^^^^^^^^^^^^ a status of no content, on a route of a `Note`
+   |                                          ----------- ^^^^^^^^^^^^^^^^^^ a status of no content, on a value `Note`
    |                                          |
    |                                          required by a bound introduced by this call
    |
    = help: the trait `Allows<Note>` is not implemented for `rest::response::sealed::NoBody`
-   = note: a route `-> Note` that may answer no content returns an `Option`: `-> Option<Note>` in the contract, and `Response::new(None)` with this status in the handler; a 204 is no answer of a route `-> Created<Note>` or `-> Accepted<Note>`, whose status carries its value
+   = note: a handler's value that may answer no content is an `Option`: `Option<Note>` in place of `Note` in the contract, `-> Option<Note>`, `-> Created<Option<Note>>` or `-> Accepted<Option<Note>>`, and `Response::new(None)` with this status in the handler
    = help: `rest::response::sealed::NoBody` implements trait `Allows<T>`:
              Allows<()>
              Allows<ByteStream>
