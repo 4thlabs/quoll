@@ -410,7 +410,7 @@ if response.status() == StatusCode::NOT_FOUND {
 Ok(Some(response.into_value()?))
 ```
 
-- Any future of a `rest::Result<T, E>` is a `Call<T, E>` too: a fake returns an `async move` block, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or an answer of its error's status, an error with none, which got no answer, as it is. A fake of an api with `#[error(E)]` builds the error of an answer with `rest::Error::answered(StatusCode::NOT_FOUND, e)`, and one of a status alone, with no detail, with `rest::Error::not_found(..).into_shape()`, the conversion of an error into another shape, which leaves its detail. Code generic over `impl Notes` calls either.
+- Any future of a `rest::Result<T, E>` is a `Call<T, E>` too: a fake returns an `async move` block, whose `.timeout` does nothing and whose `.response()` gives a 200 with no headers, or an answer of its error's status, an error with none, which got no answer, as it is. A fake of an api with `#[error(E)]` builds the error of an answer with `rest::Error::answered(StatusCode::NOT_FOUND, e)`, and one of a status alone, with no detail, with `rest::Error::not_found(..).into_shape()`, which turns a `rest::Error` into one of another shape, leaving its problem. Code generic over `impl Notes` calls either.
 - Each request carries a `rest::Route` in its extensions: the operation id, the group, the method, the path as written and the schemes it accepts. Middleware reads it.
 
 ## Middleware

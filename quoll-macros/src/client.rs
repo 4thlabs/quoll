@@ -30,20 +30,26 @@ pub(crate) fn group(cx: &Cx) -> TokenStream {
 }
 
 /// The shapes of the errors of the group's routes, each once, in the order the routes first name them: the type each
-/// `#[error(E)]` the routes take names, or `rest::Problem`.
-fn shapes(cx: &Cx) -> Vec<TokenStream> {
-    let mut shapes: Vec<TokenStream> = Vec::new();
+/// `#[error(E)]` the routes take names, or `rest::Problem`; and for each route, the index of its own among them.
+fn shapes(cx: &Cx) -> (Vec<TokenStream>, Vec<usize>) {
+    let mut shapes: Vec<(String, TokenStream)> = Vec::new();
+    let mut taken = Vec::new();
 
     for route in &cx.group.routes {
         let shape = error_type(cx, route);
         let shown = shape.to_string();
+        let index = match shapes.iter().position(|(seen, _)| *seen == shown) {
+            Some(index) => index,
+            None => {
+                shapes.push((shown, shape));
+                shapes.len() - 1
+            }
+        };
 
-        if !shapes.iter().any(|seen| seen.to_string() == shown) {
-            shapes.push(shape);
-        }
+        taken.push(index);
     }
 
-    shapes
+    (shapes.into_iter().map(|(_, shape)| shape).collect(), taken)
 }
 
 /// `__QUOLL_SHAPE_0`, the constant of the group's client that reads the errors of the `index`-th of its [`shapes`].
@@ -53,8 +59,8 @@ fn shape_const(index: usize) -> Ident {
 
 /// The constants of the group's client that read the errors of each of its shapes, once per shape, spanned on the
 /// type an `#[error(E)]` names: a type that is not a shape is one error, there, whatever the routes that take it.
-fn shape_consts(cx: &Cx) -> TokenStream {
-    let consts = shapes(cx).into_iter().enumerate().map(|(index, shape)| {
+fn shape_consts(shapes: Vec<TokenStream>) -> TokenStream {
+    let consts = shapes.into_iter().enumerate().map(|(index, shape)| {
         let name = shape_const(index);
         let of = quote_spanned! {shape.span()=> ::quoll::__private::client::shaped::<#shape>() };
 
@@ -165,18 +171,14 @@ fn group_client(cx: &Cx) -> TokenStream {
         given_by(cx),
         group.name.unraw(),
     );
-    let shapes = shapes(cx);
-    let methods = group.routes.iter().enumerate().map(|(index, route)| {
-        let shown = error_type(cx, route).to_string();
-        let shape = shapes
-            .iter()
-            .position(|shape| shape.to_string() == shown)
-            .map(shape_const)
-            .expect("each route's shape is among the group's");
-
-        method(cx, index, route, &shape)
-    });
-    let shape_consts = shape_consts(cx);
+    let (shapes, taken) = shapes(cx);
+    let methods = group
+        .routes
+        .iter()
+        .zip(taken)
+        .enumerate()
+        .map(|(index, (route, shape))| method(cx, index, route, &shape_const(shape)));
+    let shape_consts = shape_consts(shapes);
     let http = Ident::new("client", Span::mixed_site());
     let prefix = Ident::new("prefix", Span::mixed_site());
     let routes = Ident::new("routes", Span::mixed_site());

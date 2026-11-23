@@ -55,7 +55,15 @@ pub(crate) fn expand(cx: &Cx) -> TokenStream {
     let group_reach = reach(vis);
     let shown = shown_vis(vis);
     // A route with no `#[error]` of its own or its group's has problems, which it cannot take from an api.
-    let error = group.error.is_some() || group.routes.iter().all(|route| route.error.is_some());
+    let unshaped = group
+        .routes
+        .iter()
+        .find(|route| group.error.is_none() && route.error.is_none())
+        .map(|route| route.name.unraw().to_string());
+    let unshaped = match unshaped {
+        Some(function) => quote! { ::core::option::Option::Some(#function) },
+        None => quote! { ::core::option::Option::None },
+    };
     let routes = group.routes.iter().map(|route| route_info(group, route));
 
     quote! {
@@ -69,7 +77,7 @@ pub(crate) fn expand(cx: &Cx) -> TokenStream {
                 name: #name,
                 reach: #group_reach,
                 vis: #shown,
-                error: #error,
+                unshaped: #unshaped,
                 routes: &[#(#routes),*],
             };
         }
@@ -443,51 +451,25 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
 
 /// For a group of the list of an api with an `#[error(E)]`, a check that each route of the group has the shape of its
 /// errors named: a `rest::group!` writes its client's trait before any api lists it, and cannot take the api's. An api
-/// whose shape is the default, `#[error(rest::Problem)]`, needs none: a route with none has problems.
+/// whose shape is quoll's `rest::Problem`, told by its type, needs none: a route with none has problems.
 fn takes_error(api: &Api, group: &GroupRef) -> Option<TokenStream> {
-    let error = api.error.as_ref().filter(|error| !is_problem(error))?;
+    let error = api.error.as_ref()?;
     let descriptor = group.descriptor();
     let shown = quote! { #error }.to_string().replace(' ', "");
-    let message = LitStr::new(
-        &format!(
-            "the group `{}` takes no `#[error(...)]`, and a `rest::group!` cannot take its api's: write `#[error({shown})]` on the group in its block, the type named from the group's module, or the shape its errors have",
-            group.name.unraw(),
-        ),
-        group.span(),
-    );
 
     Some(quote_spanned! {group.span()=>
-        const _: () = ::core::assert!(
-            <#descriptor as ::quoll::__private::group::Group>::INFO.error,
-            #message
-        );
-    })
-}
+        const _: () = {
+            use ::quoll::__private::group::OtherShape as _;
 
-/// Whether `ty` names quoll's `Problem`, the default shape: `Problem`, `rest::Problem`, `quoll::rest::Problem` or
-/// `::quoll::rest::Problem`, as the macro can tell it by its path alone.
-fn is_problem(ty: &syn::Type) -> bool {
-    let syn::Type::Path(syn::TypePath { qself: None, path }) = ty else {
-        return false;
-    };
-    let names: Vec<String> = path
-        .segments
-        .iter()
-        .map(|segment| {
-            if !segment.arguments.is_none() {
-                return String::new();
+            if let ::core::option::Option::Some(error) = ::quoll::__private::group::check_error(
+                &<#descriptor as ::quoll::__private::group::Group>::INFO,
+                ::quoll::__private::group::Shape::<#error>::IS_PROBLEM,
+                #shown,
+            ) {
+                ::core::panic!("{}", error.as_str());
             }
-
-            segment.ident.unraw().to_string()
-        })
-        .collect();
-
-    match names.as_slice() {
-        [problem] => problem == "Problem" && path.leading_colon.is_none(),
-        [rest, problem] => rest == "rest" && problem == "Problem" && path.leading_colon.is_none(),
-        [quoll, rest, problem] => quoll == "quoll" && rest == "rest" && problem == "Problem",
-        _ => false,
-    }
+        };
+    })
 }
 
 /// For each group of the list, a check that its path names a group: its descriptor, named as its path names it, from

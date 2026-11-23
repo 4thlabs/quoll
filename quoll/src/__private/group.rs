@@ -9,7 +9,7 @@ use http::Method;
 
 use crate::__private::auth::{Declared, Place};
 use crate::__private::headers::{Fixed, RouteHeaders, keeps_media_type};
-use crate::rest::Route;
+use crate::rest::{Problem, Route};
 
 /// A group, as the descriptor `rest::group!` writes for it describes it: the type `__QuollGroupNotes` of the group
 /// `Notes`.
@@ -32,9 +32,9 @@ pub struct GroupInfo {
     pub reach: u8,
     /// Its visibility as the contract writes it, `pub`, which a message shows.
     pub vis: &'static str,
-    /// Whether each of its routes has the shape of its errors named, `#[error(E)]` on the group or on the route: a
-    /// route with none takes no api's, and has problems.
-    pub error: bool,
+    /// The function of its first route that has the shape of its errors named nowhere, `#[error(E)]` on the group
+    /// or on the route, `None` when each has one: such a route takes no api's, and has problems.
+    pub unshaped: Option<&'static str>,
     /// Its routes, in the order the contract writes them.
     pub routes: &'static [RouteInfo],
 }
@@ -294,6 +294,51 @@ pub use crate::__table as table;
 
 /// Checks, at compile time, that `G` is a group: the descriptor of a group an api lists.
 pub const fn is_group<G: Group>() {}
+
+/// The shape `E` of an api's errors, as its checks tell it by its type: [`IS_PROBLEM`](Shape::IS_PROBLEM) is `true`
+/// for quoll's `rest::Problem` alone, by the impl of that type, and `false` for any other, by [`OtherShape`], whose
+/// constant a path reaches only where no impl of the type's own has one.
+#[derive(Debug)]
+pub struct Shape<E>(PhantomData<fn() -> E>);
+
+impl Shape<Problem> {
+    /// The default shape: a route with none of its own has it, as the api does.
+    pub const IS_PROBLEM: bool = true;
+}
+
+/// The constant of any shape but quoll's `rest::Problem`, which the code of an api brings into scope.
+pub trait OtherShape {
+    /// Another shape than problems.
+    const IS_PROBLEM: bool = false;
+}
+
+impl<E> OtherShape for Shape<E> {}
+
+/// Checks, at compile time, a group an api of the shape `shape` lists, problems when `problems` is set: the message
+/// of a route of the group whose shape is named nowhere, unless the api's is problems. A `rest::group!` writes its
+/// client's trait before any api lists it, and cannot take the api's.
+pub const fn check_error(group: &GroupInfo, problems: bool, shape: &str) -> Option<Message> {
+    let Some(route) = group.unshaped else {
+        return None;
+    };
+
+    if problems {
+        return None;
+    }
+
+    Some(
+        Message::new()
+            .push("the route `")
+            .push(group.name)
+            .push("::")
+            .push(route)
+            .push("` takes no `#[error(...)]`, and a `rest::group!` cannot take its api's: write `#[error(")
+            .push(shape)
+            .push(")]` on the group `")
+            .push(group.name)
+            .push("` in its block, or on each of its routes, the type named from the group's module, or the shape its errors have"),
+    )
+}
 
 /// The api that lists groups, as its checks see it.
 #[derive(Debug)]
