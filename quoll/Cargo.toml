@@ -1,6 +1,6 @@
 [package]
 name = "quoll"
-description = "Contract-first REST for Rust: one contract, enforced by the compiler, from your server to your frontend."
+description = "A modern, type-safe REST toolkit for Rust: from a client for any API to the server behind your frontend."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

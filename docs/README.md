@@ -1,6 +1,6 @@
 # The guides of quoll
 
-**Contract-first REST for Rust: one contract, enforced by the compiler, from your server to your frontend.**
+**A modern, type-safe REST toolkit for Rust: from a client for any API to the server behind your frontend.**
 
 Each guide says how to use one part of quoll, with examples to copy. The API documentation says what each item does:
 `cargo doc -p quoll --all-features --open` opens it. [The spec](spec.md) says why the design is what it is.
