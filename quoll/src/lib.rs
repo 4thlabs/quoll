@@ -1,9 +1,9 @@
-//! A REST contract for Rust, written once in a macro: an axum server, a reqwest client and an OpenAPI 3.1 document
-//! come from it.
+//! Contract-first REST for Rust: one contract, enforced by the compiler, from your server to your frontend.
 //!
-//! The contract is a route table, written with [`api!`]. The server implements a trait per group, the client
-//! calls a method per route, and `Api::openapi()` gives the document, which TypeScript generators such as orval read.
-//! A mistake on either side, a route without its handler, a call with the wrong arguments, does not compile.
+//! An axum server, a reqwest client and an OpenAPI 3.1 document from one macro. The contract is a route table, written
+//! with [`api!`]. The server implements a trait per group, the client calls a method per route, and `Api::openapi()`
+//! gives the document, which any OpenAPI generator reads to write a frontend's client. A mistake on either side, a
+//! route without its handler, a call with the wrong arguments, does not compile.
 //!
 //! An API that is only called, a third-party one, is a contract too: its api says `#[openapi(none)]`, and it is a
 //! typed client alone, whose types need serde and no schema: see [OpenAPI](#openapi).

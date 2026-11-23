@@ -1,5 +1,7 @@
 # The guides of quoll
 
+**Contract-first REST for Rust: one contract, enforced by the compiler, from your server to your frontend.**
+
 Each guide says how to use one part of quoll, with examples to copy. The API documentation, `cargo doc -p quoll
 --all-features --open`, says what each item does; [the spec](spec.md) says why the design is what it is.
 
@@ -16,7 +18,7 @@ In reading order:
 | [Testing](guides/testing.md)                 | a server and its client in a test, fakes, the OpenAPI snapshot                           |
 | [Another API](guides/another-api.md)         | a contract of an API quoll did not write: headers, errors, forms, two answers, pages     |
 | [OpenAPI](guides/openapi.md)                 | `Api::openapi()`, what the document holds, schema names, contracts that are only called  |
-| [TypeScript](guides/typescript.md)           | `cargo quoll gen`, `build` and `dev`, Vite and orval, the mutator, streams, Next.js, CI  |
+| [TypeScript](guides/typescript.md)           | `cargo quoll gen`, `build` and `dev`, a generator, orval's mutator, streams, Next.js, CI |
 
 The Rust blocks of the guides are compiled, and run, as the doctests of the crate `quoll-guides`, in `guides/`:
 

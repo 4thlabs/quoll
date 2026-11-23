@@ -7,9 +7,10 @@ follows. **The design is in [`docs/spec.md`](docs/spec.md)**: read it first, it 
 crate does. **What is to do, and in which order, is in the GitHub project
 [Quoll](https://github.com/users/4thlabs/projects/2)**: one issue per piece of work, grouped by milestone.
 
-Quoll is a REST contract for Rust, written once in a macro: an axum server, a reqwest client and an OpenAPI 3.1
-document come from it, and TypeScript generators such as orval turn the document into TanStack Query hooks. There is no
-UI. The crate is `quoll`, the contract at its root.
+**Contract-first REST for Rust: one contract, enforced by the compiler, from your server to your frontend.** An axum
+server, a reqwest client and an OpenAPI 3.1 document from one macro. `cargo quoll` writes the document, runs your
+frontend's generator, and serves both while you work. Any generator of OpenAPI serves: the notes example's is orval,
+which writes TanStack Query hooks. There is no UI. The crate is `quoll`, the contract at its root.
 
 The maintainer writes in French. Code, comments, docs and commit messages are in English.
 
@@ -70,10 +71,13 @@ cargo quoll dev                                                    # the notes s
   `quoll-guides` too, whose doctests compile and run the Rust blocks of each guide and of the README: a block that
   needs a network is `rust,no_run`, one of tests `rust,test_harness`, one that shows a mistake `rust,compile_fail`.
   Its dev-dependency on `notes-api` is a path into the notes example's workspace, which cargo builds from the root.
+  GitHub shows the lines rustdoc hides, so the README's short blocks take theirs from its `build.rs`: a block after
+  `<!-- doctest NAME: WORD... -->` begins, hidden, with each file of `preludes/` and each earlier block the comment
+  names.
   A guide says how to use quoll and links to the rustdoc for each item's detail; the why stays in the spec.
   The TypeScript guide's TypeScript and TOML blocks are excerpts of the notes example, each under the name of its
   file, which the page's `src/guide/excerpts.test.ts` checks; the code the page does not use is in its `src/guide/`.
-  The blocks of another app, its sections Next.js and A second generator, are checked by hand.
+  The blocks of another app, its sections Next.js and Another generator, are checked by hand.
 
 What the macro generates is never written to disk: `cargo expand` shows it. The TypeScript that orval writes is
 generated in the example, and gitignored.

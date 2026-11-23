@@ -63,7 +63,7 @@ it("finds the guide's blocks", () => {
 });
 
 // The sections whose blocks are of another app than the notes example, checked by hand.
-const otherApps = ["Next.js", "A second generator"];
+const otherApps = ["Next.js", "Another generator"];
 
 it("names the file of each TypeScript and TOML block, but those of another app", () => {
   const unnamed = all.filter(

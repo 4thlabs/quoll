@@ -1,14 +1,17 @@
 # TypeScript
 
 A web page calls a quoll server through TypeScript that a generator writes from the contract's
-[OpenAPI document](openapi.md): orval here, which writes TanStack Query hooks. `cargo quoll` writes the document, runs
-the generator after it, and runs the server and the page's dev server side by side. It knows no bundler and no
-generator: the commands it runs are the project's, named in the workspace's `Cargo.toml`, and the web side follows
-conventions.
+[OpenAPI document](openapi.md): any generator of OpenAPI, orval, openapi-typescript, hey-api, Kiota... `cargo quoll`
+writes the document, runs the generator after it, and runs the server and the page's dev server side by side. It knows
+no bundler and no generator: the commands it runs are the project's, named in the workspace's `Cargo.toml`, and the
+web side follows conventions.
+
+This guide follows the notes example, whose generator is orval, which writes TanStack Query hooks; another generator
+takes its place in the same config, as [Another generator](#another-generator) shows.
 
 The TypeScript and TOML blocks of this guide are excerpts of [the notes example](../../examples/notes), under the
 name of their file; the code that the page does not use, `EventSource` and the reading of `JsonLines` and
-`ByteStream`, is in its `web/src/guide/`. The blocks of Next.js and of a second generator are of another app, checked
+`ByteStream`, is in its `web/src/guide/`. The blocks of Next.js and of another generator are of another app, checked
 with Next.js 16 and openapi-typescript 7.
 
 ## The chain
@@ -173,8 +176,8 @@ A `JsonLines` or a `ByteStream` is seen to open with its first line or chunk.
 
 ### orval
 
-orval's config reads the document, `input: "./openapi.json"`, the api's `output` seen from `web/`, and `after` runs
-it.
+The notes example's generator is orval. Its config reads the document, `input: "./openapi.json"`, the api's `output`
+seen from `web/`, and `after` runs it; another generator's config reads it the same way.
 
 [`examples/notes/web/orval.config.ts`](../../examples/notes/web/orval.config.ts)
 
@@ -412,8 +415,8 @@ url instead, `getNotesEventsUrl(id)`, which orval writes beside it.
 ### The types of the items
 
 OpenAPI 3.1 cannot type the items of a stream: the document names them in the extension `x-item` of the answer's
-media type, a `$ref` to the item's schema. The schema is under `components/schemas`, which orval writes as a type like
-any other, and the page names it. A tagged enum's variant that holds a struct is an
+media type, a `$ref` to the item's schema. The schema is under `components/schemas`, which a generator writes as a type
+like any other, and the page names it. A tagged enum's variant that holds a struct is an
 [`allOf`](openapi.md#what-it-holds) of that struct and of its tag, so that its type keeps the tag:
 
 ```rust
@@ -820,10 +823,21 @@ With `next dev`, the rewrites pass an `Events` stream on as it comes, its openin
 when `cargo quoll dev` restarts the server. A static export, `output: "export"`, has no rewrites: what serves its
 files sends `/api` to the server.
 
-## A second generator
+## Another generator
+
+`after` runs the generator the page depends on, whichever it is, pinned by its lock file, which `npx --no` runs. A
+page that takes the types alone, written by `openapi-typescript`, and calls `fetch` itself names it in place of orval:
+
+```toml
+[[workspace.metadata.quoll.api]]
+package = "notes-api"
+bin = "openapi"
+output = "web/openapi.json"
+after = [["npx", "--no", "openapi-typescript", "openapi.json", "-o", "src/api/schema.d.ts"]]
+```
 
 `after` is a list: a second generator runs after the first, in the same directory, as `openapi-typescript` writing
-the types alone beside orval's hooks. Each is a dependency of the page, pinned by its lock file, which `npx --no` runs.
+the types beside orval's hooks:
 
 ```toml
 [[workspace.metadata.quoll.api]]
