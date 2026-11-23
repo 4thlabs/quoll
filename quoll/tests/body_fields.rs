@@ -10,12 +10,6 @@ use quoll::rest::{self, Form, Response, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::support::log::Log;
-
-mod support {
-    pub(crate) mod log;
-}
-
 /// A message to send, which says nothing of whether it streams.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageRequest {
@@ -285,12 +279,11 @@ async fn post(url: &str, path: &str, content_type: &str, body: &str) -> (StatusC
 }
 
 #[tokio::test]
-async fn a_body_without_the_fields_of_any_route_is_a_bad_request() {
+async fn a_body_without_the_fields_of_any_route_is_a_bad_request_that_names_none() {
     let url = serve().await;
     let json = "application/json";
 
     let (missing, missing_body) = post(&url, "/messages", json, r#"{"model":"m"}"#).await;
-    let (other, _) = post(&url, "/messages", json, r#"{"model":"m","stream":"yes"}"#).await;
     let (twice, _) = post(&url, "/messages", json, r#"{"stream":true,"stream":true}"#).await;
     let (alone, alone_body) =
         post(&url, "/override", json, r#"{"model":"m","stream":false}"#).await;
@@ -301,30 +294,70 @@ async fn a_body_without_the_fields_of_any_route_is_a_bad_request() {
         "kind=note&n=3&title=t",
     )
     .await;
-    let (text, _) = post(
-        &url,
-        "/messages",
-        "text/plain",
-        r#"{"model":"m","stream":true}"#,
-    )
-    .await;
 
     assert_eq!(missing, StatusCode::BAD_REQUEST);
     assert!(
-        missing_body.contains(r#"`chat_create` \"stream\": false; `chat_stream` \"stream\": true"#),
+        missing_body
+            .contains("does not hold the fixed fields of any route of this method and path"),
         "{missing_body}"
     );
-    assert_eq!(other, StatusCode::BAD_REQUEST);
+    assert!(!missing_body.contains("chat_"), "{missing_body}");
     assert_eq!(twice, StatusCode::BAD_REQUEST);
     assert_eq!(alone, StatusCode::BAD_REQUEST);
     assert!(alone_body.contains(r#"\"stream\": true"#), "{alone_body}");
     assert_eq!(form, StatusCode::BAD_REQUEST);
-    assert_eq!(text, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 #[tokio::test]
-async fn a_type_that_refuses_unknown_fields_says_it_refuses_the_fixed_one() -> Result<()> {
-    let (log, _capture) = support::log::capture(false);
+async fn a_body_that_does_not_read_is_a_bad_request_of_its_own() {
+    let url = serve().await;
+    let json = "application/json";
+
+    let (syntax, syntax_body) = post(&url, "/messages", json, r#"{"stream":tru"#).await;
+    let (kind, kind_body) = post(&url, "/messages", json, r#"{"model":"m","stream":"yes"}"#).await;
+    let (alone, alone_body) = post(&url, "/override", json, r#"{"stream":tru"#).await;
+
+    for (status, body) in [
+        (syntax, syntax_body),
+        (kind, kind_body),
+        (alone, alone_body),
+    ] {
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("the body is not valid"), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn a_content_type_no_route_reads_is_refused_with_the_ones_they_read() {
+    let url = serve().await;
+    let form = "application/x-www-form-urlencoded";
+
+    let (text, text_body) = post(&url, "/messages", "text/plain", r#"{"stream":true}"#).await;
+    let (json, json_body) = post(&url, "/entries", "application/json", r#"{"kind":"note"}"#).await;
+    let (latin, latin_body) = post(
+        &url,
+        "/entries",
+        &format!("{form}; charset=iso-8859-1"),
+        "kind=note&n=2",
+    )
+    .await;
+
+    assert_eq!(text, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert!(
+        text_body.contains("read as `application/json`:"),
+        "{text_body}"
+    );
+    assert_eq!(json, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert!(
+        json_body.contains(&format!("read as `{form}`:")),
+        "{json_body}"
+    );
+    assert_eq!(latin, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert!(latin_body.contains("charset=utf-8"), "{latin_body}");
+}
+
+#[tokio::test]
+async fn a_type_that_refuses_unknown_fields_refuses_the_fixed_one() -> Result<()> {
     let api = Messages::client(&serve().await)?;
 
     let error = api
@@ -334,20 +367,14 @@ async fn a_type_that_refuses_unknown_fields_says_it_refuses_the_fixed_one() -> R
         })
         .await
         .expect_err("the type refuses the field");
+    let detail = error.detail().and_then(|problem| problem.detail());
 
-    assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
-    assert_logged(
-        &log,
-        "the type of the body refuses the field `stream`, which the contract fixes",
+    assert_eq!(error.status(), Some(StatusCode::BAD_REQUEST));
+    assert!(
+        format!("{detail:?}").contains("unknown field `stream`"),
+        "{detail:?}"
     );
     Ok(())
-}
-
-/// That `log` holds `text`.
-fn assert_logged(log: &Log, text: &str) {
-    let logged = log.text();
-
-    assert!(logged.contains(text), "{logged}");
 }
 
 #[test]
