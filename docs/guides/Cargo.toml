@@ -2,6 +2,7 @@
 name = "quoll-guides"
 description = "The user guides of quoll, whose Rust blocks are compiled and run as doctests"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish = false
 

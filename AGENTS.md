@@ -115,6 +115,9 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
   - The same three for the guides, with `--package quoll-guides`.
   - The same three for `quoll-cli`, with `--package quoll-cli`, which does not depend on `quoll`. Its clippy and
     tests also run on macOS and Windows, in the job `cli`, where `cargo quoll dev` stops its children in other ways.
+  - The job `msrv`, which runs `cargo test` on the `rust-version` of the root's `Cargo.toml`, once per feature
+    combination, and for the guides and `quoll-cli`. Warnings are not errors there, and trybuild writes that rustc's
+    messages rather than compare them: the latest stable checks both.
   - The job `examples`, which runs the four in each example's directory. It uses the features that the example's
     crates choose, and `--locked`, so that it builds with the committed `Cargo.lock`. The Docker example's tests set
     `DOCKER_CLI_TEST_DAEMON=required`, so that its test fails when the runner's daemon does not answer.
