@@ -80,7 +80,7 @@ rest::api! {
 }
 
 #[tokio::main]
-async fn main() -> rest::Result<()> {
+async fn main() -> anyhow::Result<()> {
     let github = client::builder()
         .with(client::user_agent("quoll-guide"))
         .build::<GitHub>("https://api.github.com")?;
@@ -90,8 +90,9 @@ async fn main() -> rest::Result<()> {
     println!("{} has {} stars", repo.full_name, repo.stargazers_count);
 
     let readme = github.repos().readme("rust-lang".into(), "rust".into()).await?;
+    let readme = String::from_utf8(readme.into_vec())?;
 
-    println!("{}", String::from_utf8_lossy(&readme));
+    println!("{readme}");
 
     let labels = vec!["C-bug".into(), "T-compiler".into()];
     let issues = github
@@ -156,8 +157,8 @@ A header the API asks of every call, a version or a media type, is fixed in the 
 - A media type of the API's own, `application/vnd.github+json`, replaces quoll's `Accept` on every route under it. A
   route whose result is `Text`, `Events` or `JsonLines` takes `#[header("Accept" = none)]`, to ask for its own again.
 - `Text` reads `text/plain` alone. A text the API answers in a media type of its own, GitHub's
-  `application/vnd.github.raw+json; charset=utf-8`, is read as `Bytes`, of any content type, which `String::from_utf8`
-  turns into text.
+  `application/vnd.github.raw+json; charset=utf-8`, is read as `Bytes`, of any content type, which
+  `String::from_utf8(bytes.into_vec())` turns into text, or an error when they are not UTF-8.
 - A parameter of the body's `Content-Type`, Slack's `charset=utf-8`, is fixed as any header:
   `#[header("Content-Type" = "application/json; charset=utf-8")]`. A request with no body sends none.
 - A header whose value changes from call to call, Stripe Connect's `Stripe-Account`, Anthropic's `anthropic-beta`, is
@@ -209,25 +210,39 @@ another shape, an OAuth endpoint, says its own.
 ### An error in a 200
 
 Slack answers its errors with a 200 and `"ok": false` in the body. The contract cannot say that a 200 is an error: the
-result is an envelope, which the caller turns into a `Result`.
+result is an envelope, read by `ok`, which the caller turns into a `Result`.
 
 ```rust
 use std::fmt;
 
 use quoll::rest;
+use serde::de::{self, DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize};
 
-/// Every answer of Slack: `ok`, then the method's own fields, or the error.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Slack<T> {
-    pub ok: bool,
-    pub error: Option<String>,
-    #[serde(flatten)]
-    pub data: Option<T>,
+/// Every answer of Slack: the method's own fields when `ok` is `true`, the error otherwise.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum Slack<T> {
+    Ok(T),
+    Err(SlackError),
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for Slack<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let answer = serde_json::Value::deserialize(deserializer)?;
+
+        let read = if answer["ok"] == true {
+            serde_json::from_value(answer).map(Slack::Ok)
+        } else {
+            serde_json::from_value(answer).map(Slack::Err)
+        };
+
+        read.map_err(de::Error::custom)
+    }
 }
 
 /// What Slack answers on an error, with a 200 or another status.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SlackError {
     pub error: String,
 }
@@ -243,11 +258,9 @@ impl std::error::Error for SlackError {}
 impl<T> Slack<T> {
     /// The method's fields, or the error Slack answered.
     pub fn into_result(self) -> Result<T, SlackError> {
-        match (self.ok, self.data) {
-            (true, Some(data)) => Ok(data),
-            _ => Err(SlackError {
-                error: self.error.unwrap_or_else(|| "no error given".into()),
-            }),
+        match self {
+            Slack::Ok(data) => Ok(data),
+            Slack::Err(error) => Err(error),
         }
     }
 }
@@ -277,28 +290,33 @@ async fn whoami(slack: &SlackApiClient) -> anyhow::Result<Identity> {
 }
 
 fn main() {
-    let answer: Slack<Identity> = serde_json::from_str(r#"{"ok": false, "error": "not_authed"}"#).unwrap();
+    let refused: Slack<Identity> = serde_json::from_str(r#"{"ok": false, "error": "not_authed"}"#).unwrap();
+    let unread = serde_json::from_str::<Slack<Identity>>(r#"{"ok": true, "user": "U1"}"#);
 
-    assert_eq!(answer.into_result().unwrap_err().to_string(), "not_authed");
+    assert_eq!(refused.into_result().unwrap_err().to_string(), "not_authed");
+    assert!(unread.unwrap_err().to_string().contains("missing field `user_id`"));
 }
 ```
 
 - `SlackError` is the shape of the errors Slack answers with another status, a 429 among them, and of the error in
   the envelope: one type for both.
+- An answer with `"ok": true` that is not the method's is an answer that is not the route's result: the call fails,
+  with serde's error as its source.
 - The api is `SlackApi`: an api's name is a type of the module too, which the envelope's name takes.
 
 ## Results
 
 A route returns what the API answers on a success, as any route does. Two cases are worth a word:
 
-- A route that the API answers with a 204 returns nothing, or an `Option<T>` when it answers a value otherwise: the
-  client reads the 204 as `()` or `None`. GitHub's `GET /user/starred/{owner}/{repo}` answers 204 when the user starred
-  the repository, and 404 when not. A route `-> T` answered with a 204 fails as an answer that is not its result, whose
-  [`.response()`](client.md#the-whole-answer) keeps the status and the headers.
+- A route that the API answers with a 204 returns a value that may be empty: nothing, an `Option<T>`, a `Text`,
+  `Bytes` or a stream, as [Results](contract.md#results) lists. The client reads the 204 as `()`, `None`, an empty
+  text or bytes, or a stream that ends at once. GitHub's `GET /user/starred/{owner}/{repo}` answers 204 when the user
+  starred the repository, and 404 when not. A route `-> T`, whose `T` is a JSON value, answered with a 204 fails as an
+  answer that is not its result, whose [`.response()`](client.md#the-whole-answer) keeps the status and the headers.
 - A route that an API answers in two shapes, JSON or a stream, is two routes: [Two answers on one
   path](#two-answers-on-one-path) says how.
 
-```rust,no_run
+```rust
 use std::fmt;
 
 use http::StatusCode;
@@ -363,7 +381,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct NewCustomer {
     pub email: Option<String>,
-    /// The keys of `nested`, `metadata[order_id]`.
+    /// The keys `nested("metadata", ..)` builds, `metadata[order_id]`.
     #[serde(flatten)]
     pub metadata: BTreeMap<String, String>,
     #[serde(rename = "expand[]", default)]
@@ -431,16 +449,24 @@ twice. An API says which of its errors pass, and `.when(..)` follows it: a 429 a
 529, a `POST` that carries Stripe's `Idempotency-Key`.
 
 ```rust,no_run
+use http::Method;
 use quoll::client::{self, Attempt, Retry};
 use quoll::rest;
 
 fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
-    let retry = client::retry(3).when(|attempt: &Attempt| match attempt.status().map(|status| status.as_u16()) {
-        // Too many requests: the API did nothing, and says when to come back.
-        Some(429) => attempt.retry_after(),
-        // Anthropic is overloaded, and did nothing either.
-        Some(529) => Retry::Backoff,
-        _ => attempt.transient(),
+    let retry = client::retry(3).when(|attempt: &Attempt| {
+        let request = attempt.request();
+        let keyed = request.method() == Method::POST && request.headers().contains_key("Idempotency-Key");
+
+        match attempt.status() {
+            // Too many requests: the API did nothing, and says when to come back.
+            Some(status) if status.as_u16() == 429 => attempt.retry_after(),
+            // Anthropic is overloaded, and did nothing either.
+            Some(status) if status.as_u16() == 529 => Retry::Backoff,
+            // A POST that Stripe does once per key.
+            Some(status) if keyed && status.is_server_error() => Retry::Backoff,
+            _ => attempt.transient(),
+        }
     });
 
     client::builder().with(retry).build_http()
@@ -503,6 +529,8 @@ pub enum Content {
 pub enum StreamEvent {
     ContentBlockDelta { delta: Delta },
     MessageStop,
+    /// A failure after the 200, `overloaded_error` among them.
+    Error { error: AnthropicErrorBody },
     #[serde(other)]
     Other,
 }
@@ -521,7 +549,7 @@ pub struct AnthropicError {
     pub error: AnthropicErrorBody,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AnthropicErrorBody {
     #[serde(rename = "type")]
     pub kind: String,
@@ -601,11 +629,12 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     while let Some(event) = events.next().await {
-        if let StreamEvent::ContentBlockDelta {
-            delta: Delta::TextDelta { text },
-        } = event?
-        {
-            print!("{text}");
+        match event? {
+            StreamEvent::ContentBlockDelta {
+                delta: Delta::TextDelta { text },
+            } => print!("{text}"),
+            StreamEvent::Error { error } => anyhow::bail!("the message failed: {}", error.message),
+            _ => {}
         }
     }
 
@@ -617,7 +646,9 @@ async fn main() -> anyhow::Result<()> {
   `key::<ApiKey>` sends the key to the routes of both, which take the same scheme, told by its type.
 - The caller sets `"stream": true` itself, on the route of the stream alone. Sent to the other route, the answer is
   not its result, and the call fails.
-- An event the enum does not name, Anthropic's `ping`, is `Other`, so that a new event of the API breaks no client.
+- Anthropic's `event: error`, a failure once the stream has begun, is an item as any other: the enum names it,
+  `Error`, and the loop turns it into an error. `Other` is for the events the client skips, `ping` and those the API
+  adds later, so that a new event breaks no client, never for an error.
 
 GitHub's media types, a JSON or a raw README on one path, and Open-Meteo's formats are written the same way.
 
@@ -725,7 +756,7 @@ async fn main() -> rest::Result<()> {
 quoll has no helper for pages yet: the caller loops, one call per page, until the API says there is none after.
 GitHub says it in the `Link` header of the answer, which `.response()` gives:
 
-```rust,no_run
+```rust
 use std::fmt;
 
 use http::header::LINK;
@@ -786,8 +817,9 @@ async fn all_issues(github: &GitHubClient, owner: &str, repo: &str) -> rest::Res
 ```
 
 An API that gives its cursor in the body, Stripe's `has_more` and the id to start after, Slack's
-`response_metadata.next_cursor`, is looped the same way, the next call taking the cursor of the page before. A helper
-that reads the previous answer and makes the next call is to come, [#80](https://github.com/4thlabs/quoll/issues/80).
+`response_metadata.next_cursor`, is looped the same way, the next call taking the cursor of the page before. Helpers
+are to come: pages by the `Link` header, [#23](https://github.com/4thlabs/quoll/issues/23), and by a cursor in the
+body, [#80](https://github.com/4thlabs/quoll/issues/80).
 
 ## Fakes
 
@@ -802,4 +834,5 @@ alone.
 - A segment that mixes a parameter and text, Google's `/v1/models/{model}:generateContent`:
   [#85](https://github.com/4thlabs/quoll/issues/85).
 - A joined list in a field of a query struct: [#93](https://github.com/4thlabs/quoll/issues/93).
-- A helper for pages, by a cursor in the body or a `Link` header: [#80](https://github.com/4thlabs/quoll/issues/80).
+- A helper for pages: by the `Link` header, [#23](https://github.com/4thlabs/quoll/issues/23), by a cursor in the
+  body, [#80](https://github.com/4thlabs/quoll/issues/80).
