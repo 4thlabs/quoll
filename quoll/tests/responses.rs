@@ -15,10 +15,9 @@ use std::time::Duration;
 use futures_util::{StreamExt, stream};
 use http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use http::{HeaderValue, StatusCode};
-use quoll::client;
-use quoll::rest::{
-    self, Accepted, ByteStream, Bytes, Call, Created, Error, Events, JsonLines, Response, Result,
-    Status, Text,
+use quoll::{
+    Accepted, ByteStream, Bytes, Call, Created, Error, Events, JsonLines, Response, Result, Status,
+    Text, client,
 };
 use reqwest_middleware::ClientBuilder;
 use schemars::JsonSchema;
@@ -38,7 +37,7 @@ struct Note {
 /// A note that may be missing, under a name of its own: its type, not its name, may be empty.
 type MaybeNote = Option<Note>;
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Notes {

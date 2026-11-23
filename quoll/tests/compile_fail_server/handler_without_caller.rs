@@ -1,6 +1,6 @@
-use quoll::rest::{self, Authenticate, Bearer, Response, Result};
+use quoll::{Authenticate, Bearer, Response, Result};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer)]

@@ -1,5 +1,5 @@
 error[E0080]: evaluation panicked: the header `X-Api-Key` carries the credential of `Key`, which the route `Admin::stats` takes: the handler receives its caller, and the client's middleware sends it
-  --> tests/compile_fail/written_group_header_of_scheme.rs:20:15
+  --> tests/compile_fail/written_group_header_of_scheme.rs:16:15
    |
-20 |     pub group Admin {
+16 |     pub group Admin {
    |               ^^^^^ evaluation of `_::_` failed here

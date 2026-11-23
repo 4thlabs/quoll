@@ -1,5 +1,5 @@
 error: a route has one body, and `note` is already it: write `extra` as a `{extra}` of the path or a `key={extra}` of the query, or put both in one type
- --> tests/compile_fail/body_twice.rs:7:48
+ --> tests/compile_fail/body_twice.rs:5:48
   |
-7 |         POST "/notes" => create(note: NewNote, extra: Extra);
+5 |         POST "/notes" => create(note: NewNote, extra: Extra);
   |                                                ^^^^^

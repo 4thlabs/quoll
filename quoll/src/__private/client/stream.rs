@@ -10,7 +10,7 @@ use http::{HeaderMap, StatusCode, Version};
 
 use super::{Shape, no_answer, read_problem};
 use crate::__private::known::Items;
-use crate::rest::{self, Error, Response, Route};
+use crate::{Error, Response, Route};
 
 /// The most one item holds, 1 MiB: the `data` of an event, or a line of either body. A stream runs for long, and a
 /// server that never ends an item would have the client hold all it sends: past it, the stream ends with an error.
@@ -58,7 +58,7 @@ where
     F: Framing,
 {
     // A 204 or a 205 says there is no body: a 205's that a server sends anyway is dropped with the answer.
-    let state = (!rest::no_content(response.status())).then_some((Some(response), framing));
+    let state = (!crate::no_content(response.status())).then_some((Some(response), framing));
 
     let items = stream::unfold(state, move |state| async move {
         let (mut response, mut framing) = state?;
@@ -110,7 +110,7 @@ where
 /// drops the answer too, which closes its connection.
 pub(crate) fn chunks(response: reqwest::Response, route: &'static Route) -> Items<Vec<u8>> {
     // A 204 or a 205 says there is no body: a 205's that a server sends anyway is dropped with the answer.
-    let response = (!rest::no_content(response.status())).then_some(response);
+    let response = (!crate::no_content(response.status())).then_some(response);
     let chunks = stream::unfold(response, move |response| async move {
         let mut response = response?;
 

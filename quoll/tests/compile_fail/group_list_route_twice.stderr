@@ -1,5 +1,5 @@
 error[E0080]: evaluation panicked: GET /api/notes/{id}, the route `Archive::get`, is already the route `Notes::get`: a method and a path belong to one route
-  --> tests/compile_fail/group_list_route_twice.rs:14:37
+  --> tests/compile_fail/group_list_route_twice.rs:10:37
    |
-14 |     pub api Api = "/api" { archive::Archive };
+10 |     pub api Api = "/api" { archive::Archive };
    |                                     ^^^^^^^ evaluation of `_::_` failed here

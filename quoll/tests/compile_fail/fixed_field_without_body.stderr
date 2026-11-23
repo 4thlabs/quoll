@@ -1,5 +1,5 @@
 error: the route sends no body, to which `#[body(...)]` adds its field: give the route a body, or remove this attribute
- --> tests/compile_fail/fixed_field_without_body.rs:8:16
+ --> tests/compile_fail/fixed_field_without_body.rs:6:16
   |
-8 |         #[body("stream" = true)]
+6 |         #[body("stream" = true)]
   |                ^^^^^^^^

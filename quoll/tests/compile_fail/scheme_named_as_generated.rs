@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A scheme named as an item the macro writes: the client of the api.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme ApiClient = header "X-Api-Key";

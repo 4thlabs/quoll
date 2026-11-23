@@ -1,5 +1,5 @@
 error: the group `Crate` becomes the field `crate`, which Rust does not allow even as a raw name: rename the group
- --> tests/compile_fail/group_field_not_a_name.rs:6:15
+ --> tests/compile_fail/group_field_not_a_name.rs:4:15
   |
-6 |     pub group Crate {}
+4 |     pub group Crate {}
   |               ^^^^^

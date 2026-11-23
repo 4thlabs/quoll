@@ -24,13 +24,13 @@ pub(crate) struct Scheme {
 /// Which scheme a route takes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SchemeKind {
-    /// `Bearer`, the crate's `rest::Bearer`.
+    /// `Bearer`, the crate's `quoll::Bearer`.
     Bearer,
-    /// `Basic`, the crate's `rest::Basic`.
+    /// `Basic`, the crate's `quoll::Basic`.
     Basic,
     /// A scheme the contract declares, with where its credential travels.
     Declared(Location),
-    /// A type of the application implementing `rest::Scheme`, or a scheme not declared, which rustc does not find.
+    /// A type of the application implementing `quoll::Scheme`, or a scheme not declared, which rustc does not find.
     Foreign,
 }
 
@@ -301,7 +301,7 @@ fn check_scheme_header(value: &LitStr) -> Result<()> {
         return Err(Error::new(
             value.span(),
             format!(
-                "the header `{header}` is read by {what}: {instead}, or implement `quoll::rest::Scheme` for a scheme of your own"
+                "the header `{header}` is read by {what}: {instead}, or implement `quoll::Scheme` for a scheme of your own"
             ),
         ));
     }
@@ -333,7 +333,7 @@ pub(crate) fn resolve(api: &mut Api, errors: &mut ErrorList) {
                     continue;
                 }
 
-                // A path that ends with a declared scheme's name, or goes through `rest` to the crate's, would be
+                // A path that ends with a declared scheme's name, or goes through `quoll` to the crate's, would be
                 // a second name for one scheme: `Key | self::Key` would take it twice. An application's own type
                 // of the name of a declared scheme takes another name.
                 let segments: Vec<String> = scheme
@@ -345,7 +345,7 @@ pub(crate) fn resolve(api: &mut Api, errors: &mut ErrorList) {
                 let [.., before, last] = segments.as_slice() else {
                     continue;
                 };
-                let crate_given = before == "rest" && (last == "Bearer" || last == "Basic");
+                let crate_given = before == "quoll" && (last == "Bearer" || last == "Basic");
 
                 if !crate_given && !declared.iter().any(|(name, _)| name == last) {
                     continue;

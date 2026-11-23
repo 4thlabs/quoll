@@ -18,7 +18,7 @@ use tracing::field::{Empty, display};
 use super::RequestId;
 use super::layer::ResponseFuture;
 use crate::__private::server::Logged;
-use crate::rest::Route;
+use crate::Route;
 
 /// The span of a request, in its extensions, where the router names its operation and `request_id` its id once they
 /// are known: both come after the span is made, as axum runs a route's layers before the route.

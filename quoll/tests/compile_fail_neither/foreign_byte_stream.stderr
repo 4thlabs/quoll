@@ -1,16 +1,16 @@
 error[E0277]: `output::ByteStream` is not quoll's `ByteStream`, which a result named `ByteStream` is read as
-  --> tests/compile_fail_neither/foreign_byte_stream.rs:13:34
+  --> tests/compile_fail_neither/foreign_byte_stream.rs:11:34
    |
-13 |         GET "/logs" => logs() -> output::ByteStream;
-   |                                  ^^^^^^^^^^^^^^^^^^ not `quoll::rest::ByteStream`
+11 |         GET "/logs" => logs() -> output::ByteStream;
+   |                                  ^^^^^^^^^^^^^^^^^^ not `quoll::ByteStream`
    |
 help: the trait `quoll::__private::known::IsByteStream` is not implemented for `output::ByteStream`
-  --> tests/compile_fail_neither/foreign_byte_stream.rs:6:5
+  --> tests/compile_fail_neither/foreign_byte_stream.rs:4:5
    |
- 6 |     pub struct ByteStream(pub Vec<u8>);
+ 4 |     pub struct ByteStream(pub Vec<u8>);
    |     ^^^^^^^^^^^^^^^^^^^^^
-   = note: bring quoll's into scope, `use quoll::rest::ByteStream;`, or name a type of your own otherwise
-help: the trait `quoll::__private::known::IsByteStream` is implemented for `quoll::rest::ByteStream`
+   = note: bring quoll's into scope, `use quoll::ByteStream;`, or name a type of your own otherwise
+help: the trait `quoll::__private::known::IsByteStream` is implemented for `quoll::ByteStream`
   --> src/__private/known.rs
    |
    | impl IsByteStream for ByteStream {

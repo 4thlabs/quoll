@@ -1,5 +1,5 @@
 use notes_api::{AdminServer, Stats};
-use quoll::rest::{Response, Result};
+use quoll::{Response, Result};
 
 use crate::{App, Operator};
 

@@ -48,7 +48,7 @@
 //! - an early 413 of `body_limit` outside `trace` is not traced;
 //! - an answer a layer outside `cors` makes carries no header of CORS, and a page of another origin cannot read it.
 //!
-//! The answer of each route carries its [`Route`](crate::rest::Route), which a layer of the application's reads, to
+//! The answer of each route carries its [`Route`](crate::Route), which a layer of the application's reads, to
 //! count the answers of each operation.
 
 pub(crate) mod body_limit;

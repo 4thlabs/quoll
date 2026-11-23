@@ -1,5 +1,5 @@
 error: the prefix starts with `/` and has a segment: write it as "/api", or "" for none
- --> tests/compile_fail/prefix_only_slash.rs:4:19
+ --> tests/compile_fail/prefix_only_slash.rs:2:19
   |
-4 |     pub api Api = "/";
+2 |     pub api Api = "/";
   |                   ^^^

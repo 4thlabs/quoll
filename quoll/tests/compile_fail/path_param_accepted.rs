@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Jobs {

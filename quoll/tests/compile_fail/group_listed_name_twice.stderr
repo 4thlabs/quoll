@@ -1,5 +1,5 @@
 error: the group `Notes` is already listed: an api lists a group once, and each of its groups has its own name
-  --> tests/compile_fail/group_listed_name_twice.rs:24:49
+  --> tests/compile_fail/group_listed_name_twice.rs:18:49
    |
-24 |     pub api Api = "/api" { mine::Notes, theirs::Notes };
+18 |     pub api Api = "/api" { mine::Notes, theirs::Notes };
    |                                                 ^^^^^

@@ -6,7 +6,7 @@ such as orval read it.
 ## The document
 
 ```rust
-use quoll::rest::{self, Created};
+use quoll::Created;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,7 @@ pub struct NewNote {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     pub api Api = "/api";
 
@@ -45,7 +45,7 @@ assert!(json.contains(r#""operationId": "notes_get""#));
 assert!(json.contains(r#""summary": "A note, by its id.""#));
 ```
 
-`Api::openapi()` returns a `rest::openapi::Document`:
+`Api::openapi()` returns a `quoll::openapi::Document`:
 
 - `to_json_pretty()` and `to_json()` write it, and it implements `Serialize`;
 - `with_title(..)` and `with_version(..)` replace its `info`, which is the contract crate's name and version
@@ -99,7 +99,7 @@ which runs the server and the page's dev server side by side.
   variant of a tagged enum that holds a struct, is an `allOf` of the reference and of those keywords, which the
   generators that read a `$ref` alone keep.
 
-The doc of `quoll::rest::openapi` says each of them in full.
+The doc of `quoll::openapi` says each of them in full.
 
 ## Schemas and their names
 
@@ -111,7 +111,6 @@ Each type a contract names implements `schemars::JsonSchema`. A schema is named 
   `NoteOutput`: a client may leave the field out, but always receives it.
 
 ```rust
-use quoll::rest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -122,7 +121,7 @@ pub struct Settings {
     pub pinned: bool,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -143,7 +142,6 @@ api. It has no `Api::openapi()`, and its types need serde alone: they may come f
 `JsonSchema`.
 
 ```rust
-use quoll::rest;
 use serde::{Deserialize, Serialize};
 
 /// A repository, as GitHub's API answers it.
@@ -152,7 +150,7 @@ pub struct Repo {
     pub full_name: String,
 }
 
-rest::api! {
+quoll::api! {
     /// GitHub's API, which the application only calls.
     #[openapi(none)]
     pub api GitHub = "";
@@ -163,7 +161,7 @@ rest::api! {
 }
 ```
 
-A `rest::group!` of such a contract says `#[openapi(none)]` on its group. An api with a document lists only groups
+A `quoll::group!` of such a contract says `#[openapi(none)]` on its group. An api with a document lists only groups
 that have one.
 
 [Another API](another-api.md) goes through such a contract: its headers, its errors, its forms and its pages.

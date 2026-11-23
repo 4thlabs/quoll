@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A scheme less visible than a group that takes it, whose server trait names it.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     scheme Key = header "X-Api-Key";

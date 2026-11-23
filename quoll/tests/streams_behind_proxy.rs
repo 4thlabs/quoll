@@ -11,8 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures_util::{StreamExt, stream};
-use quoll::rest::{self, ByteStream, Events, JsonLines, Response, Result};
-use quoll::server;
+use quoll::{ByteStream, Events, JsonLines, Response, Result, server};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -23,7 +22,7 @@ mod support {
     pub(crate) mod log;
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Feeds {

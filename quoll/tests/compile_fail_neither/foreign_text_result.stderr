@@ -1,16 +1,16 @@
 error[E0277]: `Text` is not quoll's `Text`, which a body or a result named `Text` is read as
-  --> tests/compile_fail_neither/foreign_text_result.rs:14:38
+  --> tests/compile_fail_neither/foreign_text_result.rs:13:38
    |
-14 |         GET "/readme" => readme() -> Text;
-   |                                      ^^^^ not `quoll::rest::Text`
+13 |         GET "/readme" => readme() -> Text;
+   |                                      ^^^^ not `quoll::Text`
    |
 help: the trait `quoll::__private::known::IsText` is not implemented for `Text`
-  --> tests/compile_fail_neither/foreign_text_result.rs:6:1
+  --> tests/compile_fail_neither/foreign_text_result.rs:5:1
    |
- 6 | pub struct Text {
+ 5 | pub struct Text {
    | ^^^^^^^^^^^^^^^
-   = note: bring quoll's into scope, `use quoll::rest::Text;`, or name a type of your own otherwise
-help: the trait `quoll::__private::known::IsText` is implemented for `quoll::rest::Text`
+   = note: bring quoll's into scope, `use quoll::Text;`, or name a type of your own otherwise
+help: the trait `quoll::__private::known::IsText` is implemented for `quoll::Text`
   --> src/__private/known.rs
    |
    | impl IsText for Text {

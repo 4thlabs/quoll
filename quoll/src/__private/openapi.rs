@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 use crate::__private::fields::Field;
 use crate::__private::headers::{Fixed, RouteHeaders};
 use crate::__private::join::Join;
-use crate::rest::openapi::{Document, SecurityScheme};
+use crate::openapi::{Document, SecurityScheme};
 
 mod refs;
 mod schemas;
@@ -27,7 +27,7 @@ pub type SchemaFn = fn(&mut SchemaGenerator) -> Schema;
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no schema, which the OpenAPI document of the contract describes it with",
     label = "no `schemars::JsonSchema`",
-    note = "derive `schemars::JsonSchema` for `{Self}`, or write `#[openapi(none)]` on the api, or on the group of a `rest::group!`, of a contract that is only called, which has no document"
+    note = "derive `schemars::JsonSchema` for `{Self}`, or write `#[openapi(none)]` on the api, or on the group of a `quoll::group!`, of a contract that is only called, which has no document"
 )]
 pub trait Documented: JsonSchema {}
 
@@ -43,7 +43,7 @@ pub fn inline<T: ?Sized + Documented>(generator: &mut SchemaGenerator) -> Schema
     T::json_schema(generator)
 }
 
-/// An api, as `rest::api!` describes it.
+/// An api, as `quoll::api!` describes it.
 #[derive(Debug)]
 pub struct Api {
     /// The name of the api, `Api`, which a message names.
@@ -64,11 +64,11 @@ pub struct Api {
     pub groups: &'static [&'static Group],
 }
 
-/// The document of a group, which `rest::group!` writes unless the group says `#[openapi(none)]`.
+/// The document of a group, which `quoll::group!` writes unless the group says `#[openapi(none)]`.
 #[diagnostic::on_unimplemented(
     message = "the group has no OpenAPI document, which the document of the api that lists it holds",
     label = "a group with `#[openapi(none)]`",
-    note = "remove `#[openapi(none)]` from the group's `rest::group!`, or write it on the api, whose document is then left out"
+    note = "remove `#[openapi(none)]` from the group's `quoll::group!`, or write it on the api, whose document is then left out"
 )]
 pub trait GroupDocument {
     /// The group, as the document describes it.
@@ -108,7 +108,7 @@ pub struct Route {
     /// Its result.
     pub reply: Reply,
     /// Whether the handler's value may be empty, so that a 204 answers it beside its own status, as
-    /// `rest::Allows` gives it one: an `Option<T>`, `Text`, `Bytes` or a stream, in a `Created<T>` or an `Accepted<T>`
+    /// `quoll::Allows` gives it one: an `Option<T>`, `Text`, `Bytes` or a stream, in a `Created<T>` or an `Accepted<T>`
     /// too; `false` for a route with no result, whose own status is the 204.
     pub may_be_empty: bool,
     /// Its authentication, if it takes a credential.
@@ -976,7 +976,7 @@ impl JsonSchema for ProblemSchema {
     }
 
     fn schema_id() -> Cow<'static, str> {
-        "quoll::rest::Problem".into()
+        "quoll::Problem".into()
     }
 
     fn json_schema(_: &mut SchemaGenerator) -> Schema {

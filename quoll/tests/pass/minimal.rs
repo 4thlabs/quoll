@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     api Api = "";
 
     group Health {

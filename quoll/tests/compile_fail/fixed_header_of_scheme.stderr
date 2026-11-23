@@ -1,5 +1,5 @@
 error: the route `Admin::stats` takes the header `X-Api-Key` of the api `Api`, which carries the credential of `Key`: the client's middleware sends it, so write `#[header("X-Api-Key" = none)]` on the route
-  --> tests/compile_fail/fixed_header_of_scheme.rs:12:13
+  --> tests/compile_fail/fixed_header_of_scheme.rs:10:13
    |
-12 |         GET "/stats" => stats() -> u32;
+10 |         GET "/stats" => stats() -> u32;
    |             ^^^^^^^^

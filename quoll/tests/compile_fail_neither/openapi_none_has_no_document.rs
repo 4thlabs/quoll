@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     /// A third-party API, which the application only calls.
     #[openapi(none)]
     pub api GitHub = "";

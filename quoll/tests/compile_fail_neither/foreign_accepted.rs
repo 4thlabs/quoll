@@ -1,4 +1,3 @@
-use quoll::rest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +9,7 @@ pub struct Job {
     pub id: u64,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Exports {

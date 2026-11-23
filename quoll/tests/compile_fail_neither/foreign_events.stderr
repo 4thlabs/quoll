@@ -1,16 +1,16 @@
 error[E0277]: `Events<String>` is not quoll's `Events`, which a result named `Events` is read as
-  --> tests/compile_fail_neither/foreign_events.rs:14:38
+  --> tests/compile_fail_neither/foreign_events.rs:13:38
    |
-14 |         GET "/events" => events() -> Events<String>;
-   |                                      ^^^^^^^^^^^^^^ not `quoll::rest::Events`
+13 |         GET "/events" => events() -> Events<String>;
+   |                                      ^^^^^^^^^^^^^^ not `quoll::Events`
    |
 help: the trait `quoll::__private::known::IsEvents` is not implemented for `Events<String>`
-  --> tests/compile_fail_neither/foreign_events.rs:6:1
+  --> tests/compile_fail_neither/foreign_events.rs:5:1
    |
- 6 | pub struct Events<T> {
+ 5 | pub struct Events<T> {
    | ^^^^^^^^^^^^^^^^^^^^
-   = note: bring quoll's into scope, `use quoll::rest::Events;`, or name a type of your own otherwise
-help: the trait `quoll::__private::known::IsEvents` is implemented for `quoll::rest::Events<T>`
+   = note: bring quoll's into scope, `use quoll::Events;`, or name a type of your own otherwise
+help: the trait `quoll::__private::known::IsEvents` is implemented for `quoll::Events<T>`
   --> src/__private/known.rs
    |
    | impl<T> IsEvents for Events<T> {}

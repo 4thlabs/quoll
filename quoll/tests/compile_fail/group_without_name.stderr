@@ -1,5 +1,5 @@
 error: `group` takes a name: write `group Notes { ... }`
- --> tests/compile_fail/group_without_name.rs:5:15
+ --> tests/compile_fail/group_without_name.rs:3:15
   |
-5 |     pub group { }
+3 |     pub group { }
   |               ^

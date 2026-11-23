@@ -9,10 +9,9 @@ takes a fake as well. A snapshot of the OpenAPI document catches a change to the
 test's tokio runtime: `#[tokio::test]` gives each test its own, which stops the server when the test returns.
 
 ```rust,test_harness
-use quoll::rest::{self, Error, Response, Result};
-use quoll::{client, test};
+use quoll::{Error, Response, Result, client, test};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -75,10 +74,9 @@ application that builds its server in a function serves the same in its tests:
 ```rust,test_harness
 use std::time::Duration;
 
-use quoll::rest::{self, Response, Result};
-use quoll::{client, server, test};
+use quoll::{Response, Result, client, server, test};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Health {
@@ -121,7 +119,7 @@ a fake in its tests, with no server:
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use quoll::rest::{self, Call, Created, Error, Result};
+use quoll::{Call, Created, Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -136,7 +134,7 @@ pub struct NewNote {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -208,7 +206,7 @@ async fn a_copy_has_the_title_of_its_note() -> Result<()> {
 A fake's methods have the client's signatures: no caller, the `T` of a `Created<T>`, and an `impl Call<T>`, which
 an `async move` block is. A route left out, or a method of the wrong signature, does not compile. The fake of an api
 that answers its errors in a shape of its own, `#[error(E)]`, returns an `impl Call<T, E>`, and builds the error of
-an answer with `rest::Error::answered(StatusCode::NOT_FOUND, e)`: [Another API's errors](errors.md#another-apis-errors)
+an answer with `quoll::Error::answered(StatusCode::NOT_FOUND, e)`: [Another API's errors](errors.md#another-apis-errors)
 shows one.
 
 ## The OpenAPI snapshot
@@ -217,9 +215,7 @@ A test keeps a snapshot of the document beside it, and fails when the document c
 contract is reviewed in the diff. It is written again when the test runs with `SNAPSHOT=overwrite`.
 
 ```rust,no_run,test_harness
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

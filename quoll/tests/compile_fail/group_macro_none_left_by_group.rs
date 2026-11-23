@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::group! {
+quoll::group! {
     #[openapi(none)]
     #[header(none)]
     pub group Status {

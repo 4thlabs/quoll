@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // `#[error]` without the type it names.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[error]

@@ -1,6 +1,6 @@
-use quoll::rest::{self, Authenticate, Basic, BasicCredential, Bearer, Response, Result, Scoped};
+use quoll::{Authenticate, Basic, BasicCredential, Bearer, Response, Result, Scoped};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Key = header "X-Api-Key";

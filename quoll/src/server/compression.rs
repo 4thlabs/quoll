@@ -15,7 +15,7 @@ use tower_service::Service;
 
 use super::layer::ResponseFuture;
 use crate::__private::content_type::JSON_LINES;
-use crate::rest::Route;
+use crate::Route;
 
 /// Whether an answer is not a route's stream, as its [`Route`] says.
 type NotAStream = fn(StatusCode, Version, &HeaderMap, &Extensions) -> bool;

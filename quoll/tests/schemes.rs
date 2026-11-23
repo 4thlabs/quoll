@@ -11,10 +11,9 @@ use std::sync::{Arc, Mutex};
 
 use http::Extensions;
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{
-    self, Authenticate, Basic, BasicCredential, Bearer, Error, Response, Result, Route, Scheme,
-    Scoped, Text,
+use quoll::{
+    Authenticate, Basic, BasicCredential, Bearer, Error, Response, Result, Route, Scheme, Scoped,
+    Text, openapi::SecurityScheme,
 };
 use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, COOKIE, WWW_AUTHENTICATE};
@@ -23,7 +22,7 @@ use serde_json::Value;
 
 use other::Other as _;
 
-rest::api! {
+quoll::api! {
     /// Every scheme, to test them with.
     api Api = "/api";
 
@@ -63,9 +62,7 @@ rest::api! {
 
 /// Another contract, which declares a scheme of the same name.
 mod other {
-    use quoll::rest;
-
-    rest::api! {
+    quoll::api! {
         pub api Api = "/other";
 
         pub scheme Key = header "X-Other-Key";

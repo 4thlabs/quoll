@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A query key that a scheme of the route reads.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Token = query "token";

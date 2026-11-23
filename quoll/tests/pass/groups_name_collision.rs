@@ -1,6 +1,5 @@
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{self, Result, Scheme};
+use quoll::{Result, Scheme, openapi::SecurityScheme};
 
 /// A scheme of the application's own, which reads the header of the api's `Key` under its name: not the api's
 /// declared scheme, whose visibility and place the api's checks do not give it.
@@ -21,9 +20,7 @@ impl Scheme for Impostor {
 }
 
 pub mod notes {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         #[openapi(none)]
         #[auth(crate::Impostor)]
         pub group Notes {
@@ -32,7 +29,7 @@ pub mod notes {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     pub api Api = "/api" { notes::Notes };
 

@@ -1,6 +1,6 @@
-use quoll::rest::{self, Authenticate, Bearer, Response, Result};
+use quoll::{Authenticate, Bearer, Response, Result};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Repos {
@@ -9,7 +9,7 @@ rest::api! {
     }
 }
 
-// A caller that does not implement `rest::Scoped`, which a route with scopes needs.
+// A caller that does not implement `quoll::Scoped`, which a route with scopes needs.
 struct User;
 struct App;
 

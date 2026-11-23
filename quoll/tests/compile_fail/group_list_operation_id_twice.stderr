@@ -1,5 +1,5 @@
 error[E0080]: evaluation panicked: the operation id `note_tags_list` of the route `list` of `NoteTags` is already the one of the route `tags_list` of `Note`: rename one of them, as an operation id, the group in snake case and the function, names one route of the api
-  --> tests/compile_fail/group_list_operation_id_twice.rs:14:34
+  --> tests/compile_fail/group_list_operation_id_twice.rs:10:34
    |
-14 |     pub api Api = "/api" { tags::NoteTags };
+10 |     pub api Api = "/api" { tags::NoteTags };
    |                                  ^^^^^^^^ evaluation of `_::_` failed here

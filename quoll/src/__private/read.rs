@@ -12,7 +12,7 @@ use std::task::{Context, Poll};
 
 use serde::de::DeserializeOwned;
 
-use crate::rest::Result;
+use crate::Result;
 
 /// A read of a `T`, boxed: one allocation per call, against the one error a type that cannot be read gets.
 #[must_use = "a read does nothing unless it is awaited"]

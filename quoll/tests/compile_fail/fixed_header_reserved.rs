@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[header("Host" = "api.example.com")]
     pub api Api = "";

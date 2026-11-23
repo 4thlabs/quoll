@@ -1,5 +1,5 @@
 error[E0425]: cannot find type `__QuollGroupNotes` in module `notes`
- --> tests/compile_fail_neither/group_listed_not_a_group.rs:8:35
+ --> tests/compile_fail_neither/group_listed_not_a_group.rs:6:35
   |
-8 |     pub api Api = "/api" { notes::Notes };
+6 |     pub api Api = "/api" { notes::Notes };
   |                                   ^^^^^ not found in `notes`

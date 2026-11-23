@@ -11,8 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use http::header::LOCATION;
-use quoll::rest::{self, Created, Error, Response, Result};
-use quoll::server;
+use quoll::{Created, Error, Response, Result, server};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +26,7 @@ pub struct NewNote {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -106,7 +105,7 @@ async fn main() -> std::io::Result<()> {
 ## Services
 
 - A group `Notes` gives the trait `NotesServer`, with a handler per route. An implementation writes `async fn`.
-- A handler takes the route's arguments in the contract's order, and returns a `rest::Result` of a `rest::Response` of
+- A handler takes the route's arguments in the contract's order, and returns a `quoll::Result` of a `quoll::Response` of
   the route's result, the `T` of a `Created<T>` or an `Accepted<T>`, whose status the contract gives:
   `Ok(Response::new(note))`, with the headers it sends, `.header(LOCATION, location)`, as [Responses](#responses)
   says.
@@ -120,9 +119,9 @@ async fn main() -> std::io::Result<()> {
 compile, nor does a service that does not implement its group's trait:
 
 ```rust
-use quoll::rest::{self, Response, Result};
+use quoll::{Response, Result};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -158,7 +157,7 @@ let router = Api::router(ApiServices {
 
 ## Responses
 
-A handler returns a `rest::Response` of the route's value: `Note` for `-> Note`, `-> Created<Note>` and
+A handler returns a `quoll::Response` of the route's value: `Note` for `-> Note`, `-> Created<Note>` and
 `-> Accepted<Note>`, `()` for a route with no result, the stream for a stream.
 
 - `Response::new(value)` answers the status the contract says: 200, 201 for `Created<T>`, 202 for `Accepted<T>`, 204
@@ -166,8 +165,8 @@ A handler returns a `rest::Response` of the route's value: `Note` for `-> Note`,
 - `.header(name, value)` adds a header, after those of its name: an `ETag`, a `Location`, a `Cache-Control`. A
   handler's header takes the place of one quoll puts of its name, as a stream's `Cache-Control`.
 - `.with_status(Status::...)` answers another success or a redirection in place of the contract's: a `PUT` that
-  answers 201 when it creates and 200 when it replaces, a 304 Not Modified, a 206. `rest::Status` holds a `2xx` or a
-  `3xx` alone, so an error's status does not compile there: an error is an `Err(rest::Error)`, as
+  answers 201 when it creates and 200 when it replaces, a 304 Not Modified, a 206. `quoll::Status` holds a `2xx` or a
+  `3xx` alone, so an error's status does not compile there: an error is an `Err(quoll::Error)`, as
   [Errors](errors.md) says.
 - `Status::NO_CONTENT` and `Status::RESET_CONTENT`, a 204 and a 205, say there is no body: they go on a value that
   may be empty, `()`, an `Option<T>`, `Response::new(None)`, a `Text`, `Bytes` or a stream, and the `()` or the
@@ -183,9 +182,9 @@ The OpenAPI document describes the contract's status and none of these headers.
 
 ```rust
 use http::header::{ETAG, LOCATION};
-use quoll::rest::{self, Created, Response, Result, Status};
+use quoll::{Created, Response, Result, Status};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -272,14 +271,13 @@ logs and at which level, what `compression` leaves out.
 ### A layer of the application's
 
 Any tower layer goes to `with`, as one of axum's `middleware::from_fn`. The answer of each route carries its
-`rest::Route`, which a layer reads:
+`quoll::Route`, which a layer reads:
 
 ```rust
 use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use quoll::rest::Route;
-use quoll::server;
+use quoll::{Route, server};
 
 /// Prints the operation of each answer that a route made.
 async fn log_operation(request: Request, next: Next) -> Response {
@@ -394,6 +392,6 @@ back when it returns.
 
 ## Errors
 
-A handler returns a `rest::Error`, which the server answers with its status and an RFC 9457 problem, as
+A handler returns a `quoll::Error`, which the server answers with its status and an RFC 9457 problem, as
 `Error::not_found("no such note")` above. `Error::internal(cause)` logs its cause and answers a bare 500.
 [Errors](errors.md) says what each error answers.

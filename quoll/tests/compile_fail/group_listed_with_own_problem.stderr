@@ -1,5 +1,5 @@
-error[E0080]: evaluation panicked: the route `Gists::list` takes no `#[error(...)]`, and a `rest::group!` cannot take its api's: write `#[error(Problem)]` on the group `Gists` in its block, or on each of its routes, the type named from the group's module, or the shape its errors have
-  --> tests/compile_fail/group_listed_with_own_problem.rs:37:31
+error[E0080]: evaluation panicked: the route `Gists::list` takes no `#[error(...)]`, and a `quoll::group!` cannot take its api's: write `#[error(Problem)]` on the group `Gists` in its block, or on each of its routes, the type named from the group's module, or the shape its errors have
+  --> tests/compile_fail/group_listed_with_own_problem.rs:33:31
    |
-37 |     pub api Hub = "" { gists::Gists };
+33 |     pub api Hub = "" { gists::Gists };
    |                               ^^^^^ evaluation of `_` failed here

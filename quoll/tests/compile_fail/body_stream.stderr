@@ -1,17 +1,17 @@
 error: `Events` is a stream a route answers, and a route does not read a stream as its body: take all the items at once, a `Vec<Note>` as JSON, or `Bytes`
- --> tests/compile_fail/body_stream.rs:7:40
+ --> tests/compile_fail/body_stream.rs:5:40
   |
-7 |         POST "/events" => send(events: rest::Events<Note>);
-  |                                        ^^^^^^^^^^^^^^^^^^
+5 |         POST "/events" => send(events: quoll::Events<Note>);
+  |                                        ^^^^^^^^^^^^^^^^^^^
 
 error: `JsonLines` is a stream a route answers, and a route does not read a stream as its body: take all the items at once, a `Vec<Note>` as JSON, or `Bytes`
- --> tests/compile_fail/body_stream.rs:8:41
+ --> tests/compile_fail/body_stream.rs:6:41
   |
-8 |         POST "/lines"  => import(lines: JsonLines<Note>);
+6 |         POST "/lines"  => import(lines: JsonLines<Note>);
   |                                         ^^^^^^^^^^^^^^^
 
 error: `ByteStream` is a stream a route answers, and a route does not read a stream as its body: take all the items at once, a `Vec<Note>` as JSON, or `Bytes`
- --> tests/compile_fail/body_stream.rs:9:40
+ --> tests/compile_fail/body_stream.rs:7:40
   |
-9 |         POST "/logs"   => upload(logs: rest::ByteStream);
-  |                                        ^^^^^^^^^^^^^^^^
+7 |         POST "/logs"   => upload(logs: quoll::ByteStream);
+  |                                        ^^^^^^^^^^^^^^^^^

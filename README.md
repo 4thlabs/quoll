@@ -30,7 +30,7 @@ An API is written once, in a macro. The server implements it, the client calls i
 route without its handler, a call with the wrong arguments, does not compile.
 
 ```rust,ignore
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer)]
@@ -117,8 +117,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```rust,no_run
 use std::sync::Mutex;
 
-use quoll::rest::{self, Created, Error, Response, Result};
-use quoll::{client, server};
+use quoll::{Created, Error, Response, Result, client, server};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -133,7 +132,7 @@ pub struct NewNote {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     /// Notes, kept in memory.
     pub api Api = "/api";
 
@@ -182,7 +181,7 @@ async fn serve() -> std::io::Result<()> {
     server::builder().serve("127.0.0.1:8080", router).await
 }
 
-async fn call() -> rest::Result<()> {
+async fn call() -> quoll::Result<()> {
     let api = client::builder().build::<Api>("http://127.0.0.1:8080")?;
 
     let created = api

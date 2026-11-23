@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A scheme named as one of the crate's.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Basic = header "X-Login";

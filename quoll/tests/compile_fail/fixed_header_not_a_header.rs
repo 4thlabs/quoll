@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[header(Accept = "application/json")]
     pub api Api = "";

@@ -1,4 +1,4 @@
-use quoll::rest::{self, Call, Created, Response, Result};
+use quoll::{Call, Created, Response, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +7,7 @@ pub struct Note {
     pub id: i64,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

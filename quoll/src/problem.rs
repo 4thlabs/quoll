@@ -4,7 +4,7 @@ use http::StatusCode;
 
 /// An RFC 9457 problem: the body of an error answer whose content type is `application/problem+json`, as the server
 /// of a contract answers its errors, and the shape of an api's errors unless its contract says another,
-/// `#[error(E)]`. The client reads it into [`Error::detail`](crate::rest::Error::detail).
+/// `#[error(E)]`. The client reads it into [`Error::detail`](crate::Error::detail).
 ///
 /// A member of the wrong type is left out, as the RFC asks; the members of an extension are read with
 /// `Error::body_as`, which the feature `client` gives.

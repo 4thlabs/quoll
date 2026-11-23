@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // Two `#[error]` on one route.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

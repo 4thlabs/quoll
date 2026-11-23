@@ -1,13 +1,13 @@
 # The contract
 
-A contract is a route table written in `rest::api!`. The server, the client and the OpenAPI document all come from it.
+A contract is a route table written in `quoll::api!`. The server, the client and the OpenAPI document all come from it.
 This guide covers what a contract says. [The server](server.md) and [the client](client.md) cover how each side uses
 it.
 
 ## A contract
 
 ```rust
-use quoll::rest::{self, Created, Events};
+use quoll::{Created, Events};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ pub struct NoteFilter {
     pub page: Option<u32>,
 }
 
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     pub api Api = "/api";
 
@@ -57,7 +57,7 @@ The contract becomes items in the module that writes it:
 - `Notes`, the trait the client implements, `NotesClient`, `ApiClient` and `Api::client`, with the feature `client`;
 - `Api::openapi()`, the [OpenAPI document](openapi.md), whatever the features.
 
-The doc of `quoll::rest::api!` lists them all. Nothing is written to disk: `cargo expand` shows the code, and `cargo
+The doc of `quoll::api!` lists them all. Nothing is written to disk: `cargo expand` shows the code, and `cargo
 doc` shows the items with the contract's `///` comments.
 
 ## Methods and paths
@@ -85,7 +85,7 @@ Each argument is matched to the route's string by its name, not by its position.
 | any other argument                         | the body              |
 
 ```rust
-use quoll::rest::{self, Bytes, Form, Text};
+use quoll::{Bytes, Form, Text};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -102,7 +102,7 @@ pub struct Login {
     pub password: String,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -133,7 +133,6 @@ A key is ASCII letters, digits and `-._~`, and may end in brackets that hold the
 their keys:
 
 ```rust
-use quoll::rest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -147,7 +146,7 @@ pub struct Article {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "";
 
     pub group Shop {
@@ -178,7 +177,6 @@ An API that reads a list as one value, `labels=bug,docs`, says so with `#[join(s
 whose type stays a `Vec`:
 
 ```rust
-use quoll::rest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -189,7 +187,7 @@ pub enum State {
     Closed,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "";
 
     pub group Issues {
@@ -223,7 +221,7 @@ The one argument left is the body, on `POST`, `PUT`, `PATCH` and `DELETE` only. 
 
 The server answers 415 to a body without the content type it reads, and 400 to one that does not read as its type.
 
-The doc of `quoll::rest` gives the rules of each form in full: an empty query value, a header given twice, a path
+The doc of the crate `quoll` gives the rules of each form in full: an empty query value, a header given twice, a path
 parameter whose type is a struct.
 
 ## Fixed headers
@@ -232,7 +230,7 @@ An api that asks every request for headers of its own, a version or a media type
 `#[header("name" = value)]`, on the api, a group or a route:
 
 ```rust
-use quoll::rest::{self, Bytes, Text};
+use quoll::{Bytes, Text};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -243,7 +241,7 @@ pub struct Repository {
 /// The version of the REST API the contract follows.
 pub const VERSION: &str = "2022-11-28";
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[header("Accept" = "application/vnd.github+json")]
     #[header("X-GitHub-Api-Version" = VERSION)]
@@ -293,7 +291,7 @@ An API that tells two answers of one method and path apart by a field of the bod
 says it in the contract with `#[body("name" = value)]`, on each route:
 
 ```rust
-use quoll::rest::{self, Events};
+use quoll::Events;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,7 +310,7 @@ pub struct StreamEvent {
     pub r#type: String,
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     pub api Anthropic = "/v1";
 
@@ -365,7 +363,7 @@ the contract gives, with the headers it sends:
 
 ```rust
 use http::header::LOCATION;
-use quoll::rest::{Bytes, Response, Text};
+use quoll::{Bytes, Response, Text};
 
 let created = Response::new(7).header(LOCATION, "/api/notes/7");
 let accepted = Response::new("export-1");
@@ -379,7 +377,7 @@ assert_eq!(logo.content_type(), "image/png");
 ```
 
 The types a contract names, `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines` and `ByteStream`,
-are imported as any type is, `use quoll::rest::{self, Created};`, or named by their path, `rest::Bytes`.
+are imported as any type is, `use quoll::Created;`, or named by their path, `quoll::Bytes`.
 
 ## Streams
 
@@ -394,10 +392,9 @@ the same type, a `Stream` of `Result<T>`, or of `Result<Vec<u8>>` for a `ByteStr
 
 ```rust
 use futures::{StreamExt, stream};
-use quoll::rest::{self, ByteStream, Events, Response, Result};
-use quoll::{client, test};
+use quoll::{ByteStream, Events, Response, Result, client, test};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Live {
@@ -461,18 +458,16 @@ How a stream behaves:
   [Retries, deadlines and redirects](client.md#retries-deadlines-and-redirects) says, and `server::compression` leaves
   streams out.
 
-The docs of `quoll::rest::Events`, `JsonLines` and `ByteStream` say what each sends and reads on the wire.
+The docs of `quoll::Events`, `JsonLines` and `ByteStream` say what each sends and reads on the wire.
 
 ## Groups across modules
 
-A large contract splits into `rest::group!` blocks, one group in each, in a module of its own. The api lists them by
+A large contract splits into `quoll::group!` blocks, one group in each, in a module of its own. The api lists them by
 their paths after its prefix.
 
 ```rust
 mod notes {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         /// The signed-in user's notes.
         #[auth(Bearer | crate::Key)]
         pub group Notes {
@@ -482,9 +477,7 @@ mod notes {
 }
 
 mod admin {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         #[auth(crate::Key)]
         pub group Admin {
             GET "/admin/stats" => stats() -> u64;
@@ -492,9 +485,7 @@ mod admin {
     }
 }
 
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     pub api Api = "/api" { notes::Notes, admin::Admin };
 
@@ -511,12 +502,12 @@ fn main() {
 }
 ```
 
-- A `rest::group!` holds one group, written as in an api. Its items, `NotesServer`, `Notes` and `NotesClient`, are in
+- A `quoll::group!` holds one group, written as in an api. Its items, `NotesServer`, `Notes` and `NotesClient`, are in
   its module.
 - The api serves, calls and describes the routes of its groups under its own prefix. The groups of the list come
   first, then the ones its block writes.
 - A group named alone, `{ Notes }`, is one in the api's module, or brought by a glob import, `use notes::*;`.
-- Schemes are declared in the api alone. A `rest::group!` names one by its path, `#[auth(crate::Key)]`, or through an
+- Schemes are declared in the api alone. A `quoll::group!` names one by its path, `#[auth(crate::Key)]`, or through an
   import.
 - A group takes the fixed headers of the api that lists it. Any api may list it: a `none` of the group's leaves a
   header where that api fixes it, and does nothing elsewhere.
@@ -530,9 +521,7 @@ A mistake in a contract is a compile error on the token at fault, which says wha
 argument of its name:
 
 ```rust,compile_fail
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

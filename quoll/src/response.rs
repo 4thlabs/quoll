@@ -6,7 +6,7 @@ use std::fmt;
 
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Version};
 
-use crate::rest::{ByteStream, Bytes, Events, JsonLines, Result, Text};
+use crate::{ByteStream, Bytes, Events, JsonLines, Result, Text};
 
 /// The answer of a route, as HTTP has it: its status, its version, its headers, and its body, a `T`.
 ///
@@ -14,11 +14,11 @@ use crate::rest::{ByteStream, Bytes, Events, JsonLines, Result, Text};
 /// `Cache-Control`. Its status is the one the contract says, 200 for a `T`, 201 for a `Created<T>`, 202 for an
 /// `Accepted<T>`, 204 for a route with no result, unless the handler gives another with
 /// [`with_status`](Response::with_status): a success or a redirection, a `PUT` that answers 201 when it creates and
-/// 200 when it replaces, a 304 Not Modified, a 206. An error's status is an `Err(rest::Error)`, never a `Response`.
+/// 200 when it replaces, a 304 Not Modified, a 206. An error's status is an `Err(quoll::Error)`, never a `Response`.
 ///
 /// ```
 /// use http::header::{ETAG, LOCATION};
-/// use quoll::rest::Response;
+/// use quoll::Response;
 ///
 /// let response = Response::new(3)
 ///     .header(ETAG, "\"7\"")
@@ -31,7 +31,7 @@ use crate::rest::{ByteStream, Bytes, Events, JsonLines, Result, Text};
 /// On the client, a call's `.response()` gives the answer it got, whatever its status, its body read as the route's
 /// value on a success and as the error of the answer otherwise: see [`Call`], with the feature `client`.
 ///
-#[cfg_attr(feature = "client", doc = "[`Call`]: crate::rest::Call")]
+#[cfg_attr(feature = "client", doc = "[`Call`]: crate::Call")]
 #[cfg_attr(not(feature = "client"), doc = "[`Call`]: crate#features")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response<T> {
@@ -78,7 +78,7 @@ impl<T> Response<T> {
     ///
     /// ```
     /// use http::StatusCode;
-    /// use quoll::rest::{Response, Status};
+    /// use quoll::{Response, Status};
     ///
     /// let replaced = Response::new(3);
     /// let created = Response::new(3).with_status(Status::CREATED);
@@ -95,7 +95,7 @@ impl<T> Response<T> {
     /// `Accepted<()>` takes it as its 202 does.
     ///
     /// ```
-    /// use quoll::rest::{Response, Status};
+    /// use quoll::{Response, Status};
     ///
     /// # struct Note;
     /// let missing: Response<Option<Note>> = Response::new(None).with_status(Status::NO_CONTENT);
@@ -103,7 +103,7 @@ impl<T> Response<T> {
     /// ```
     ///
     /// ```compile_fail
-    /// use quoll::rest::{Response, Status};
+    /// use quoll::{Response, Status};
     ///
     /// let note = Response::new(3).with_status(Status::NO_CONTENT);
     /// ```
@@ -111,7 +111,7 @@ impl<T> Response<T> {
     /// A route with no result that answers 201 when it creates and 204 when it replaces gives each in its branch:
     ///
     /// ```
-    /// use quoll::rest::{Response, Status};
+    /// use quoll::{Response, Status};
     ///
     /// fn put(created: bool) -> Response<()> {
     ///     let response = Response::new(());
@@ -226,7 +226,7 @@ impl<T, E> Response<Result<T, E>> {
     ///
     /// The error of an answer with an error status, which holds its status, its detail and its body.
     ///
-    #[cfg_attr(feature = "client", doc = "[`Call`]: crate::rest::Call")]
+    #[cfg_attr(feature = "client", doc = "[`Call`]: crate::Call")]
     #[cfg_attr(not(feature = "client"), doc = "[`Call`]: crate#features")]
     pub fn into_value(self) -> Result<T, E> {
         self.body
@@ -242,12 +242,12 @@ impl<T: Default> Default for Response<T> {
 }
 
 /// A status a handler gives its [`Response`]: a success, `2xx`, or a redirection, `3xx`. An error's status, `4xx` or
-/// `5xx`, is an `Err(rest::Error)`, which answers its problem with it; an informational one, `1xx`, is no answer; a
+/// `5xx`, is an `Err(quoll::Error)`, which answers its problem with it; an informational one, `1xx`, is no answer; a
 /// 204 or a 205 is a [`NoContent`], of a route with no result or an `Option<T>`.
 ///
 /// ```
 /// use http::StatusCode;
-/// use quoll::rest::Status;
+/// use quoll::Status;
 ///
 /// assert_eq!(StatusCode::from(Status::NOT_MODIFIED), StatusCode::NOT_MODIFIED);
 /// assert!(Status::try_from(StatusCode::IM_USED).is_ok());
@@ -362,8 +362,8 @@ impl TryFrom<StatusCode> for NoContent {
 /// response whose value may be empty takes.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a status a handler gives",
-    label = "a `rest::Status` or a `rest::NoContent`",
-    note = "a status is one of `rest::Status`'s, `Status::CREATED`, or `Status::try_from(status)` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT`, or `NoContent::try_from(status)`"
+    label = "a `quoll::Status` or a `quoll::NoContent`",
+    note = "a status is one of `quoll::Status`'s, `Status::CREATED`, or `Status::try_from(status)` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT`, or `NoContent::try_from(status)`"
 )]
 pub trait IntoStatus: sealed::Sealed {
     /// What the status says of the body: any for a [`Status`], none for a [`NoContent`].
@@ -443,7 +443,7 @@ pub(crate) mod sealed {
     pub struct NoBody;
 }
 
-/// A status that is not a [`Status`] a handler gives: an informational one, an error's, which an `Err(rest::Error)`
+/// A status that is not a [`Status`] a handler gives: an informational one, an error's, which an `Err(quoll::Error)`
 /// answers, or one of no content, which a [`NoContent`] holds; or, for `NoContent::try_from`, any status of a body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InvalidStatus(StatusCode);
@@ -480,7 +480,7 @@ impl fmt::Display for InvalidStatus {
 
         write!(
             f,
-            "{status} is an error's status, which a handler answers with an `Err(rest::Error)`"
+            "{status} is an error's status, which a handler answers with an `Err(quoll::Error)`"
         )
     }
 }
@@ -519,7 +519,7 @@ mod tests {
             Status::try_from(StatusCode::NOT_FOUND)
                 .expect_err("an error's")
                 .to_string(),
-            "404 is an error's status, which a handler answers with an `Err(rest::Error)`"
+            "404 is an error's status, which a handler answers with an `Err(quoll::Error)`"
         );
     }
 

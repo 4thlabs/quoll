@@ -1,4 +1,4 @@
-//! What only the code `rest::api!` writes calls. Not part of the API: it may change in any version.
+//! What only the code `quoll::api!` writes calls. Not part of the API: it may change in any version.
 //!
 //! The macro cannot read the features of `quoll`, and a `#[cfg(feature = "server")]` in what it writes would read the
 //! features of the user's crate. So the code of each side goes through a macro defined here, which writes it out when

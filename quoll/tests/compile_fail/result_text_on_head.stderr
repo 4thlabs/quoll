@@ -1,5 +1,5 @@
 error: a HEAD answer has no body, so a HEAD route returns nothing: remove the `->` and its type
- --> tests/compile_fail/result_text_on_head.rs:7:32
+ --> tests/compile_fail/result_text_on_head.rs:5:32
   |
-7 |         HEAD "/" => check() -> Text;
+5 |         HEAD "/" => check() -> Text;
   |                                ^^^^

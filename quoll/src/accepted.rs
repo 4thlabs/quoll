@@ -10,9 +10,9 @@ use std::marker::PhantomData;
 /// handler does, to which quoll gives the 202. The client returns the `T`.
 ///
 /// ```
-/// use quoll::rest::{self, Accepted};
+/// use quoll::Accepted;
 ///
-/// rest::api! {
+/// quoll::api! {
 ///     pub api Api = "/api";
 ///
 ///     pub group Exports {
@@ -21,7 +21,7 @@ use std::marker::PhantomData;
 /// }
 /// ```
 ///
-/// [`Response<Export>`]: crate::rest::Response
+/// [`Response<Export>`]: crate::Response
 pub struct Accepted<T> {
     _value: PhantomData<fn() -> T>,
 }

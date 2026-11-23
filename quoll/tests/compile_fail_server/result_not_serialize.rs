@@ -1,4 +1,4 @@
-use quoll::rest::{self, Events};
+use quoll::Events;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -8,7 +8,7 @@ pub struct Note {
     pub id: i64,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

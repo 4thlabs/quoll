@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use http::Extensions;
 use http::header::LOCATION;
-use quoll::rest::{self, Created, Error, Response, Result, Route};
+use quoll::{Created, Error, Response, Result, Route};
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder, Next};
 use schemars::JsonSchema;
@@ -40,7 +40,7 @@ struct Found {
     tags: Vec<String>,
 }
 
-rest::api! {
+quoll::api! {
     /// Notes, to test the client with.
     api Api = "/api";
 
@@ -383,7 +383,7 @@ async fn an_error_is_read_back_with_its_status_and_its_problem() -> Result<()> {
         .expect_err("a conflict");
     assert_eq!(error.status(), Some(StatusCode::CONFLICT));
     assert_eq!(
-        error.detail().and_then(rest::Problem::detail),
+        error.detail().and_then(quoll::Problem::detail),
         Some("already there")
     );
 
@@ -393,7 +393,7 @@ async fn an_error_is_read_back_with_its_status_and_its_problem() -> Result<()> {
         .await
         .expect_err("an internal error");
     assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
-    assert_eq!(error.detail().and_then(rest::Problem::detail), None);
+    assert_eq!(error.detail().and_then(quoll::Problem::detail), None);
     Ok(())
 }
 
@@ -417,10 +417,10 @@ async fn a_handler_returning_what_its_client_received_answers_502() -> Result<()
     ] {
         assert_eq!(error.status(), Some(StatusCode::BAD_GATEWAY));
         assert_eq!(
-            error.detail().and_then(rest::Problem::status),
+            error.detail().and_then(quoll::Problem::status),
             Some(StatusCode::BAD_GATEWAY)
         );
-        assert_eq!(error.detail().and_then(rest::Problem::detail), None);
+        assert_eq!(error.detail().and_then(quoll::Problem::detail), None);
     }
     Ok(())
 }

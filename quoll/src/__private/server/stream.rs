@@ -17,7 +17,7 @@ use tokio::sync::watch;
 use super::{parts, problem_json, with_headers};
 use crate::__private::content_type::{JSON_LINES, media_type_value};
 use crate::__private::known::{IsByteStream, IsEvents, IsJsonLines, Items, Streamed};
-use crate::rest::{self, Error, Events, JsonLines, Result};
+use crate::{Error, Events, JsonLines, Result};
 
 /// How long an event stream goes with nothing sent before it sends a comment, so that a proxy that closes a
 /// connection it sees idle keeps it: nginx waits 60 seconds by default.
@@ -62,7 +62,7 @@ impl<T: Serialize + 'static> Written for JsonLines<T> {
 /// # Errors
 ///
 /// The handler's error, or a 500 when a header it gave cannot be sent.
-pub fn events<E: IsEvents + Written>(result: Result<rest::Response<E>>) -> Result<Response> {
+pub fn events<E: IsEvents + Written>(result: Result<crate::Response<E>>) -> Result<Response> {
     let (given, events) = parts(result)?;
     let write = |value: E::Item| {
         let json = E::to_json(&value).map_err(Error::internal)?;
@@ -102,7 +102,9 @@ pub fn events<E: IsEvents + Written>(result: Result<rest::Response<E>>) -> Resul
 /// # Errors
 ///
 /// The handler's error, or a 500 when a header it gave cannot be sent.
-pub fn json_lines<L: IsJsonLines + Written>(result: Result<rest::Response<L>>) -> Result<Response> {
+pub fn json_lines<L: IsJsonLines + Written>(
+    result: Result<crate::Response<L>>,
+) -> Result<Response> {
     let (given, lines) = parts(result)?;
     let write = |value: L::Item| {
         let mut line = L::to_json(&value).map_err(Error::internal)?;
@@ -135,7 +137,7 @@ pub fn json_lines<L: IsJsonLines + Written>(result: Result<rest::Response<L>>) -
 /// # Errors
 ///
 /// The handler's error, or a 500 when the content type is not a media type or a header it gave cannot be sent.
-pub fn byte_stream<B: IsByteStream>(result: Result<rest::Response<B>>) -> Result<Response> {
+pub fn byte_stream<B: IsByteStream>(result: Result<crate::Response<B>>) -> Result<Response> {
     let (given, bytes) = parts(result)?;
     let (chunks, content_type) = bytes.into_parts();
     let content_type = media_type_value(content_type).map_err(|content_type| {

@@ -1,5 +1,5 @@
 error: the scheme `Key` is less visible than the group `Admin` that takes it, whose server trait names it: write `pub scheme Key`
- --> tests/compile_fail/scheme_less_visible.rs:7:12
+ --> tests/compile_fail/scheme_less_visible.rs:5:12
   |
-7 |     scheme Key = header "X-Api-Key";
+5 |     scheme Key = header "X-Api-Key";
   |            ^^^

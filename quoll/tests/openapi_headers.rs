@@ -6,15 +6,11 @@ use std::sync::LazyLock;
 
 use serde_json::{Value, json};
 
-use quoll::rest;
-
 /// The version of the api the contract follows.
 const VERSION: &str = "2023-06-01";
 
 mod files {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         /// A group of another block, which takes its api's headers.
         #[header("X-Beta" = none)]
         pub group Files {
@@ -23,7 +19,7 @@ mod files {
     }
 }
 
-rest::api! {
+quoll::api! {
     #[header("X-Version" = VERSION)]
     #[header("X-Beta" = "files-2025-04-14")]
     #[header("Accept" = "application/vnd.example+json")]
@@ -44,7 +40,7 @@ rest::api! {
     }
 }
 
-rest::api! {
+quoll::api! {
     /// An api that does not fix the `X-Beta` its group leaves, which leaves nothing.
     #[header("X-Version" = VERSION)]
     pub api Other = "/v2" { files::Files };

@@ -1,5 +1,5 @@
 error: `#[auth(none)]` takes nothing else: a route with `none` takes no credential, and no option, so write `#[auth(none)]` alone
- --> tests/compile_fail/auth_none_with_scheme.rs:8:21
+ --> tests/compile_fail/auth_none_with_scheme.rs:6:21
   |
-8 |         #[auth(none | Bearer)]
+6 |         #[auth(none | Bearer)]
   |                     ^^^^^^^^

@@ -1,9 +1,5 @@
-use quoll::rest;
-
 pub mod notes {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         /// The signed-in user's notes.
         #[auth(Bearer | crate::Key)]
         pub group Notes {
@@ -13,9 +9,7 @@ pub mod notes {
 }
 
 pub mod auth {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         pub group Auth {
             POST "/token" => token() -> String;
         }
@@ -23,9 +17,7 @@ pub mod auth {
 }
 
 pub mod third_party {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         // A group of an api that is only called, whose types need no schema.
         #[openapi(none)]
         pub group Repos {
@@ -33,7 +25,7 @@ pub mod third_party {
         }
     }
 
-    rest::api! {
+    quoll::api! {
         #[openapi(none)]
         pub api GitHub = "" { Repos };
     }
@@ -42,7 +34,7 @@ pub mod third_party {
 // A group named alone, which a glob import brings.
 use auth::*;
 
-rest::api! {
+quoll::api! {
     /// Notes, in modules.
     pub api Api = "/api" { Auth, crate::notes::Notes };
 
@@ -54,7 +46,7 @@ rest::api! {
 }
 
 // The same group, under another prefix.
-rest::api! {
+quoll::api! {
     pub api Mirror = "/mirror" { notes::Notes };
 }
 

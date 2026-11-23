@@ -1,4 +1,3 @@
-use quoll::rest;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, schemars::JsonSchema)]
@@ -8,7 +7,7 @@ pub struct Request {
 
 const STREAM: bool = true;
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     pub api Api = "/v1";
 

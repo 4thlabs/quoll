@@ -9,7 +9,7 @@ use reqwest::Request;
 use reqwest_middleware::Middleware;
 
 use super::{Failure, Rank, bearer_header, helper, own_route};
-use crate::rest::{Bearer, Result, Route};
+use crate::{Bearer, Result, Route};
 
 /// Where [`bearer_from`] takes its tokens: asked for one before each call, and for a new one after a 401.
 ///
@@ -19,7 +19,6 @@ use crate::rest::{Bearer, Result, Route};
 ///
 /// ```no_run
 /// use quoll::client::{self, TokenSource};
-/// use quoll::rest;
 /// use tokio::sync::Mutex;
 ///
 /// /// The token of a session, which a call to the authentication server renews.
@@ -28,11 +27,11 @@ use crate::rest::{Bearer, Result, Route};
 /// }
 ///
 /// impl TokenSource for Session {
-///     async fn token(&self) -> rest::Result<String> {
+///     async fn token(&self) -> quoll::Result<String> {
 ///         Ok(self.token.lock().await.clone())
 ///     }
 ///
-///     async fn refresh(&self, refused: &str) -> rest::Result<String> {
+///     async fn refresh(&self, refused: &str) -> quoll::Result<String> {
 ///         let mut token = self.token.lock().await;
 ///
 ///         // Another call has renewed it since this one sent `refused`.
@@ -45,11 +44,11 @@ use crate::rest::{Bearer, Result, Route};
 ///     }
 /// }
 ///
-/// # async fn renew() -> rest::Result<String> { Ok(String::new()) }
+/// # async fn renew() -> quoll::Result<String> { Ok(String::new()) }
 /// let http = client::builder()
 ///     .with(client::bearer_from(Session { token: Mutex::new("t-1".into()) }))
 ///     .build_http()?;
-/// # Ok::<(), quoll::rest::Error>(())
+/// # Ok::<(), quoll::Error>(())
 /// ```
 pub trait TokenSource: Send + Sync + 'static {
     /// The token to send on a call.
@@ -81,16 +80,15 @@ pub trait TokenSource: Send + Sync + 'static {
 ///
 /// ```no_run
 /// # use quoll::client::{self, TokenSource};
-/// # use quoll::rest;
 /// # struct Session;
 /// # impl TokenSource for Session {
-/// #     async fn token(&self) -> rest::Result<String> { Ok(String::new()) }
-/// #     async fn refresh(&self, _: &str) -> rest::Result<String> { Ok(String::new()) }
+/// #     async fn token(&self) -> quoll::Result<String> { Ok(String::new()) }
+/// #     async fn refresh(&self, _: &str) -> quoll::Result<String> { Ok(String::new()) }
 /// # }
 /// let http = client::builder()
 ///     .with(client::bearer_from(Session))
 ///     .build_http()?;
-/// # Ok::<(), quoll::rest::Error>(())
+/// # Ok::<(), quoll::Error>(())
 /// ```
 pub fn bearer_from(source: impl TokenSource) -> impl Middleware {
     let source = Arc::new(source);

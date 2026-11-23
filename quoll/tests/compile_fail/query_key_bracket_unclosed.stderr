@@ -1,5 +1,5 @@
 error: `filter[name` is not a plain key: a literal key holds ASCII letters, digits, `-`, `_`, `.` and `~`, and is not `.` or `..`, then may end in brackets that hold the same or nothing, as in `expand[]` or `filter[name]`
- --> tests/compile_fail/query_key_bracket_unclosed.rs:7:13
+ --> tests/compile_fail/query_key_bracket_unclosed.rs:5:13
   |
-7 |         GET "/articles?filter[name={name}" => list(name: Option<String>);
+5 |         GET "/articles?filter[name={name}" => list(name: Option<String>);
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

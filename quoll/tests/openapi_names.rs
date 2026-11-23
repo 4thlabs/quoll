@@ -2,7 +2,6 @@
 //! that it is valid and that each reference points at the schema of its own type on its own side, whatever the names
 //! it gives them, which may mislead (`#[schemars(rename = "...")]` avoids it).
 
-use quoll::rest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,7 +30,7 @@ struct Holder {
     n: i64,
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Notes {

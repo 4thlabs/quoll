@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A scheme named as a group, which both become types.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Admin = header "X-Api-Key";

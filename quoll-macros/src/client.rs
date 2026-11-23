@@ -31,7 +31,7 @@ pub(crate) fn group(cx: &Cx) -> TokenStream {
 }
 
 /// The shapes of the errors of the group's routes, each once, in the order the routes first name them: the type each
-/// `#[error(E)]` the routes take names, or `rest::Problem`; and for each route, the index of its own among them.
+/// `#[error(E)]` the routes take names, or `quoll::Problem`; and for each route, the index of its own among them.
 fn shapes(cx: &Cx) -> (Vec<TokenStream>, Vec<usize>) {
     let mut shapes: Vec<(String, TokenStream)> = Vec::new();
     let mut taken = Vec::new();
@@ -73,11 +73,11 @@ fn shape_consts(shapes: Vec<TokenStream>) -> TokenStream {
     quote! { #(#consts)* }
 }
 
-/// The shape of `route`'s errors, as the client's code names it: its `#[error(E)]`'s type, or `rest::Problem`.
+/// The shape of `route`'s errors, as the client's code names it: its `#[error(E)]`'s type, or `quoll::Problem`.
 fn error_type(cx: &Cx, route: &Route) -> TokenStream {
     match cx.error(route) {
         Some(error) => quote! { #error },
-        None => quote! { ::quoll::rest::Problem },
+        None => quote! { ::quoll::Problem },
     }
 }
 
@@ -135,8 +135,8 @@ fn group_trait(cx: &Cx) -> TokenStream {
     }
 }
 
-/// `fn get(&self, id: i64) -> impl rest::Call<Note, Problem>`, of the shape of the route's errors: a `Created<T>` or an
-/// `Accepted<T>` gives its `T`, as the 201 or the 202 is only the server's answer.
+/// `fn get(&self, id: i64) -> impl quoll::Call<Note, Problem>`, of the shape of the route's errors: a `Created<T>` or
+/// an `Accepted<T>` gives its `T`, as the 201 or the 202 is only the server's answer.
 fn signature(cx: &Cx, route: &Route) -> TokenStream {
     let name = &route.name;
     let args = route
@@ -155,7 +155,7 @@ fn signature(cx: &Cx, route: &Route) -> TokenStream {
     let error = error_type(cx, route);
 
     quote_spanned! {route.name.span()=>
-        fn #name(&self, #(#args),*) -> impl ::quoll::rest::Call<#output, #error>
+        fn #name(&self, #(#args),*) -> impl ::quoll::Call<#output, #error>
     }
 }
 
@@ -191,7 +191,7 @@ fn group_client(cx: &Cx) -> TokenStream {
         #vis struct #client {
             client: ::quoll::__private::client::Client,
             prefix: &'static str,
-            routes: &'static [::quoll::rest::Route; #count],
+            routes: &'static [::quoll::Route; #count],
             headers: &'static [::quoll::__private::headers::Fixed],
         }
 
@@ -210,7 +210,7 @@ fn group_client(cx: &Cx) -> TokenStream {
             pub fn client(
                 #http: ::quoll::__private::client::Client,
                 #prefix: &'static str,
-                #routes: &'static [::quoll::rest::Route; #count],
+                #routes: &'static [::quoll::Route; #count],
                 #headers: &'static [::quoll::__private::headers::Fixed],
             ) -> #client {
                 #client {
@@ -451,7 +451,7 @@ fn api_client(api: &Api) -> TokenStream {
             /// # Errors
             ///
             /// When `url` is not an `http` or `https` URL with no query, or reqwest cannot build its client.
-            #vis fn client(#url: &str) -> ::quoll::rest::Result<#client> {
+            #vis fn client(#url: &str) -> ::quoll::Result<#client> {
                 ::quoll::__private::client::Client::new(#url).map(|client| #client { client })
             }
 
@@ -464,7 +464,7 @@ fn api_client(api: &Api) -> TokenStream {
             #vis fn client_with(
                 #http: ::quoll::__private::reqwest_middleware::ClientWithMiddleware,
                 #url: &str,
-            ) -> ::quoll::rest::Result<#client> {
+            ) -> ::quoll::Result<#client> {
                 ::quoll::__private::client::Client::with(#http, #url).map(|client| #client { client })
             }
         }
@@ -475,7 +475,7 @@ fn api_client(api: &Api) -> TokenStream {
             fn client_with(
                 #http: ::quoll::__private::reqwest_middleware::ClientWithMiddleware,
                 #url: &str,
-            ) -> ::quoll::rest::Result<#client> {
+            ) -> ::quoll::Result<#client> {
                 #name::client_with(#http, #url)
             }
         }

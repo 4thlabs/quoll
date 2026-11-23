@@ -1,5 +1,5 @@
 error: the query struct `contains` is read with a field per key, which this type is not: write a struct of your own, as `query contains: NoteFilter`
- --> tests/compile_fail/query_struct_scalar.rs:7:48
+ --> tests/compile_fail/query_struct_scalar.rs:5:48
   |
-7 |         GET "/notes" => search(query contains: String);
+5 |         GET "/notes" => search(query contains: String);
   |                                                ^^^^^^

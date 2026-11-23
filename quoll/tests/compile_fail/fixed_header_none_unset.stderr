@@ -1,5 +1,5 @@
 error: neither the group `Messages` nor the api `Api` gives the route a header `anthropic-bta`, so it has none to leave: check its name, or remove this `none`
-  --> tests/compile_fail/fixed_header_none_unset.rs:10:18
-   |
-10 |         #[header("anthropic-bta" = none)]
-   |                  ^^^^^^^^^^^^^^^
+ --> tests/compile_fail/fixed_header_none_unset.rs:8:18
+  |
+8 |         #[header("anthropic-bta" = none)]
+  |                  ^^^^^^^^^^^^^^^

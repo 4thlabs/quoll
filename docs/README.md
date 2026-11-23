@@ -12,7 +12,7 @@ In reading order:
 | [The server](guides/server.md)               | services, `ApiServices`, the builder and its layers, serving and shutdown                |
 | [The client](guides/client.md)               | the builder, its middleware, credentials, retries and redirects, a Unix socket           |
 | [Authentication](guides/authentication.md)   | schemes, alternatives, optional credentials, scopes, cookies and their origin            |
-| [Errors](guides/errors.md)                   | `rest::Error`, the problems a server answers, what a client sees                         |
+| [Errors](guides/errors.md)                   | `quoll::Error`, the problems a server answers, what a client sees                        |
 | [Testing](guides/testing.md)                 | a server and its client in a test, fakes, the OpenAPI snapshot                           |
 | [Another API](guides/another-api.md)         | a contract of an API quoll did not write: headers, errors, forms, two answers, pages     |
 | [OpenAPI](guides/openapi.md)                 | `Api::openapi()`, what the document holds, schema names, contracts that are only called  |

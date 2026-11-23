@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A tuple, which is not one piece of text.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

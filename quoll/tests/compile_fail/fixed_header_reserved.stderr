@@ -1,5 +1,5 @@
 error: the header `Host` is written by quoll or by HTTP itself, so a contract does not fix it
- --> tests/compile_fail/fixed_header_reserved.rs:5:14
+ --> tests/compile_fail/fixed_header_reserved.rs:3:14
   |
-5 |     #[header("Host" = "api.example.com")]
+3 |     #[header("Host" = "api.example.com")]
   |              ^^^^^^

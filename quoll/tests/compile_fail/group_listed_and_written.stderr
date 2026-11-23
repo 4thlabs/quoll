@@ -1,5 +1,5 @@
 error: the group `Notes` is already defined: each one has its own name
-  --> tests/compile_fail/group_listed_and_written.rs:16:15
+  --> tests/compile_fail/group_listed_and_written.rs:12:15
    |
-16 |     pub group Notes {
+12 |     pub group Notes {
    |               ^^^^^

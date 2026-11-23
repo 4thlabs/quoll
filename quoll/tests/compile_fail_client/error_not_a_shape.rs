@@ -1,4 +1,3 @@
-use quoll::rest;
 use serde::Deserialize;
 
 // Read from JSON, but with no `Display` to give the error's message.
@@ -7,7 +6,7 @@ pub struct HubError {
     pub message: String,
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[error(HubError)]
     pub api Hub = "";

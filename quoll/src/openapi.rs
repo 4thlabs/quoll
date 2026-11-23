@@ -31,8 +31,8 @@
 //!   credential, 403 when it needs scopes or takes a cookie scheme the contract declares, which refuses another
 //!   origin, on a method that changes things, 415 when it reads a body, and `default` for any other, each an
 //!   `application/problem+json` problem.
-//! - **Security**: each scheme under `components/securitySchemes`, by its [`NAME`](crate::rest::Scheme::NAME), as its
-//!   [`openapi`](crate::rest::Scheme::openapi) describes it, with a [`SecurityScheme`]. A route takes any of its schemes, each with its scopes,
+//! - **Security**: each scheme under `components/securitySchemes`, by its [`NAME`](crate::Scheme::NAME), as its
+//!   [`openapi`](crate::Scheme::openapi) describes it, with a [`SecurityScheme`]. A route takes any of its schemes, each with its scopes,
 //!   and an empty requirement when its credential is optional.
 //! - **`info`**: the title and the version of the contract's crate, unless [`Document::with_title`] and
 //!   [`Document::with_version`] say others; for a crate built without Cargo, which gives neither, the api's name and
@@ -46,9 +46,7 @@ use serde_json::Value;
 /// A binary of the contract's crate prints it for the generators of TypeScript:
 ///
 /// ```
-/// use quoll::rest;
-///
-/// rest::api! {
+/// quoll::api! {
 ///     /// Notes, kept per user.
 ///     pub api Api = "/api";
 ///
@@ -93,9 +91,7 @@ impl Document {
     /// The document with `version` as its `info.version`, which is the version of the contract's crate otherwise.
     ///
     /// ```
-    /// use quoll::rest;
-    ///
-    /// rest::api! {
+    /// quoll::api! {
     ///     pub api Api = "/api";
     ///
     ///     pub group Health {
@@ -129,11 +125,11 @@ impl Serialize for Document {
     }
 }
 
-/// How the OpenAPI document describes a [`Scheme`](crate::rest::Scheme): what its
-/// [`openapi`](crate::rest::Scheme::openapi) returns, under `components/securitySchemes`.
+/// How the OpenAPI document describes a [`Scheme`](crate::Scheme): what its
+/// [`openapi`](crate::Scheme::openapi) returns, under `components/securitySchemes`.
 ///
 /// ```
-/// use quoll::rest::openapi::SecurityScheme;
+/// use quoll::openapi::SecurityScheme;
 ///
 /// let signature = SecurityScheme::header("X-Signature").with_description("`<key id>:<signature>`");
 /// # let _ = signature;
@@ -152,12 +148,12 @@ enum Kind {
 }
 
 impl SecurityScheme {
-    /// `Authorization: Bearer`, as [`Bearer`](crate::rest::Bearer) reads it: `{type: http, scheme: bearer}`.
+    /// `Authorization: Bearer`, as [`Bearer`](crate::Bearer) reads it: `{type: http, scheme: bearer}`.
     pub fn bearer() -> Self {
         Self::http("bearer")
     }
 
-    /// `Authorization: Basic`, as [`Basic`](crate::rest::Basic) reads it: `{type: http, scheme: basic}`.
+    /// `Authorization: Basic`, as [`Basic`](crate::Basic) reads it: `{type: http, scheme: basic}`.
     pub fn basic() -> Self {
         Self::http("basic")
     }

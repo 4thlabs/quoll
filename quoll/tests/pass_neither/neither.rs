@@ -1,7 +1,6 @@
-use quoll::rest;
 use schemars::JsonSchema;
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

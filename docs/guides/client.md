@@ -8,8 +8,7 @@ client of the api. `quoll::client::builder()` builds it with its middleware, on 
 ```rust,no_run
 use std::time::Duration;
 
-use quoll::client;
-use quoll::rest::{self, Created};
+use quoll::{Created, client};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +23,7 @@ pub struct NewNote {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer)]
@@ -36,7 +35,7 @@ rest::api! {
 }
 
 #[tokio::main]
-async fn main() -> rest::Result<()> {
+async fn main() -> quoll::Result<()> {
     let api = client::builder()
         .with(client::user_agent("notes-cli/0.1"))
         .with(client::request_id())
@@ -68,12 +67,12 @@ async fn main() -> rest::Result<()> {
 - A query parameter that is `None` is left out, and a header that is `None` is not sent.
 - Rust has no named arguments: a route with many optional keys takes a [query struct](contract.md#query-structs),
   which the caller fills with `..Default::default()`.
-- Each call returns a `rest::Call`, which `.await` sends: it gives a `rest::Result`.
+- Each call returns a `quoll::Call`, which `.await` sends: it gives a `quoll::Result`.
   [Errors](errors.md#what-a-client-sees) says what its error holds.
 
 ## The whole answer
 
-Each method returns a `rest::Call`, the call described and not sent yet: `.await` sends it and gives the route's
+Each method returns a `quoll::Call`, the call described and not sent yet: `.await` sends it and gives the route's
 value, or an error that goes up. Its methods change it before:
 
 - `.response()` gives the whole answer, whatever its status: its `status()`, its `headers()`, a rate limit or a
@@ -86,9 +85,9 @@ value, or an error that goes up. Its methods change it before:
 use std::time::Duration;
 
 use http::StatusCode;
-use quoll::rest::{self, Call};
+use quoll::Call;
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -96,7 +95,7 @@ rest::api! {
     }
 }
 
-async fn find(api: &ApiClient, id: i64) -> rest::Result<Option<String>> {
+async fn find(api: &ApiClient, id: i64) -> quoll::Result<Option<String>> {
     let response = api
         .notes()
         .get(id)
@@ -138,9 +137,8 @@ their connections.
 
 ```rust,no_run
 use quoll::client;
-use quoll::rest;
 
-rest::api! {
+quoll::api! {
     pub api Notes = "/api";
 
     pub group Search {
@@ -148,7 +146,7 @@ rest::api! {
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Files = "/files";
 
     pub group Uploads {
@@ -156,7 +154,7 @@ rest::api! {
     }
 }
 
-fn clients() -> rest::Result<(NotesClient, FilesClient)> {
+fn clients() -> quoll::Result<(NotesClient, FilesClient)> {
     let http = client::builder().with(client::retry(3)).build_http()?;
 
     let notes = Notes::client_with(http.clone(), "https://notes.example.com")?;
@@ -192,7 +190,7 @@ the application's that adds a credential is given after `redirects`.
 Each helper is a `reqwest_middleware::Middleware` too, for an application that builds its `ClientWithMiddleware`
 itself. There, they run in the order they are added: add them in the order above.
 
-Each request of a contract carries its `rest::Route` in its extensions, which a middleware of the application's
+Each request of a contract carries its `quoll::Route` in its extensions, which a middleware of the application's
 reads: the operation id, the group, the method, the path as written, and the schemes it takes.
 
 ## Credentials
@@ -202,9 +200,8 @@ route with `#[auth(none)]`, not on a request to another origin than the api's, n
 
 ```rust,no_run
 use quoll::client;
-use quoll::rest;
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     /// The key of an operator's scripts.
@@ -221,7 +218,7 @@ rest::api! {
     }
 }
 
-fn client(token: &str, key: &str) -> rest::Result<ApiClient> {
+fn client(token: &str, key: &str) -> quoll::Result<ApiClient> {
     client::builder()
         .with(client::bearer(token))
         .with(client::key::<Key>(key))
@@ -245,7 +242,6 @@ the token `refresh` gives, and that second answer is the call's.
 
 ```rust,no_run
 use quoll::client::{self, TokenSource};
-use quoll::rest;
 use tokio::sync::Mutex;
 
 /// The token of a session, which a call to the authentication server renews.
@@ -254,11 +250,11 @@ struct Session {
 }
 
 impl TokenSource for Session {
-    async fn token(&self) -> rest::Result<String> {
+    async fn token(&self) -> quoll::Result<String> {
         Ok(self.token.lock().await.clone())
     }
 
-    async fn refresh(&self, refused: &str) -> rest::Result<String> {
+    async fn refresh(&self, refused: &str) -> quoll::Result<String> {
         let mut token = self.token.lock().await;
 
         // Another call has renewed it since this one sent `refused`.
@@ -271,11 +267,11 @@ impl TokenSource for Session {
     }
 }
 
-async fn renew() -> rest::Result<String> {
+async fn renew() -> quoll::Result<String> {
     Ok("a new token".into())
 }
 
-fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
+fn http() -> quoll::Result<reqwest_middleware::ClientWithMiddleware> {
     let session = Session {
         token: Mutex::new("t-1".into()),
     };
@@ -289,12 +285,12 @@ The call is not sent again when `refresh` gives back the token refused. An error
 ### A header computed from the request
 
 `on_request` runs a closure on each request of a contract to its api's own origin, given the request and its
-`rest::Route`: a signature, a header of the application's. A header of the same value on every request belongs to the
+`quoll::Route`: a signature, a header of the application's. A header of the same value on every request belongs to the
 api, and goes in its contract, `#[header("name" = value)]` (see
 [Fixed headers](contract.md#fixed-headers)).
 
 ```rust,no_run
-use quoll::{client, rest};
+use quoll::client;
 use reqwest::Request;
 
 fn signature(method: &http::Method, path: &str, body: &[u8]) -> http::HeaderValue {
@@ -303,8 +299,8 @@ fn signature(method: &http::Method, path: &str, body: &[u8]) -> http::HeaderValu
     http::HeaderValue::from_str(&text).expect("a method, a path and a number make a header value")
 }
 
-fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
-    let sign = client::on_request(|request: &mut Request, _route: &rest::Route| {
+fn http() -> quoll::Result<reqwest_middleware::ClientWithMiddleware> {
+    let sign = client::on_request(|request: &mut Request, _route: &quoll::Route| {
         let body = request.body().and_then(|body| body.as_bytes()).unwrap_or_default();
         let value = signature(request.method(), request.url().path(), body);
 
@@ -328,14 +324,14 @@ fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
 
 ```rust,no_run
 # use std::time::Duration;
-# use quoll::rest::{self, Call};
-# rest::api! {
+# use quoll::Call;
+# quoll::api! {
 #     pub api Api = "/api";
 #     pub group Exports {
 #         POST "/exports" => create(name: String) -> u64;
 #     }
 # }
-# async fn run(api: &ApiClient) -> rest::Result<()> {
+# async fn run(api: &ApiClient) -> quoll::Result<()> {
 let job = api
     .exports()
     .create("notes".into())
@@ -356,7 +352,7 @@ The docs of `quoll::client::retry`, `timeout` and `redirects` say how each count
 
 ### Deciding a retry
 
-`retry(times).when(..)` takes a closure given each `client::Attempt`: the call's `rest::Route`, its request, then the
+`retry(times).when(..)` takes a closure given each `client::Attempt`: the call's `quoll::Route`, its request, then the
 answer's status and headers or the error, and the attempt's number. It returns `Retry::No` to keep the answer,
 `Retry::Backoff` to try again after the backoff of `retry`, or `Retry::After(duration)`. `attempt.transient()` is the
 rule of `retry(times)` alone, for the cases the closure leaves, and `attempt.retry_after()` the wait the answer's
@@ -367,9 +363,8 @@ use std::time::Duration;
 
 use http::{Method, StatusCode};
 use quoll::client::{self, Attempt, Retry};
-use quoll::rest;
 
-fn http() -> rest::Result<reqwest_middleware::ClientWithMiddleware> {
+fn http() -> quoll::Result<reqwest_middleware::ClientWithMiddleware> {
     let retry = client::retry(3)
         .max_wait(Duration::from_secs(30))
         .when(|attempt: &Attempt| {
@@ -424,7 +419,7 @@ A server that listens on a Unix socket, as the Docker daemon does, is reached th
 URL's host is then only the request's `Host`:
 
 ```rust,no_run
-use quoll::{client, rest};
+use quoll::client;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -433,7 +428,7 @@ pub struct Version {
     pub version: String,
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     pub api Docker = "/v1.47";
 
@@ -443,7 +438,7 @@ rest::api! {
 }
 
 #[tokio::main]
-async fn main() -> rest::Result<()> {
+async fn main() -> quoll::Result<()> {
     let docker = client::builder()
         .http(|http| http.unix_socket("/var/run/docker.sock"))
         .build::<Docker>("http://localhost")?;

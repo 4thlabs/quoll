@@ -1,13 +1,13 @@
 error[E0277]: `NewNote` does not implement `serde::Deserialize`, which quoll reads it with
-  --> tests/compile_fail_server/body_not_deserialize.rs:15:39
+  --> tests/compile_fail_server/body_not_deserialize.rs:14:39
    |
-15 |         POST "/notes" => create(note: NewNote);
+14 |         POST "/notes" => create(note: NewNote);
    |                                       ^^^^^^^ no `serde::Deserialize`
    |
 help: the trait `for<'de> _serde::Deserialize<'de>` is not implemented for `NewNote`
-  --> tests/compile_fail_server/body_not_deserialize.rs:7:1
+  --> tests/compile_fail_server/body_not_deserialize.rs:6:1
    |
- 7 | pub struct NewNote {
+ 6 | pub struct NewNote {
    | ^^^^^^^^^^^^^^^^^^
    = note: derive `serde::Deserialize` for `NewNote`, beside `serde::Serialize`: a type of a contract is read on one side and written on the other
    = help: the following other types implement trait `_serde::Deserialize<'de>`:

@@ -11,9 +11,9 @@ use std::marker::PhantomData;
 ///
 /// ```
 /// use http::header::LOCATION;
-/// use quoll::rest::{self, Created, Response};
+/// use quoll::{Created, Response};
 ///
-/// rest::api! {
+/// quoll::api! {
 ///     pub api Api = "/api";
 ///
 ///     pub group Notes {
@@ -27,7 +27,7 @@ use std::marker::PhantomData;
 /// # let _ = created(3);
 /// ```
 ///
-/// [`Response<Note>`]: crate::rest::Response
+/// [`Response<Note>`]: crate::Response
 pub struct Created<T> {
     _value: PhantomData<fn() -> T>,
 }

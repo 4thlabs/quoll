@@ -16,7 +16,7 @@ use crate::scheme::scheme_type;
 pub(crate) struct Cx<'a> {
     /// The group.
     pub(crate) group: &'a Group,
-    /// The api of the block that writes the group; `None` for a `rest::group!`, which any api may list.
+    /// The api of the block that writes the group; `None` for a `quoll::group!`, which any api may list.
     pub(crate) api: Option<&'a Api>,
     /// Whether the group has an OpenAPI document: its api's, or its own `#[openapi(none)]`.
     pub(crate) openapi: bool,
@@ -29,7 +29,7 @@ impl Cx<'_> {
     }
 
     /// The shape of `route`'s errors, the nearest `#[error(E)]` to it: its own, its group's, then its api's, which a
-    /// `rest::group!` has none of. `None` for an RFC 9457 problem.
+    /// `quoll::group!` has none of. `None` for an RFC 9457 problem.
     pub(crate) fn error<'a>(&'a self, route: &'a Route) -> Option<&'a syn::Type> {
         route
             .error
@@ -96,7 +96,7 @@ fn route_info(group: &Group, route: &Route) -> TokenStream {
     let schemes: Vec<TokenStream> = route.schemes().map(scheme_type).collect();
     let names = schemes
         .iter()
-        .map(|scheme| quote! { <#scheme as ::quoll::rest::Scheme>::NAME });
+        .map(|scheme| quote! { <#scheme as ::quoll::Scheme>::NAME });
     let types = schemes
         .iter()
         .map(|scheme| quote! { ::core::any::TypeId::of::<#scheme>() });
@@ -192,7 +192,7 @@ pub(crate) fn below_prefix(route: &Route) -> String {
     }
 }
 
-/// The compile-time checks of a `rest::group!` that the api of a block makes of its own groups: each scheme an
+/// The compile-time checks of a `quoll::group!` that the api of a block makes of its own groups: each scheme an
 /// alternative takes once, by its name, and, for a group with a document, the name of each scheme of the application's
 /// fit to name it there.
 pub(crate) fn alone_checks(cx: &Cx) -> TokenStream {
@@ -220,7 +220,7 @@ pub(crate) fn alone_checks(cx: &Cx) -> TokenStream {
 
                 checks.push(quote_spanned! {span=>
                     ::core::assert!(
-                        ::quoll::__private::openapi::is_component_name(<#ty as ::quoll::rest::Scheme>::NAME),
+                        ::quoll::__private::openapi::is_component_name(<#ty as ::quoll::Scheme>::NAME),
                         #message
                     );
                 });
@@ -246,8 +246,8 @@ pub(crate) fn alone_checks(cx: &Cx) -> TokenStream {
                 checks.push(quote_spanned! {span=>
                     ::core::assert!(
                         !::quoll::__private::openapi::same_name(
-                            <#first_ty as ::quoll::rest::Scheme>::NAME,
-                            <#ty as ::quoll::rest::Scheme>::NAME,
+                            <#first_ty as ::quoll::Scheme>::NAME,
+                            <#ty as ::quoll::Scheme>::NAME,
                         ),
                         #message
                     );
@@ -455,8 +455,8 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
 }
 
 /// For a group of the list of an api with an `#[error(E)]`, a check that each route of the group has the shape of its
-/// errors named: a `rest::group!` writes its client's trait before any api lists it, and cannot take the api's. An api
-/// whose shape is quoll's `rest::Problem`, told by its type, needs none: a route with none has problems.
+/// errors named: a `quoll::group!` writes its client's trait before any api lists it, and cannot take the api's. An api
+/// whose shape is quoll's `quoll::Problem`, told by its type, needs none: a route with none has problems.
 fn takes_error(api: &Api, group: &GroupRef) -> Option<TokenStream> {
     let error = api.error.as_ref()?;
     let descriptor = group.descriptor();

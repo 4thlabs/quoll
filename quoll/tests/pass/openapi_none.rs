@@ -1,4 +1,3 @@
-use quoll::rest;
 use serde::{Deserialize, Serialize};
 
 // A model of a third-party API, which has no schema: a contract that is only called needs none.
@@ -7,7 +6,7 @@ pub struct Repo {
     pub full_name: String,
 }
 
-rest::api! {
+quoll::api! {
     /// GitHub's API, which the application only calls.
     #[openapi(none)]
     pub api GitHub = "";

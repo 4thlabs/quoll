@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // `#[error]` on a scheme.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[error(String)]

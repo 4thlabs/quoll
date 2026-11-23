@@ -1,5 +1,5 @@
 error: a route's path starts with `/`: write "/notes"
- --> tests/compile_fail/path_without_slash.rs:7:13
+ --> tests/compile_fail/path_without_slash.rs:5:13
   |
-7 |         GET "notes" => list();
+5 |         GET "notes" => list();
   |             ^^^^^^^

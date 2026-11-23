@@ -1,5 +1,5 @@
 error: expected `:` after `id`: an argument is written `name: Type`, `query name: Type` or `header("Name") name: Type`
- --> tests/compile_fail/arg_without_type.rs:7:36
+ --> tests/compile_fail/arg_without_type.rs:5:36
   |
-7 |         GET "/notes/{id}" => get(id);
+5 |         GET "/notes/{id}" => get(id);
   |                                    ^

@@ -1,5 +1,5 @@
 error: `#[join]` writes a list as the one value of a query key, and `labels` is not in the route's string: write it as a `key={labels}` of the route's query, or remove the `#[join]`
- --> tests/compile_fail/join_outside_query.rs:7:31
+ --> tests/compile_fail/join_outside_query.rs:5:31
   |
-7 |         GET "/issues" => list(#[join(",")] labels: Vec<String>);
+5 |         GET "/issues" => list(#[join(",")] labels: Vec<String>);
   |                               ^^^^^^^^^^^^

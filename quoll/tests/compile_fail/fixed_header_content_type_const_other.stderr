@@ -1,5 +1,5 @@
 error[E0080]: evaluation panicked: the `Content-Type` `PLAIN` the route `post` takes is not of the media type of its body, `application/json`, in UTF-8, which a fixed one keeps, adding a parameter as `application/json; charset=utf-8`
-  --> tests/compile_fail/fixed_header_content_type_const_other.rs:17:14
+  --> tests/compile_fail/fixed_header_content_type_const_other.rs:15:14
    |
-17 |         POST "/messages" => post(message: Message);
+15 |         POST "/messages" => post(message: Message);
    |              ^^^^^^^^^^^ evaluation of `_` failed here

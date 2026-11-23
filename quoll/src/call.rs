@@ -3,7 +3,7 @@
 use std::future::{Future, IntoFuture};
 use std::time::Duration;
 
-use crate::rest::{Problem, Response, Result};
+use crate::{Problem, Response, Result};
 
 /// A call of a route that returns `T`, described and not sent yet: what every method of a contract's client
 /// returns. `.await` sends it and gives the route's value, or an error of the shape `E`, the api's, an RFC 9457
@@ -12,9 +12,9 @@ use crate::rest::{Problem, Response, Result};
 /// ```no_run
 /// # use std::time::Duration;
 /// use http::StatusCode;
-/// use quoll::rest::{self, Call};
+/// use quoll::Call;
 ///
-/// rest::api! {
+/// quoll::api! {
 ///     pub api Api = "/api";
 ///
 ///     pub group Notes {
@@ -22,7 +22,7 @@ use crate::rest::{Problem, Response, Result};
 ///     }
 /// }
 ///
-/// # async fn run() -> rest::Result<()> {
+/// # async fn run() -> quoll::Result<()> {
 /// let api = Api::client("http://localhost:8080")?;
 ///
 /// // The value, or an error that goes up.
@@ -43,12 +43,11 @@ use crate::rest::{Problem, Response, Result};
 /// ```
 ///
 /// An api that answers its errors in a shape of its own says it with `#[error(E)]`: its calls give a
-/// `rest::Result<T, E>`, whose error has the `E` the answer's body is, its [`detail`](crate::rest::Error::detail).
+/// `quoll::Result<T, E>`, whose error has the `E` the answer's body is, its [`detail`](crate::Error::detail).
 ///
 /// ```no_run
 /// use std::fmt;
 ///
-/// use quoll::rest;
 /// use serde::Deserialize;
 ///
 /// /// What GitHub answers on an error.
@@ -64,7 +63,7 @@ use crate::rest::{Problem, Response, Result};
 ///     }
 /// }
 ///
-/// rest::api! {
+/// quoll::api! {
 ///     #[openapi(none)]
 ///     #[error(GitHubError)]
 ///     pub api GitHub = "";
@@ -74,7 +73,7 @@ use crate::rest::{Problem, Response, Result};
 ///     }
 /// }
 ///
-/// # async fn run() -> rest::Result<()> {
+/// # async fn run() -> quoll::Result<()> {
 /// let github = GitHub::client("https://api.github.com")?;
 ///
 /// match github.repos().topics("rust-lang".into(), "rust".into()).await {
@@ -88,19 +87,19 @@ use crate::rest::{Problem, Response, Result};
 /// # }
 /// ```
 ///
-/// Any future of a `rest::Result<T, E>` is a `Call<T, E>` too, so that a fake of a group's trait returns an
+/// Any future of a `quoll::Result<T, E>` is a `Call<T, E>` too, so that a fake of a group's trait returns an
 /// `async move` block: its `.timeout` does nothing, and its `.response()` gives a 200 with no headers, or the error
 /// with the status it has, as an answer of that status, and an error with none, a call that got no answer, as it is. A
 /// 200 even for a route that the server answers 201 or 202: a fake has no contract's status to read. A fake of an api
-/// with `#[error(E)]` builds the error of an answer with [`rest::Error::answered`](crate::rest::Error::answered), and
-/// one of a status alone with [`into_shape`](crate::rest::Error::into_shape). The `E` of such a future is the one its
+/// with `#[error(E)]` builds the error of an answer with [`quoll::Error::answered`](crate::Error::answered), and
+/// one of a status alone with [`into_shape`](crate::Error::into_shape). The `E` of such a future is the one its
 /// `Err` has: a block that only returns `Ok`, where no signature says the shape, names it,
-/// `async { Ok::<_, rest::Error>(3) }.timeout(duration)`.
+/// `async { Ok::<_, quoll::Error>(3) }.timeout(duration)`.
 ///
 /// ```
-/// use quoll::rest::{self, Call};
+/// use quoll::Call;
 ///
-/// rest::api! {
+/// quoll::api! {
 ///     pub api Api = "/api";
 ///
 ///     pub group Notes {
@@ -117,7 +116,7 @@ use crate::rest::{Problem, Response, Result};
 ///                 return Ok("Milk".to_owned());
 ///             }
 ///
-///             Err(rest::Error::not_found("no such note"))
+///             Err(quoll::Error::not_found("no such note"))
 ///         }
 ///     }
 /// }
@@ -181,7 +180,7 @@ mod tests {
     use http::StatusCode;
 
     use super::*;
-    use crate::rest::Error;
+    use crate::Error;
 
     #[tokio::test]
     async fn a_future_answers_a_value_as_a_200_with_no_headers() {

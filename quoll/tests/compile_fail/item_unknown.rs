@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     pub service Notes = "notes";
     pub api Api = "/api";
 }

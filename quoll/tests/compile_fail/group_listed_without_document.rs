@@ -1,9 +1,5 @@
-use quoll::rest;
-
 mod notes {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         #[openapi(none)]
         pub group Notes {
             GET "/notes" => list();
@@ -11,7 +7,7 @@ mod notes {
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api" { notes::Notes };
 }
 

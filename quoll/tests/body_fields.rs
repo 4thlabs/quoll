@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use quoll::rest::{self, Form, Response, Result};
+use quoll::{Form, Response, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
@@ -43,7 +43,7 @@ pub struct Answered {
     model: String,
 }
 
-rest::api! {
+quoll::api! {
     /// Another API whose one path answers twice, as its body says it streams or not.
     #[openapi(none)]
     api Messages = "/v1";
@@ -79,7 +79,7 @@ rest::api! {
     }
 }
 
-rest::api! {
+quoll::api! {
     /// An api with a document, whose route alone on its path fixes a field.
     api Documented = "/api";
 
@@ -167,7 +167,7 @@ async fn echo() -> String {
 }
 
 /// What `call` sent, read from the echo of a third party, the body of the error it returns.
-async fn sent<T: std::fmt::Debug>(call: impl rest::Call<T>) -> Received {
+async fn sent<T: std::fmt::Debug>(call: impl quoll::Call<T>) -> Received {
     let response = call.response().await.expect("the echo answers");
     let error = response.into_value().expect_err("the echo is an error");
     let body = error.body().expect("the echo has a body");

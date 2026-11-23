@@ -1,4 +1,4 @@
-//! The spelling of `rest::api!`: a block of items, read into the model.
+//! The spelling of `quoll::api!`: a block of items, read into the model.
 //!
 //! ```text
 //! /// Notes, kept per user.
@@ -44,7 +44,7 @@ impl Parse for Contract {
     }
 }
 
-/// What `rest::group!` is given: one group, from which the api that lists it builds its router, its client and its
+/// What `quoll::group!` is given: one group, from which the api that lists it builds its router, its client and its
 /// document.
 #[derive(Debug)]
 pub(crate) struct GroupContract(pub(crate) Api);
@@ -60,7 +60,7 @@ impl Parse for GroupContract {
     }
 }
 
-/// Reads the one group of a `rest::group!`, which may say `#[openapi(none)]`.
+/// Reads the one group of a `quoll::group!`, which may say `#[openapi(none)]`.
 fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     let mut group: Option<(Group, bool)> = None;
 
@@ -78,20 +78,20 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         let keyword = input.call(Ident::parse_any).map_err(|error| {
             Error::new(
                 error.span(),
-                "expected `group`: a `rest::group!` holds one group, `pub group Notes { ... }`",
+                "expected `group`: a `quoll::group!` holds one group, `pub group Notes { ... }`",
             )
         })?;
 
         if keyword == "api" {
             return Err(Error::new(
                 keyword.span(),
-                "a `rest::group!` holds a group, which an api lists: write the api in a `rest::api!`, as `pub api Api = \"/api\" { notes::Notes };`",
+                "a `quoll::group!` holds a group, which an api lists: write the api in a `quoll::api!`, as `pub api Api = \"/api\" { notes::Notes };`",
             ));
         }
         if keyword == "scheme" {
             return Err(Error::new(
                 keyword.span(),
-                "a scheme is declared in the `rest::api!` of the api: name it here by its path, as `#[auth(crate::Key)]`, or import it",
+                "a scheme is declared in the `quoll::api!` of the api: name it here by its path, as `#[auth(crate::Key)]`, or import it",
             ));
         }
         if keyword != "group" {
@@ -111,7 +111,7 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             Some((first, _)) => errors.push(Error::new(
                 read.name.span(),
                 format!(
-                    "a `rest::group!` holds one group, and `{}` is already it: put `{}` in a `rest::group!` of its own",
+                    "a `quoll::group!` holds one group, and `{}` is already it: put `{}` in a `quoll::group!` of its own",
                     first.name, read.name
                 ),
             )),
@@ -122,7 +122,7 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     let Some((group, document)) = group else {
         return Err(Error::new(
             proc_macro2::Span::call_site(),
-            "a `rest::group!` holds a group: write `pub group Notes { ... }`",
+            "a `quoll::group!` holds a group: write `pub group Notes { ... }`",
         ));
     };
 
@@ -374,9 +374,9 @@ impl ApiDecl {
     }
 }
 
-/// The groups an api lists, `{ auth::Auth, notes::Notes }`: each a path to the group a `rest::group!` writes.
+/// The groups an api lists, `{ auth::Auth, notes::Notes }`: each a path to the group a `quoll::group!` writes.
 fn parse_list(input: ParseStream) -> Result<Vec<syn::Path>> {
-    const WRITE: &str = "an api lists the groups of `rest::group!` blocks by their paths: write `pub api Api = \"/api\" { auth::Auth, notes::Notes };`";
+    const WRITE: &str = "an api lists the groups of `quoll::group!` blocks by their paths: write `pub api Api = \"/api\" { auth::Auth, notes::Notes };`";
 
     let content;
     let braces = braced!(content in input);
@@ -1414,7 +1414,7 @@ mod tests {
                     => search(header("Last-Event-ID") last: Option<String>, query filter: NoteFilter, id: i64);
                 POST "/token" => token(login: Form<Login>);
                 PUT "/notes/{id}/text" => write(id: i64, text: Text);
-                PUT "/notes/{id}/file" => upload(id: i64, file: rest::Bytes);
+                PUT "/notes/{id}/file" => upload(id: i64, file: quoll::Bytes);
                 POST "/notes" => create(note: NewNote);
             }
         })
@@ -1883,12 +1883,12 @@ mod tests {
             pub api Api = "/api";
 
             pub group Files {
-                POST "/exports" => export() -> rest::Accepted<Job>;
+                POST "/exports" => export() -> quoll::Accepted<Job>;
                 GET "/readme" => readme() -> Text;
-                GET "/logo" => logo() -> rest::Bytes;
+                GET "/logo" => logo() -> quoll::Bytes;
                 GET "/texts" => texts() -> Vec<Text>;
                 GET "/events" => events() -> Events<Note>;
-                POST "/lines" => lines() -> rest::JsonLines<Note>;
+                POST "/lines" => lines() -> quoll::JsonLines<Note>;
             }
         })
         .unwrap();
@@ -1901,12 +1901,12 @@ mod tests {
 
         assert_eq!(
             read(0),
-            some("rest :: Accepted < Job >", ResultKind::ACCEPTED, "Job")
+            some("quoll :: Accepted < Job >", ResultKind::ACCEPTED, "Job")
         );
         assert_eq!(read(1), some("Text", ResultKind::TEXT, "Text"));
         assert_eq!(
             read(2),
-            some("rest :: Bytes", ResultKind::BYTES, "rest :: Bytes")
+            some("quoll :: Bytes", ResultKind::BYTES, "quoll :: Bytes")
         );
 
         // Only the result's own type is read so: a `Vec` of text is JSON, which does not compile later.
@@ -1923,9 +1923,9 @@ mod tests {
         assert_eq!(
             read(5),
             some(
-                "rest :: JsonLines < Note >",
+                "quoll :: JsonLines < Note >",
                 ResultKind::JSON_LINES,
-                "rest :: JsonLines < Note >"
+                "quoll :: JsonLines < Note >"
             )
         );
     }
@@ -2130,7 +2130,7 @@ mod tests {
                 POST "/token" => token();
             }
 
-            #[error(rest::Problem)]
+            #[error(quoll::Problem)]
             pub group Mirror {
                 GET "/mirror" => get();
                 #[error(MirrorError)]
@@ -2152,7 +2152,7 @@ mod tests {
             errors(&api),
             [
                 vec!["HubError", "crate :: OAuthError"],
-                vec!["rest :: Problem", "MirrorError"]
+                vec!["quoll :: Problem", "MirrorError"]
             ]
         );
         assert_eq!(errors(&alone), [vec!["", "HubError"]]);
@@ -2723,11 +2723,11 @@ mod tests {
                 "`crate::Key` names the scheme `Key`",
             ),
             (
-                quote! { #[auth(rest::Bearer)] },
-                "`rest::Bearer` names the scheme `Bearer`",
+                quote! { #[auth(quoll::Bearer)] },
+                "`quoll::Bearer` names the scheme `Bearer`",
             ),
             (
-                quote! { #[auth(::quoll::rest::Basic)] },
+                quote! { #[auth(::quoll::Basic)] },
                 "names the scheme `Basic`",
             ),
         ] {

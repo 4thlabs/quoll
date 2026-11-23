@@ -4,7 +4,7 @@ use std::any::TypeId;
 
 use http::Method;
 
-use crate::rest::Scheme;
+use crate::Scheme;
 
 /// The route of the contract a request calls, which a middleware reads.
 ///
@@ -15,7 +15,7 @@ use crate::rest::Scheme;
 /// it, as a 503 of `server::timeout` and an early 413 of `server::body_limit`.
 ///
 /// ```
-/// use quoll::rest::Route;
+/// use quoll::Route;
 ///
 /// /// The operation a request calls, as a middleware reads it from the request's extensions.
 /// fn operation(extensions: &http::Extensions) -> Option<&'static str> {
@@ -72,7 +72,7 @@ impl Route {
     /// do not take it never get it.
     ///
     /// ```
-    /// use quoll::rest::{Bearer, Route};
+    /// use quoll::{Bearer, Route};
     ///
     /// /// Whether a request is for a route that takes a bearer token.
     /// fn takes_bearer(extensions: &http::Extensions) -> bool {

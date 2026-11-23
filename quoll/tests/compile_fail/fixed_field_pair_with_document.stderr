@@ -1,5 +1,5 @@
 error: POST on this path is the route `Messages::create` too, told apart by their `#[body(...)]`, which the OpenAPI document does not describe yet: write `#[openapi(none)]` on the api, for a contract that is only called
-  --> tests/compile_fail/fixed_field_pair_with_document.rs:17:14
+  --> tests/compile_fail/fixed_field_pair_with_document.rs:16:14
    |
-17 |         POST "/messages" => stream(request: Request);
+16 |         POST "/messages" => stream(request: Request);
    |              ^^^^^^^^^^^

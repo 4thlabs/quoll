@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // Two header schemes of an alternative that read one header, whatever its case.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Key = header "X-Api-Key";

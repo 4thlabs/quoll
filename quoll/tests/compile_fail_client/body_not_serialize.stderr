@@ -1,15 +1,15 @@
 error[E0277]: the trait bound `NewNote: serde::Serialize` is not satisfied
-  --> tests/compile_fail_client/body_not_serialize.rs:15:33
+  --> tests/compile_fail_client/body_not_serialize.rs:14:33
    |
-15 |         POST "/notes" => create(note: NewNote);
+14 |         POST "/notes" => create(note: NewNote);
    |                                 ^^^^  ------- required by a bound introduced by this call
    |                                 |
    |                                 unsatisfied trait bound
    |
 help: the trait `_serde::Serialize` is not implemented for `NewNote`
-  --> tests/compile_fail_client/body_not_serialize.rs:7:1
+  --> tests/compile_fail_client/body_not_serialize.rs:6:1
    |
- 7 | pub struct NewNote {
+ 6 | pub struct NewNote {
    | ^^^^^^^^^^^^^^^^^^
    = note: for local types consider adding `#[derive(serde::Serialize)]` to your `NewNote` type
    = note: for types from other crates check whether the crate offers a `serde` feature flag

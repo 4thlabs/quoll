@@ -1,7 +1,6 @@
 use http::HeaderValue;
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{self, Result, Scheme};
+use quoll::{Result, Scheme, openapi::SecurityScheme};
 
 /// A scheme of the application's whose challenge is not a header's value.
 pub struct Hmac;
@@ -21,7 +20,7 @@ impl Scheme for Hmac {
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Hmac)]

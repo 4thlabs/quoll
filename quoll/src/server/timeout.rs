@@ -12,7 +12,7 @@ use tower_service::Service;
 
 use super::layer::ResponseFuture;
 use crate::__private::server::Logged;
-use crate::rest::Error;
+use crate::Error;
 
 /// A deadline on each request: a route that has not answered within `duration` answers 503.
 ///

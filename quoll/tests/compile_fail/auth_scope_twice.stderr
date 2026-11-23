@@ -1,5 +1,5 @@
 error: the scope `repo` is written twice: remove one
- --> tests/compile_fail/auth_scope_twice.rs:8:39
+ --> tests/compile_fail/auth_scope_twice.rs:6:39
   |
-8 |         #[auth(Bearer, scopes("repo", "repo"))]
+6 |         #[auth(Bearer, scopes("repo", "repo"))]
   |                                       ^^^^^^

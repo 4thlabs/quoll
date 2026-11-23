@@ -12,12 +12,12 @@ use axum::body::Bytes;
 use axum::extract::Request;
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
-use quoll::rest::{self, Events, Result, Route, Text};
+use quoll::{Events, Result, Route, Text};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue, LOCATION};
 use reqwest::{Method, StatusCode};
 use reqwest_middleware::ClientBuilder;
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     /// The key of an operator's scripts.

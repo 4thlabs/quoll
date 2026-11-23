@@ -30,8 +30,7 @@ and `cargo run -- openapi` prints its OpenAPI document.
 ```rust,no_run
 use std::sync::Mutex;
 
-use quoll::rest::{self, Created, Error, Response, Result};
-use quoll::{client, server};
+use quoll::{Created, Error, Response, Result, client, server};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +45,7 @@ pub struct NewNote {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     /// Notes, kept in memory.
     pub api Api = "/api";
 
@@ -95,7 +94,7 @@ async fn serve() -> std::io::Result<()> {
     server::builder().serve("127.0.0.1:8080", router).await
 }
 
-async fn call() -> rest::Result<()> {
+async fn call() -> quoll::Result<()> {
     let api = client::builder().build::<Api>("http://127.0.0.1:8080")?;
 
     let created = api
@@ -125,7 +124,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 What each part does:
 
 - **The models**, `Note` and `NewNote`, are serde types, with a JSON Schema for the document.
-- **The contract**, `rest::api!`, is a route table: `GET "/notes/{id}"` becomes a function `get(id: i64)`, which
+- **The contract**, `quoll::api!`, is a route table: `GET "/notes/{id}"` becomes a function `get(id: i64)`, which
   returns a `Note`. [The contract](contract.md) covers what a contract says.
 - **The server** implements `NotesServer`, the trait the group `Notes` gives, with a handler per route.
   `Api::router` makes an `axum::Router` of it, which `server::builder()` serves until Ctrl-C.
@@ -133,7 +132,7 @@ What each part does:
 - **The client** is built by `client::builder()`: `api.notes()` has a method per route, which returns what the route
   returns. [The client](client.md) covers its middleware.
 - **A handler's error**, `Error::not_found`, is answered 404 with an RFC 9457 problem, which the client reads back as
-  a `rest::Error` with that status. [Errors](errors.md) covers both sides.
+  a `quoll::Error` with that status. [Errors](errors.md) covers both sides.
 
 ## Run it
 

@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // Scopes on a route a request may call with no credential.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

@@ -1,5 +1,3 @@
-use quoll::rest;
-
 // Items of the application's named as the ones the checks use.
 #[allow(dead_code)]
 struct InScope;
@@ -8,13 +6,13 @@ trait Group {}
 
 fn main() {
     // A group and the api that lists it by its name, in one function body, as in a doctest.
-    rest::group! {
+    quoll::group! {
         pub group Notes {
             GET "/notes" => list();
         }
     }
 
-    rest::api! {
+    quoll::api! {
         pub api Api = "/api" { Notes };
     }
 

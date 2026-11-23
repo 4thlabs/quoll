@@ -45,7 +45,7 @@ pub(crate) fn api(api: &Api) -> TokenStream {
     }
 }
 
-/// What a group of `rest::group!` becomes, alone in its block: the items of [`group`], with no api above it.
+/// What a group of `quoll::group!` becomes, alone in its block: the items of [`group`], with no api above it.
 pub(crate) fn alone_group(alone: &Api) -> TokenStream {
     group(&Cx {
         group: &alone.groups[0],
@@ -142,7 +142,7 @@ fn api_type(api: &Api) -> TokenStream {
         docs, vis, name, ..
     } = api;
     // A crate that denies `missing_docs` must not fail on what the macro writes.
-    let fallback = vec![format!(" The REST contract `{name}`, from `rest::api!`.")];
+    let fallback = vec![format!(" The REST contract `{name}`, from `quoll::api!`.")];
     let lines = if docs.0.is_empty() {
         &fallback
     } else {
@@ -181,7 +181,7 @@ mod tests {
         });
 
         assert!(tokens.contains("\" Notes.\""), "{tokens}");
-        assert!(!tokens.contains("from `rest::api!`"), "{tokens}");
+        assert!(!tokens.contains("from `quoll::api!`"), "{tokens}");
     }
 
     #[test]
@@ -189,7 +189,7 @@ mod tests {
         let tokens = expansion(quote! { pub api Api = "/api"; });
 
         assert!(
-            tokens.contains("The REST contract `Api`, from `rest::api!`."),
+            tokens.contains("The REST contract `Api`, from `quoll::api!`."),
             "{tokens}"
         );
     }
@@ -270,7 +270,7 @@ mod tests {
         });
 
         assert!(
-            tokens.contains(r#"path : "/notes/{id}" , headers : & [] , query : & [] , schemes : & [< :: quoll :: rest :: Bearer as :: quoll :: rest :: Scheme > :: NAME] , scheme_types : & [:: core :: any :: TypeId :: of :: < :: quoll :: rest :: Bearer > ()]"#),
+            tokens.contains(r#"path : "/notes/{id}" , headers : & [] , query : & [] , schemes : & [< :: quoll :: Bearer as :: quoll :: Scheme > :: NAME] , scheme_types : & [:: core :: any :: TypeId :: of :: < :: quoll :: Bearer > ()]"#),
             "{tokens}"
         );
         assert!(
@@ -278,12 +278,12 @@ mod tests {
             "{tokens}"
         );
         assert!(
-            tokens.contains(". route :: < :: quoll :: rest :: Bearer , _ , _ >"),
+            tokens.contains(". route :: < :: quoll :: Bearer , _ , _ >"),
             "{tokens}"
         );
         assert!(tokens.contains(". route :: < () , _ , _ >"), "{tokens}");
         assert!(
-            tokens.contains("trait NotesServer : :: core :: marker :: Send + :: core :: marker :: Sync + 'static + :: quoll :: rest :: Authenticate < :: quoll :: rest :: Bearer >"),
+            tokens.contains("trait NotesServer : :: core :: marker :: Send + :: core :: marker :: Sync + 'static + :: quoll :: Authenticate < :: quoll :: Bearer >"),
             "{tokens}"
         );
     }

@@ -1,6 +1,6 @@
-use quoll::rest::{self, Call, Created};
+use quoll::{Call, Created};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -13,7 +13,7 @@ struct Fake;
 
 impl Notes for Fake {
     fn create(&self, title: String) -> impl Call<Created<String>> {
-        async move { Err(rest::Error::not_found(title)) }
+        async move { Err(quoll::Error::not_found(title)) }
     }
 }
 

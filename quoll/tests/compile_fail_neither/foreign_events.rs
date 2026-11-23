@@ -1,4 +1,3 @@
-use quoll::rest;
 use schemars::JsonSchema;
 
 // An `Events` of the application's own, which the contract reads as quoll's.
@@ -7,7 +6,7 @@ pub struct Events<T> {
     pub items: Vec<T>,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

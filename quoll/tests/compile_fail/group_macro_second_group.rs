@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::group! {
+quoll::group! {
     pub group Notes {
         GET "/notes" => list();
     }

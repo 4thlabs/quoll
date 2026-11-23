@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[header("X-Version" = "1")]
     pub api Api = "";

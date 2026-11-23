@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[header("anthropic-beta" = "files-api-2025-04-14")]
     pub api Api = "/v1";

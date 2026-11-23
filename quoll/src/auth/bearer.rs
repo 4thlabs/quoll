@@ -3,8 +3,8 @@
 use http::header::AUTHORIZATION;
 use http::request::Parts;
 
-use crate::rest::openapi::SecurityScheme;
-use crate::rest::{Error, Result, Scheme};
+use crate::openapi::SecurityScheme;
+use crate::{Error, Result, Scheme};
 
 /// A token in the `Authorization` header: `Authorization: Bearer <token>`, as RFC 6750 sends it. Its credential is the
 /// token, a `String`.
@@ -13,7 +13,7 @@ use crate::rest::{Error, Result, Scheme};
 /// letters, digits, `-._~+/`, and `=` at its end.
 ///
 /// ```
-/// use quoll::rest::{Bearer, Scheme};
+/// use quoll::{Bearer, Scheme};
 ///
 /// let request = http::Request::get("/api/notes")
 ///     .header("Authorization", "Bearer mF_9.B5f-4.1JqM")

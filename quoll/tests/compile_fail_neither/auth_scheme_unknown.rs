@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A scheme that is neither the crate's, declared in the contract, nor a type in scope.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Key)]

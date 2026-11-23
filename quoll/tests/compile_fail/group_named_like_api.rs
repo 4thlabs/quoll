@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     pub api Notes = "/api";
 
     pub group Notes {

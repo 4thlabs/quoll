@@ -1,8 +1,7 @@
 use std::rc::Rc;
 
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{Result, Scheme};
+use quoll::{Result, Scheme, openapi::SecurityScheme};
 
 /// A scheme whose credential cannot cross an `await` of a server on several threads.
 pub struct Hmac;

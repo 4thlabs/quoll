@@ -1,11 +1,7 @@
-use quoll::rest;
-
 mod notes {
-    use quoll::rest;
-
     use crate::Token;
 
-    rest::group! {
+    quoll::group! {
         #[auth(Token)]
         pub group Notes {
             GET "/notes?token={page}" => list(page: Option<String>);
@@ -13,7 +9,7 @@ mod notes {
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api" { notes::Notes };
 
     pub scheme Token = query "token";

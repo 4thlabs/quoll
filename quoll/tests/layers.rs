@@ -6,9 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
-use quoll::rest::{
-    self, Authenticate, ByteStream, Bytes, Events, Form, JsonLines, Response, Result, Text,
-};
+use quoll::{Authenticate, ByteStream, Bytes, Events, Form, JsonLines, Response, Result, Text};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_ENCODING, CONTENT_TYPE};
 use schemars::JsonSchema;
@@ -29,7 +27,7 @@ struct Note {
     title: String,
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     scheme Session = cookie "session";
@@ -124,11 +122,11 @@ impl LayersServer for App {
     }
 
     async fn failing(&self) -> Result<Response<String>> {
-        Err(rest::Error::internal("the store went away"))
+        Err(quoll::Error::internal("the store went away"))
     }
 
     async fn unavailable(&self) -> Result<Response<String>> {
-        Err(rest::Error::new(
+        Err(quoll::Error::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "the store is closed",
         ))
@@ -321,8 +319,8 @@ async fn a_route_puts_itself_in_its_answer() {
         |mut response: axum::response::Response| async move {
             let operation = response
                 .extensions()
-                .get::<rest::Route>()
-                .map_or("none", rest::Route::operation_id);
+                .get::<quoll::Route>()
+                .map_or("none", quoll::Route::operation_id);
 
             response.headers_mut().insert(
                 "x-operation",
@@ -508,7 +506,7 @@ async fn a_route_past_its_deadline_answers_503_logged_once() {
 
     assert_eq!(error.status(), Some(StatusCode::SERVICE_UNAVAILABLE));
     assert_eq!(
-        error.detail().and_then(rest::Problem::detail),
+        error.detail().and_then(quoll::Problem::detail),
         Some("the server took longer than 100ms to answer")
     );
 }
@@ -579,7 +577,7 @@ async fn a_body_with_a_length_past_the_limit_answers_413() {
             "{case}"
         );
         assert_eq!(
-            error.detail().and_then(rest::Problem::detail),
+            error.detail().and_then(quoll::Problem::detail),
             Some("the body is larger than the 1024 bytes this server reads"),
             "{case}"
         );
@@ -706,7 +704,7 @@ async fn a_lower_limit_of_a_route_is_not_said_as_the_layer_s() {
             "{case}"
         );
         assert_eq!(
-            error.detail().and_then(rest::Problem::detail),
+            error.detail().and_then(quoll::Problem::detail),
             Some("the body is larger than this server reads"),
             "{case}"
         );

@@ -3,7 +3,6 @@
 
 use std::sync::LazyLock;
 
-use quoll::rest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -15,7 +14,7 @@ enum State {
     Closed,
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Issues {

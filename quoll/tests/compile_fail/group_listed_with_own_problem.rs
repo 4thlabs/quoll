@@ -1,5 +1,3 @@
-use quoll::rest;
-
 mod rest_shapes {
     use std::fmt;
 
@@ -19,9 +17,7 @@ mod rest_shapes {
 }
 
 mod gists {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         #[openapi(none)]
         pub group Gists {
             GET "/gists" => list();
@@ -31,7 +27,7 @@ mod gists {
 
 use rest_shapes::Problem;
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     #[error(Problem)]
     pub api Hub = "" { gists::Gists };

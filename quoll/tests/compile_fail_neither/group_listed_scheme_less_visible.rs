@@ -1,9 +1,5 @@
-use quoll::rest;
-
 pub mod notes {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         #[auth(crate::Key)]
         pub group Notes {
             GET "/notes" => list();
@@ -11,7 +7,7 @@ pub mod notes {
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api" { notes::Notes };
 
     pub(crate) scheme Key = header "X-Api-Key";

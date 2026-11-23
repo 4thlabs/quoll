@@ -1,5 +1,5 @@
 use notes_api::{AuthServer, Key, Login, TokenResponse};
-use quoll::rest::{Authenticate, Bearer, Error, Form, Response, Result};
+use quoll::{Authenticate, Bearer, Error, Form, Response, Result};
 
 use crate::App;
 

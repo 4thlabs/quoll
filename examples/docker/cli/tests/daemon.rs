@@ -12,7 +12,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use docker_api::{Containers, DockerClient, DockerError, Images, NewContainer, System};
 use docker_cli::Host;
 use futures::StreamExt;
-use quoll::rest;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
@@ -32,7 +31,7 @@ fn docker() -> DockerClient {
 
 /// Whether `error` says that nothing listens where the daemon would: no socket, or a connection refused. Any other
 /// error, an answer with a status among them, is the daemon's, and fails the test.
-fn nothing_listens(error: &rest::Error<DockerError>) -> bool {
+fn nothing_listens(error: &quoll::Error<DockerError>) -> bool {
     let mut source = error.source();
 
     while let Some(cause) = source {

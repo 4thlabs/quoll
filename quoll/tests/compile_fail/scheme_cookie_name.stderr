@@ -1,5 +1,5 @@
 error: `my session` is not the name of a cookie: a name is ASCII letters, digits and the signs ! # $ % & ' * + - . ^ _ ` | ~, as in "session"
- --> tests/compile_fail/scheme_cookie_name.rs:7:33
+ --> tests/compile_fail/scheme_cookie_name.rs:5:33
   |
-7 |     pub scheme Session = cookie "my session";
+5 |     pub scheme Session = cookie "my session";
   |                                 ^^^^^^^^^^^^

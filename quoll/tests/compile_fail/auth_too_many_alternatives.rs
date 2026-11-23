@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // An alternative of more schemes than the crate takes.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme A = header "X-A";

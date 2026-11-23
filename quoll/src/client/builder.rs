@@ -11,7 +11,7 @@ use sync_wrapper::SyncWrapper;
 
 use super::{Helper, KeepsDeadline, Rank, Retrying, calls_timeout, redirects};
 use crate::order::arrange;
-use crate::rest::{Error, Result};
+use crate::{Error, Result};
 
 /// The redirects a builder given a credential and no `redirects` follows: reqwest's own limit.
 const REDIRECTS: usize = 10;
@@ -24,14 +24,14 @@ type Configure =
 /// A builder of a client with no middleware yet, on a reqwest client with reqwest's defaults.
 ///
 /// ```no_run
-/// use quoll::{client, rest};
-/// # rest::api! {
+/// use quoll::client;
+/// # quoll::api! {
 /// #     pub api Api = "/api";
 /// #     #[auth(Bearer)]
 /// #     pub group Notes { GET "/notes/{id}" => get(id: i64) -> String; }
 /// # }
 ///
-/// # async fn run() -> rest::Result<()> {
+/// # async fn run() -> quoll::Result<()> {
 /// let api = client::builder()
 ///     .with(client::bearer("mF_9.B5f-4.1JqM"))
 ///     .with(client::retry(3))
@@ -77,10 +77,10 @@ pub fn builder() -> Builder {
 /// ```no_run
 /// use quoll::client;
 /// use reqwest::Request;
-/// # quoll::rest::api! { pub api Api = "/api"; pub group Notes { GET "/notes" => list() -> String; } }
+/// # quoll::api! { pub api Api = "/api"; pub group Notes { GET "/notes" => list() -> String; } }
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let sign = client::on_request(|request: &mut Request, _: &quoll::rest::Route| {
+/// let sign = client::on_request(|request: &mut Request, _: &quoll::Route| {
 ///     request.headers_mut().insert("X-Signature", http::HeaderValue::from_static("s-1"));
 /// });
 /// let proxy = reqwest::Proxy::all("http://proxy.example.com:3128")?;
@@ -127,7 +127,7 @@ impl Builder {
     ///
     /// use quoll::client;
     ///
-    /// # fn run() -> quoll::rest::Result<()> {
+    /// # fn run() -> quoll::Result<()> {
     /// let http = client::builder()
     ///     .http(|http| http.pool_idle_timeout(Duration::from_secs(30)))
     ///     .build_http()?;
@@ -235,12 +235,12 @@ impl fmt::Debug for Builder {
     }
 }
 
-/// The api of a contract, of which [`Builder::build`] builds a client: `rest::api!` implements it on the api's type,
+/// The api of a contract, of which [`Builder::build`] builds a client: `quoll::api!` implements it on the api's type,
 /// `Api`, with the feature `client`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not the api of a contract, of which `client::Builder::build` builds a client",
     label = "not the api of a contract",
-    note = "the api is the type `rest::api!` names after `api`, as `Api` in `pub api Api = \"/api\";`, and it has a client when `quoll` has the feature `client`"
+    note = "the api is the type `quoll::api!` names after `api`, as `Api` in `pub api Api = \"/api\";`, and it has a client when `quoll` has the feature `client`"
 )]
 pub trait Contract {
     /// The client of the api, `ApiClient`.

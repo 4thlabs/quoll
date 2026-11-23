@@ -1,5 +1,5 @@
 error: the path parameter `id` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants
- --> tests/compile_fail/path_param_reference.rs:7:38
+ --> tests/compile_fail/path_param_reference.rs:5:38
   |
-7 |         GET "/notes/{id}" => get(id: &str);
+5 |         GET "/notes/{id}" => get(id: &str);
   |                                      ^^^^

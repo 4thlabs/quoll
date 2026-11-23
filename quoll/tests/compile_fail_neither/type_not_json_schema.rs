@@ -1,4 +1,3 @@
-use quoll::rest;
 use serde::{Deserialize, Serialize};
 
 // The OpenAPI document describes every type the contract names, which has a schema.
@@ -7,7 +6,7 @@ pub struct Note {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

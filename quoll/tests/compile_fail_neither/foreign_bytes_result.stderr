@@ -1,16 +1,16 @@
 error[E0277]: `Bytes` is not quoll's `Bytes`, which a body or a result named `Bytes` is read as
-  --> tests/compile_fail_neither/foreign_bytes_result.rs:12:34
+  --> tests/compile_fail_neither/foreign_bytes_result.rs:11:34
    |
-12 |         GET "/logo" => logo() -> Bytes;
-   |                                  ^^^^^ not `quoll::rest::Bytes`
+11 |         GET "/logo" => logo() -> Bytes;
+   |                                  ^^^^^ not `quoll::Bytes`
    |
 help: the trait `quoll::__private::known::IsBytes` is not implemented for `Bytes`
-  --> tests/compile_fail_neither/foreign_bytes_result.rs:6:1
+  --> tests/compile_fail_neither/foreign_bytes_result.rs:5:1
    |
- 6 | pub struct Bytes(pub Vec<u8>);
+ 5 | pub struct Bytes(pub Vec<u8>);
    | ^^^^^^^^^^^^^^^^
-   = note: bring quoll's into scope, `use quoll::rest::Bytes;`, or name a type of your own otherwise
-help: the trait `quoll::__private::known::IsBytes` is implemented for `quoll::rest::Bytes`
+   = note: bring quoll's into scope, `use quoll::Bytes;`, or name a type of your own otherwise
+help: the trait `quoll::__private::known::IsBytes` is implemented for `quoll::Bytes`
   --> src/__private/known.rs
    |
    | impl IsBytes for Bytes {

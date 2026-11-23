@@ -1,5 +1,5 @@
 error: the query key `tag` appears twice: a key takes one argument
- --> tests/compile_fail/query_key_twice.rs:7:13
+ --> tests/compile_fail/query_key_twice.rs:5:13
   |
-7 |         GET "/notes?tag={first}&tag={second}" => list(first: String, second: String);
+5 |         GET "/notes?tag={first}&tag={second}" => list(first: String, second: String);
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

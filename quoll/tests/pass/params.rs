@@ -1,4 +1,4 @@
-use quoll::rest::{self, Bytes, Created, Form, Text};
+use quoll::{Bytes, Created, Form, Text};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -18,7 +18,7 @@ pub struct Login {
 }
 
 // The types the contract names by their name are the user's imports, used whatever the features of quoll.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -26,7 +26,7 @@ rest::api! {
         POST "/token" => token(login: Form<Login>) -> Created<Note>;
         PUT  "/notes/{id}/text" => write(id: i64, header("If-Match") version: u64, text: Text);
         PUT  "/notes/{id}/file" => upload(id: i64, file: Bytes);
-        POST "/notes/{id}/copy" => copy(id: i64, file: rest::Bytes);
+        POST "/notes/{id}/copy" => copy(id: i64, file: quoll::Bytes);
     }
 }
 

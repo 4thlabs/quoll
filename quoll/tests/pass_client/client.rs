@@ -1,4 +1,4 @@
-use quoll::rest::{self, Created, Result};
+use quoll::{Created, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,7 @@ pub enum Shelf {
     Kitchen,
 }
 
-rest::api! {
+quoll::api! {
     /// Notes, kept per user.
     pub api Api = "/api";
 

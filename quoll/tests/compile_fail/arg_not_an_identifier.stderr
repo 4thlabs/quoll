@@ -1,5 +1,5 @@
 error: an argument is written `name: Type`, `query name: Type` or `header("Name") name: Type`
- --> tests/compile_fail/arg_not_an_identifier.rs:7:30
+ --> tests/compile_fail/arg_not_an_identifier.rs:5:30
   |
-7 |         GET "/notes" => list("page": u32);
+5 |         GET "/notes" => list("page": u32);
   |                              ^^^^^^

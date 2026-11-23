@@ -10,7 +10,7 @@ use tower_layer::Layer;
 use tower_service::Service;
 
 use super::layer::ResponseFuture;
-use crate::rest::Error;
+use crate::Error;
 
 /// The 413 of a body larger than `limit`, the one enforced, or than a limit the router cannot name: axum's, which
 /// `body_limit` sets or a route may set lower.

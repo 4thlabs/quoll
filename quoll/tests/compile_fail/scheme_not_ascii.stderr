@@ -1,5 +1,5 @@
 error: the scheme `Clé` gives its name to HTTP's `WWW-Authenticate`, which is ASCII: name it with ASCII letters and digits
- --> tests/compile_fail/scheme_not_ascii.rs:7:16
+ --> tests/compile_fail/scheme_not_ascii.rs:5:16
   |
-7 |     pub scheme Clé = header "X-Api-Key";
+5 |     pub scheme Clé = header "X-Api-Key";
   |                ^^^

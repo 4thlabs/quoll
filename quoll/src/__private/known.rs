@@ -15,14 +15,12 @@ use std::marker::PhantomData;
 
 use serde::de::DeserializeOwned;
 
-use crate::rest::{
-    Accepted, Allows, ByteStream, Bytes, Created, Events, Form, JsonLines, NoBody, Text,
-};
+use crate::{Accepted, Allows, ByteStream, Bytes, Created, Events, Form, JsonLines, NoBody, Text};
 
-pub use crate::rest::stream::Items;
+pub use crate::stream::Items;
 
 /// Whether a result's type `T` reads an empty answer, a 204 or a 205, as `null`: [`IS`](Nullable::IS) is `true` for
-/// a value that may be empty, of the one list `rest::Allows` holds, and that is read as JSON, `()` and an `Option<T>`,
+/// a value that may be empty, of the one list `quoll::Allows` holds, and that is read as JSON, `()` and an `Option<T>`,
 /// by the impl whose bounds say so, and `false` for any other type, by [`NotNullable`], whose constant a path reaches
 /// only where no impl of the type's own has one.
 #[derive(Debug)]
@@ -38,7 +36,7 @@ where
 }
 
 /// Whether the value `T` of a handler's response may be empty, a result a 204 answers: [`IS`](MayBeEmpty::IS) is
-/// `true` for each type `rest::Allows` gives a 204, the one list of them, by the impl whose bound says so, and `false`
+/// `true` for each type `quoll::Allows` gives a 204, the one list of them, by the impl whose bound says so, and `false`
 /// for any other, by [`NotEmpty`]. The OpenAPI document lists a 204 for it, whatever the result wraps it in, a
 /// `Created<T>` or an `Accepted<T>` among them.
 #[derive(Debug)]
@@ -71,8 +69,8 @@ impl<T> NotNullable for Nullable<T> {}
 /// The crate's [`Created`], whose `T` the server answers with a 201.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `Created`, which a result named `Created` is read as",
-    label = "not `quoll::rest::Created`",
-    note = "bring quoll's into scope, `use quoll::rest::Created;`, or name a type of your own otherwise"
+    label = "not `quoll::Created`",
+    note = "bring quoll's into scope, `use quoll::Created;`, or name a type of your own otherwise"
 )]
 pub trait IsCreated: Sized {
     /// The `T` of `Created<T>`, the body.
@@ -86,8 +84,8 @@ impl<T> IsCreated for Created<T> {
 /// The crate's [`Accepted`], whose `T` the server answers with a 202.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `Accepted`, which a result named `Accepted` is read as",
-    label = "not `quoll::rest::Accepted`",
-    note = "bring quoll's into scope, `use quoll::rest::Accepted;`, or name a type of your own otherwise"
+    label = "not `quoll::Accepted`",
+    note = "bring quoll's into scope, `use quoll::Accepted;`, or name a type of your own otherwise"
 )]
 pub trait IsAccepted: Sized {
     /// The `T` of `Accepted<T>`, the body.
@@ -101,8 +99,8 @@ impl<T> IsAccepted for Accepted<T> {
 /// The crate's [`Form`], whose `T` is read and written as a form.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `Form`, which a body named `Form` is read as",
-    label = "not `quoll::rest::Form`",
-    note = "bring quoll's into scope, `use quoll::rest::Form;`, or name a type of your own otherwise"
+    label = "not `quoll::Form`",
+    note = "bring quoll's into scope, `use quoll::Form;`, or name a type of your own otherwise"
 )]
 pub trait IsForm: Sized {
     /// The `T` of `Form<T>`.
@@ -130,8 +128,8 @@ impl<T> IsForm for Form<T> {
 /// The crate's [`Text`].
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `Text`, which a body or a result named `Text` is read as",
-    label = "not `quoll::rest::Text`",
-    note = "bring quoll's into scope, `use quoll::rest::Text;`, or name a type of your own otherwise"
+    label = "not `quoll::Text`",
+    note = "bring quoll's into scope, `use quoll::Text;`, or name a type of your own otherwise"
 )]
 pub trait IsText: Sized {
     /// The text holding `text`.
@@ -154,8 +152,8 @@ impl IsText for Text {
 /// The crate's [`Bytes`].
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `Bytes`, which a body or a result named `Bytes` is read as",
-    label = "not `quoll::rest::Bytes`",
-    note = "bring quoll's into scope, `use quoll::rest::Bytes;`, or name a type of your own otherwise"
+    label = "not `quoll::Bytes`",
+    note = "bring quoll's into scope, `use quoll::Bytes;`, or name a type of your own otherwise"
 )]
 pub trait IsBytes: Sized {
     /// The bytes holding `bytes`, of `content_type`.
@@ -218,8 +216,8 @@ impl<T> Streamed for JsonLines<T> {
 /// The crate's [`Events`].
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `Events`, which a result named `Events` is read as",
-    label = "not `quoll::rest::Events`",
-    note = "bring quoll's into scope, `use quoll::rest::Events;`, or name a type of your own otherwise"
+    label = "not `quoll::Events`",
+    note = "bring quoll's into scope, `use quoll::Events;`, or name a type of your own otherwise"
 )]
 pub trait IsEvents: Streamed {}
 
@@ -228,8 +226,8 @@ impl<T> IsEvents for Events<T> {}
 /// The crate's [`JsonLines`].
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `JsonLines`, which a result named `JsonLines` is read as",
-    label = "not `quoll::rest::JsonLines`",
-    note = "bring quoll's into scope, `use quoll::rest::JsonLines;`, or name a type of your own otherwise"
+    label = "not `quoll::JsonLines`",
+    note = "bring quoll's into scope, `use quoll::JsonLines;`, or name a type of your own otherwise"
 )]
 pub trait IsJsonLines: Streamed {}
 
@@ -238,8 +236,8 @@ impl<T> IsJsonLines for JsonLines<T> {}
 /// The crate's [`ByteStream`]: its chunks and their content type, which the server sends and the client reads.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `ByteStream`, which a result named `ByteStream` is read as",
-    label = "not `quoll::rest::ByteStream`",
-    note = "bring quoll's into scope, `use quoll::rest::ByteStream;`, or name a type of your own otherwise"
+    label = "not `quoll::ByteStream`",
+    note = "bring quoll's into scope, `use quoll::ByteStream;`, or name a type of your own otherwise"
 )]
 pub trait IsByteStream: Sized {
     /// The bytes of `chunks`, of `content_type`, as the client reads them.
@@ -292,8 +290,8 @@ mod tests {
 
     #[test]
     fn a_value_that_may_be_empty_is_null_when_it_is_read_as_json() {
-        // The one list, `rest::Allows`'s: its JSON values are `null` when empty, the others empty of their own. Checked
-        // as the test is built.
+        // The one list, `quoll::Allows`'s: its JSON values are `null` when empty, the others empty of their own.
+        // Checked as the test is built.
         const { assert!(<MayBeEmpty<()>>::IS && <Nullable<()>>::IS) };
         const { assert!(<MayBeEmpty<Option<u8>>>::IS && <Nullable<Option<u8>>>::IS) };
         const { assert!(<MayBeEmpty<Text>>::IS && !<Nullable<Text>>::IS) };

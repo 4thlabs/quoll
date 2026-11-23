@@ -1,5 +1,5 @@
 error: `Bearer` is a word `#[auth(...)]` already takes: name the scheme otherwise, as `Key`
- --> tests/compile_fail/scheme_named_bearer.rs:7:16
+ --> tests/compile_fail/scheme_named_bearer.rs:5:16
   |
-7 |     pub scheme Bearer = header "X-Token";
+5 |     pub scheme Bearer = header "X-Token";
   |                ^^^^^^

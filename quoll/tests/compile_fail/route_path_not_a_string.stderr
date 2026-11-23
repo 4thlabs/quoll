@@ -1,5 +1,5 @@
 error: a route's path is a string after its method: write `GET "/notes/{id}" => get(id: i64);`
- --> tests/compile_fail/route_path_not_a_string.rs:7:13
+ --> tests/compile_fail/route_path_not_a_string.rs:5:13
   |
-7 |         GET notes => list();
+5 |         GET notes => list();
   |             ^^^^^

@@ -14,7 +14,7 @@ use reqwest_middleware::{Middleware, Next};
 use super::request::HeadTimedOut;
 use super::{Handled, own_route};
 use crate::__private::client::{redacted, strip_urls};
-use crate::rest::Route;
+use crate::Route;
 
 /// The wait before the first attempt again is drawn between it and twice it; it doubles after each, up to
 /// [`LONGEST`].
@@ -45,11 +45,11 @@ type Decide = dyn Fn(&Attempt<'_>) -> Retry + Send + Sync;
 /// caller's.
 ///
 /// ```no_run
-/// # use quoll::{client, rest};
+/// # use quoll::client;
 /// let http = client::builder()
 ///     .with(client::retry(3))
 ///     .build_http()?;
-/// # Ok::<(), quoll::rest::Error>(())
+/// # Ok::<(), quoll::Error>(())
 /// ```
 pub fn retry(times: u32) -> Retrying {
     Retrying {
@@ -84,7 +84,7 @@ impl Retrying {
     /// use http::{Method, StatusCode};
     /// use quoll::client::{self, Attempt, Retry};
     ///
-    /// # fn run() -> quoll::rest::Result<()> {
+    /// # fn run() -> quoll::Result<()> {
     /// let retry = client::retry(3).when(|attempt: &Attempt| {
     ///     let request = attempt.request();
     ///     let keyed = request.method() == Method::POST

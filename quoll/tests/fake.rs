@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use quoll::rest::{self, Call, Created, Error, Result};
+use quoll::{Call, Created, Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +19,7 @@ struct NewNote {
     title: String,
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Notes {

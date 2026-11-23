@@ -1,5 +1,5 @@
 error: the api takes its prefix as a string: write `api Api = "/api";`
- --> tests/compile_fail/api_prefix_not_a_string.rs:4:19
+ --> tests/compile_fail/api_prefix_not_a_string.rs:2:19
   |
-4 |     pub api Api = 1;
+2 |     pub api Api = 1;
   |                   ^

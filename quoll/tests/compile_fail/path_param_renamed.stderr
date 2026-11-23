@@ -1,5 +1,5 @@
 error: this path is the one of the route `Notes::get`, with `{note}` written for `{id}`: a router takes them for one path, so name the parameter `{id}` here too
- --> tests/compile_fail/path_param_renamed.rs:8:16
+ --> tests/compile_fail/path_param_renamed.rs:6:16
   |
-8 |         DELETE "/notes/{note}"       => remove(note: i64);
+6 |         DELETE "/notes/{note}"       => remove(note: i64);
   |                ^^^^^^^^^^^^^^^

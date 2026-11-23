@@ -16,7 +16,7 @@ use crate::__private::content_type::{self, OCTET_STREAM};
 /// It holds the `T`, and derefs to it, so that a handler reads `login.user`:
 ///
 /// ```
-/// use quoll::rest::Form;
+/// use quoll::Form;
 ///
 /// struct Login {
 ///     user: String,
@@ -51,7 +51,7 @@ impl<T> DerefMut for Form<T> {
 /// It holds the text as a `String`, and derefs to a `str`:
 ///
 /// ```
-/// use quoll::rest::Text;
+/// use quoll::Text;
 ///
 /// let text = Text::from("milk, eggs");
 ///
@@ -98,7 +98,7 @@ impl fmt::Display for Text {
 /// It holds the bytes as a `Vec<u8>`, and derefs to a `[u8]`; [`Bytes::content_type`] says what they are:
 ///
 /// ```
-/// use quoll::rest::Bytes;
+/// use quoll::Bytes;
 ///
 /// let png = Bytes::new(vec![0x89, b'P', b'N', b'G']).with_content_type("image/png");
 ///
@@ -166,7 +166,7 @@ impl Bytes {
     /// content type.
     ///
     /// ```
-    /// use quoll::rest::Bytes;
+    /// use quoll::Bytes;
     ///
     /// let png = Bytes::new(*b"PNG").with_content_type("Image/PNG; name=\"a.png\"");
     ///
@@ -181,7 +181,7 @@ impl Bytes {
     /// The bytes, leaving their content type.
     ///
     /// ```
-    /// use quoll::rest::Bytes;
+    /// use quoll::Bytes;
     ///
     /// assert_eq!(Bytes::new(*b"PNG").into_vec(), b"PNG");
     /// ```
@@ -192,7 +192,7 @@ impl Bytes {
     /// The bytes and their content type.
     ///
     /// ```
-    /// use quoll::rest::Bytes;
+    /// use quoll::Bytes;
     ///
     /// let (bytes, content_type) = Bytes::new(*b"PNG").with_content_type("image/png").into_parts();
     ///

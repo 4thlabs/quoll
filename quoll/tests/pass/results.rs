@@ -1,4 +1,4 @@
-use quoll::rest::{self, Accepted, Bytes, Text};
+use quoll::{Accepted, Bytes, Text};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,7 @@ pub struct Job {
 }
 
 // The results the contract names by their name are the user's imports, used whatever the features of quoll.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Files {
@@ -16,8 +16,8 @@ rest::api! {
         GET  "/readme"  => readme() -> Text;
         PUT  "/readme"  => write(text: Text) -> Text;
         GET  "/logo"    => logo() -> Bytes;
-        GET  "/icon"    => icon() -> rest::Bytes;
-        GET  "/jobs"    => jobs() -> rest::Accepted<Vec<Job>>;
+        GET  "/icon"    => icon() -> quoll::Bytes;
+        GET  "/jobs"    => jobs() -> quoll::Accepted<Vec<Job>>;
     }
 }
 

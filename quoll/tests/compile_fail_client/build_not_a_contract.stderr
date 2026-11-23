@@ -9,4 +9,4 @@ help: the trait `Contract` is not implemented for `Notes`
   |
 4 | struct Notes;
   | ^^^^^^^^^^^^
-  = note: the api is the type `rest::api!` names after `api`, as `Api` in `pub api Api = "/api";`, and it has a client when `quoll` has the feature `client`
+  = note: the api is the type `quoll::api!` names after `api`, as `Api` in `pub api Api = "/api";`, and it has a client when `quoll` has the feature `client`

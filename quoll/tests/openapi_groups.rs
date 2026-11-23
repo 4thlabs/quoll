@@ -2,8 +2,7 @@
 //! groups, which the macro does not see, found among the api's by their names as the document is built.
 
 use http::request::Parts;
-use quoll::rest::openapi::SecurityScheme;
-use quoll::rest::{self, Result, Scheme};
+use quoll::{Result, Scheme, openapi::SecurityScheme};
 use serde_json::Value;
 
 /// A scheme of the application's own, which takes the name of the api's declared `Key`.
@@ -24,9 +23,7 @@ impl Scheme for Impostor {
 }
 
 mod notes {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         /// Notes, kept in a session.
         #[auth(crate::Session)]
         pub group Notes {
@@ -37,9 +34,7 @@ mod notes {
 }
 
 mod impostor {
-    use quoll::rest;
-
-    rest::group! {
+    quoll::group! {
         #[auth(crate::Impostor)]
         pub group Stats {
             GET "/stats" => stats() -> u64;
@@ -47,7 +42,7 @@ mod impostor {
     }
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api" { notes::Notes };
 
     /// The session of the web page.
@@ -56,17 +51,13 @@ rest::api! {
 
 /// An api that lists the group of notes and declares no scheme: the group's cookie scheme is the first api's.
 mod mirror {
-    use quoll::rest;
-
-    rest::api! {
+    quoll::api! {
         pub api Mirror = "/mirror" { crate::notes::Notes };
     }
 }
 
 mod clash {
-    use quoll::rest;
-
-    rest::api! {
+    quoll::api! {
         pub api Clash = "/api" { crate::impostor::Stats };
 
         pub scheme Key = header "X-Api-Key";

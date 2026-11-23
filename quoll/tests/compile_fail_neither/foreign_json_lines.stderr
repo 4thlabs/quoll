@@ -1,16 +1,16 @@
 error[E0277]: `lines::JsonLines<String>` is not quoll's `JsonLines`, which a result named `JsonLines` is read as
-  --> tests/compile_fail_neither/foreign_json_lines.rs:13:36
+  --> tests/compile_fail_neither/foreign_json_lines.rs:11:36
    |
-13 |         GET "/lines" => lines() -> lines::JsonLines<String>;
-   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^ not `quoll::rest::JsonLines`
+11 |         GET "/lines" => lines() -> lines::JsonLines<String>;
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^ not `quoll::JsonLines`
    |
 help: the trait `quoll::__private::known::IsJsonLines` is not implemented for `lines::JsonLines<String>`
-  --> tests/compile_fail_neither/foreign_json_lines.rs:6:5
+  --> tests/compile_fail_neither/foreign_json_lines.rs:4:5
    |
- 6 |     pub struct JsonLines<T>(pub Vec<T>);
+ 4 |     pub struct JsonLines<T>(pub Vec<T>);
    |     ^^^^^^^^^^^^^^^^^^^^^^^
-   = note: bring quoll's into scope, `use quoll::rest::JsonLines;`, or name a type of your own otherwise
-help: the trait `quoll::__private::known::IsJsonLines` is implemented for `quoll::rest::JsonLines<T>`
+   = note: bring quoll's into scope, `use quoll::JsonLines;`, or name a type of your own otherwise
+help: the trait `quoll::__private::known::IsJsonLines` is implemented for `quoll::JsonLines<T>`
   --> src/__private/known.rs
    |
    | impl<T> IsJsonLines for JsonLines<T> {}

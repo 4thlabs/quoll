@@ -1,5 +1,5 @@
 error: a group takes no `#[body(...)]`: put it on a route, whose body it adds a fixed field to
-  --> tests/compile_fail/fixed_field_on_group.rs:13:5
+  --> tests/compile_fail/fixed_field_on_group.rs:12:5
    |
-13 |     #[body("stream" = true)]
+12 |     #[body("stream" = true)]
    |     ^^^^^^^^^^^^^^^^^^^^^^^^

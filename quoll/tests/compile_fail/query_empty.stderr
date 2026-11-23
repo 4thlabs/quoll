@@ -1,5 +1,5 @@
 error: the query is empty: remove the `?`, or write `key={name}` pairs after it, as in "/notes?page={page}"
- --> tests/compile_fail/query_empty.rs:7:13
+ --> tests/compile_fail/query_empty.rs:5:13
   |
-7 |         GET "/notes?" => list();
+5 |         GET "/notes?" => list();
   |             ^^^^^^^^^

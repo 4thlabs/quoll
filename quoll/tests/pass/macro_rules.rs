@@ -1,9 +1,7 @@
-use quoll::rest;
-
 // A type handed over by a `macro_rules!` arrives in an invisible group, and the contract reads it as written.
 macro_rules! contract {
     ($reply:ty, $id:ty) => {
-        rest::api! {
+        quoll::api! {
             pub api Api = "/api";
 
             pub group Notes {
@@ -14,7 +12,7 @@ macro_rules! contract {
     };
 }
 
-contract!(rest::Created<String>, u64);
+contract!(quoll::Created<String>, u64);
 
 fn main() {
     let _api = Api;

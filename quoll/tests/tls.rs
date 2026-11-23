@@ -2,10 +2,10 @@
 
 #![cfg(feature = "client")]
 
-use quoll::rest::{self, Result};
+use quoll::Result;
 use tokio::io::AsyncReadExt;
 
-rest::api! {
+quoll::api! {
     api Api = "";
 
     group Health {

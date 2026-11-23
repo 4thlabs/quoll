@@ -1,4 +1,4 @@
-use quoll::rest::{self, Created, Response, Result, Status};
+use quoll::{Created, Response, Result, Status};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +7,7 @@ pub struct Note {
     pub title: String,
 }
 
-rest::api! {
+quoll::api! {
     #[openapi(none)]
     pub api Api = "";
 

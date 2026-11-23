@@ -13,8 +13,7 @@ use std::time::Duration;
 use axum::extract::Request;
 use axum::middleware::{Next, from_fn};
 use axum::response::IntoResponse;
-use quoll::rest::{self, Error, JsonLines, Response, Result};
-use quoll::{client, server};
+use quoll::{Error, JsonLines, Response, Result, client, server};
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_TYPE, HeaderValue, LOCATION};
 use reqwest::redirect::Policy;
@@ -27,7 +26,7 @@ mod support {
     pub(crate) mod log;
 }
 
-rest::api! {
+quoll::api! {
     api Api = "/api";
 
     group Calls {
@@ -36,7 +35,7 @@ rest::api! {
         GET "/held"    => held() -> String;
         GET "/endless" => endless() -> JsonLines<u32>;
         GET "/away"    => away() -> String;
-        POST "/text"   => text(text: rest::Text);
+        POST "/text"   => text(text: quoll::Text);
     }
 }
 
@@ -94,7 +93,7 @@ impl CallsServer for App {
         ))
     }
 
-    async fn text(&self, _text: rest::Text) -> Result<Response<()>> {
+    async fn text(&self, _text: quoll::Text) -> Result<Response<()>> {
         Ok(Response::new(()))
     }
 }
@@ -204,7 +203,7 @@ async fn redirecting() -> String {
 /// Signs each request of the contract with a header that is not marked sensitive, which a hop to another origin would
 /// keep, had the signature been added before `redirects`.
 fn sign() -> impl reqwest_middleware::Middleware {
-    client::on_request(|request: &mut reqwest::Request, _: &rest::Route| {
+    client::on_request(|request: &mut reqwest::Request, _: &quoll::Route| {
         request
             .headers_mut()
             .insert("x-signature", HeaderValue::from_static("s-1"));
@@ -311,9 +310,7 @@ async fn with_redirects_the_reqwest_client_follows_none_whatever_it_is_set_to() 
 /// A contract whose route takes the key of a header scheme, which reqwest's own policy keeps on a redirect to another
 /// origin.
 mod keyed {
-    use quoll::rest;
-
-    rest::api! {
+    quoll::api! {
         pub api Api = "/api";
 
         pub scheme Key = header "X-Api-Key";

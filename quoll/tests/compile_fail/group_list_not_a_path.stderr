@@ -1,5 +1,5 @@
-error: an api lists the groups of `rest::group!` blocks by their paths: write `pub api Api = "/api" { auth::Auth, notes::Notes };`
- --> tests/compile_fail/group_list_not_a_path.rs:4:28
+error: an api lists the groups of `quoll::group!` blocks by their paths: write `pub api Api = "/api" { auth::Auth, notes::Notes };`
+ --> tests/compile_fail/group_list_not_a_path.rs:2:28
   |
-4 |     pub api Api = "/api" { "notes" };
+2 |     pub api Api = "/api" { "notes" };
   |                            ^^^^^^^

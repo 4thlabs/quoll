@@ -6,18 +6,18 @@ error[E0277]: a 204 or a 205 says there is no body, and a `Note` is a value that
    |                                          |
    |                                          required by a bound introduced by this call
    |
-   = help: the trait `Allows<Note>` is not implemented for `rest::response::sealed::NoBody`
+   = help: the trait `Allows<Note>` is not implemented for `quoll::response::sealed::NoBody`
    = note: a handler's value that may answer no content is an `Option`: `Option<Note>` in place of `Note` in the contract, `-> Option<Note>`, `-> Created<Option<Note>>` or `-> Accepted<Option<Note>>`, and `Response::new(None)` with this status in the handler
-   = help: `rest::response::sealed::NoBody` implements trait `Allows<T>`:
+   = help: `quoll::response::sealed::NoBody` implements trait `Allows<T>`:
              Allows<()>
              Allows<ByteStream>
              Allows<Events<T>>
              Allows<JsonLines<T>>
              Allows<Text>
-             Allows<quoll::rest::Bytes>
+             Allows<quoll::Bytes>
              Allows<std::option::Option<T>>
 note: required by a bound in `Response::<T>::with_status`
-  --> src/rest/response.rs
+  --> src/response.rs
    |
    | impl<T> Response<T> {
 ...

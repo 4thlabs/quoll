@@ -6,10 +6,9 @@ becomes a caller, and which type that caller is. The client sends the credential
 ## A route that takes a credential
 
 ```rust
-use quoll::rest::{self, Authenticate, Bearer, Error, Response, Result};
-use quoll::{client, test};
+use quoll::{Authenticate, Bearer, Error, Response, Result, client, test};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer)]
@@ -78,9 +77,7 @@ async fn main() -> Result<()> {
 A route's attribute replaces its group's.
 
 ```rust
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Key = header "X-Api-Key";
@@ -118,16 +115,14 @@ The error of `authenticate` answers its own status, and the handler is not calle
 A scheme is how a credential travels. It is one of three kinds.
 
 **Given by the crate.** `Bearer`, whose credential is the token, a `String`. `Basic`, whose credential is a
-`rest::BasicCredential { user, password }`, whose `Debug` hides the password. `Basic` makes a browser open its own
+`quoll::BasicCredential { user, password }`, whose `Debug` hides the password. `Basic` makes a browser open its own
 login window: a route that a web page calls takes another scheme.
 
 **Declared in the contract**, with its visibility and where its credential travels. Each becomes a type of that name,
 whose credential is a `String`, and its `///` describes it in the OpenAPI document:
 
 ```rust
-use quoll::rest;
-
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     /// The key of an operator's scripts.
@@ -172,9 +167,9 @@ rest::api! {
 - `openid`: a bearer token from an OpenID Connect provider, which the document describes so. Quoll checks no token:
   `authenticate` does.
 
-**The application's own**: a type implementing `rest::Scheme`, as an HMAC signature, named in `#[auth(...)]` by its
+**The application's own**: a type implementing `quoll::Scheme`, as an HMAC signature, named in `#[auth(...)]` by its
 path, `#[auth(crate::auth::Hmac)]`. Its `read` gives the credential from the request's head, `None` when the request
-carries none, and an error when it carries one that is not well formed. The doc of `quoll::rest::Scheme` shows one.
+carries none, and an error when it carries one that is not well formed. The doc of `quoll::Scheme` shows one.
 
 ## Alternatives
 
@@ -192,9 +187,9 @@ carries none, and an error when it carries one that is not well formed. The doc 
 credential that is malformed, or that `authenticate` refuses, is still answered 401.
 
 ```rust
-use quoll::rest::{self, Authenticate, Bearer, Error, Response, Result};
+use quoll::{Authenticate, Bearer, Error, Response, Result};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
@@ -231,14 +226,14 @@ impl NotesServer for App {
 
 ## Scopes
 
-`#[auth(Bearer, scopes("repo", "admin"))]` needs every scope it names. The caller implements `rest::Scoped`, and the
+`#[auth(Bearer, scopes("repo", "admin"))]` needs every scope it names. The caller implements `quoll::Scoped`, and the
 router answers 403 when the caller lacks one: after `authenticate`, before the handler, and before the path, the query
 and the body are read.
 
 ```rust
-use quoll::rest::{self, Authenticate, Bearer, Error, Response, Result, Scoped};
+use quoll::{Authenticate, Bearer, Error, Response, Result, Scoped};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     #[auth(Bearer)]

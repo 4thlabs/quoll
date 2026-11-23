@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A credential in a place no scheme reads.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Key = body "key";

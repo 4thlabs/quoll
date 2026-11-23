@@ -1,5 +1,5 @@
 error: the header `X-Tags` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants, or an `Option` of one for a header that may be missing
- --> tests/compile_fail/header_option_vec.rs:8:53
+ --> tests/compile_fail/header_option_vec.rs:6:53
   |
-8 |         GET "/notes" => list(header("X-Tags") tags: Option<Vec<String>>);
+6 |         GET "/notes" => list(header("X-Tags") tags: Option<Vec<String>>);
   |                                                     ^^^^^^^^^^^^^^^^^^^

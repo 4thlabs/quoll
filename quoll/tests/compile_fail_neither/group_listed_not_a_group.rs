@@ -1,10 +1,8 @@
-use quoll::rest;
-
 mod notes {
     pub struct Notes;
 }
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api" { notes::Notes };
 }
 

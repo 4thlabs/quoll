@@ -1,6 +1,4 @@
-use quoll::rest;
-
-rest::group! {
+quoll::group! {
     pub api Api = "/api";
 }
 

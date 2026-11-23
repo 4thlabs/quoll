@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A scope with a space, which OAuth separates scopes with.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

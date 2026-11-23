@@ -1,5 +1,5 @@
 error: the group `Notes` is already defined: each one has its own name
-  --> tests/compile_fail/group_twice.rs:10:15
-   |
-10 |     pub group Notes {
-   |               ^^^^^
+ --> tests/compile_fail/group_twice.rs:8:15
+  |
+8 |     pub group Notes {
+  |               ^^^^^

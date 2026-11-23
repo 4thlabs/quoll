@@ -1,5 +1,5 @@
-error: a `rest::group!` holds one group, and `Notes` is already it: put `Tags` in a `rest::group!` of its own
- --> tests/compile_fail/group_macro_second_group.rs:8:15
+error: a `quoll::group!` holds one group, and `Notes` is already it: put `Tags` in a `quoll::group!` of its own
+ --> tests/compile_fail/group_macro_second_group.rs:6:15
   |
-8 |     pub group Tags {
+6 |     pub group Tags {
   |               ^^^^

@@ -1,5 +1,5 @@
 error: expected `api`, `scheme` or `group`: an item of a contract starts with one of them
- --> tests/compile_fail/item_not_a_word.rs:4:5
+ --> tests/compile_fail/item_not_a_word.rs:2:5
   |
-4 |     "api" Api;
+2 |     "api" Api;
   |     ^^^^^

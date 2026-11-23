@@ -1,6 +1,6 @@
-use quoll::rest::{self, Bearer, Route};
+use quoll::{Bearer, Route};
 
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub scheme Key = header "X-Api-Key";
@@ -18,7 +18,7 @@ rest::api! {
     }
 }
 
-fn main() -> rest::Result<()> {
+fn main() -> quoll::Result<()> {
     let http = reqwest_middleware::ClientBuilder::new(reqwest::Client::new())
         .with(quoll::client::bearer("token"))
         .with(quoll::client::basic("ana", "secret"))

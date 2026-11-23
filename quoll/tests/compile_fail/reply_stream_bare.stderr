@@ -1,11 +1,11 @@
 error: `Events` wraps the type of each item: write `Events<Note>`
- --> tests/compile_fail/reply_stream_bare.rs:7:38
+ --> tests/compile_fail/reply_stream_bare.rs:5:38
   |
-7 |         GET "/events" => events() -> Events;
+5 |         GET "/events" => events() -> Events;
   |                                      ^^^^^^
 
 error: `JsonLines` wraps one type, each item: write `JsonLines<Note>`
- --> tests/compile_fail/reply_stream_bare.rs:8:37
+ --> tests/compile_fail/reply_stream_bare.rs:6:37
   |
-8 |         GET "/lines"  => lines() -> rest::JsonLines<Note, Job>;
-  |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+6 |         GET "/lines"  => lines() -> quoll::JsonLines<Note, Job>;
+  |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,5 +1,5 @@
 error[E0080]: evaluation panicked: POST /v1/messages, the route `Streams::stream`, is the route `Messages::create` too, told apart by their `#[body(...)]`, which the OpenAPI document does not describe yet: write `#[openapi(none)]` on the api, for a contract that is only called
-  --> tests/compile_fail/group_list_fixed_field_pair_with_document.rs:21:36
+  --> tests/compile_fail/group_list_fixed_field_pair_with_document.rs:18:36
    |
-21 |     pub api Api = "/v1" { streams::Streams };
+18 |     pub api Api = "/v1" { streams::Streams };
    |                                    ^^^^^^^ evaluation of `_::_` failed here

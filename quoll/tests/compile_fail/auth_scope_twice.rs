@@ -1,7 +1,5 @@
-use quoll::rest;
-
 // A scope written twice.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {

@@ -1,12 +1,10 @@
-use quoll::rest;
-
 /// The 12 first characters of an id, as Docker shows them.
 pub fn short_id(id: &str) -> &str {
     id.get(..12).unwrap_or(id)
 }
 
 /// Whether `error` is that of an item of a stream that did not decode, after which the stream goes on.
-pub fn is_undecoded(error: &rest::Error) -> bool {
+pub fn is_undecoded(error: &quoll::Error) -> bool {
     std::error::Error::source(error).is_some_and(|source| source.is::<serde_json::Error>())
 }
 

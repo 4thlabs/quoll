@@ -1,4 +1,4 @@
-//! The client side of what `rest::api!` writes: a request built from a route's arguments, sent through
+//! The client side of what `quoll::api!` writes: a request built from a route's arguments, sent through
 //! reqwest-middleware with its [`Route`] in its extensions, and its answer read as the route's result, whole or as a
 //! stream, or as an error.
 
@@ -28,7 +28,7 @@ use crate::__private::known::{IsByteStream, IsBytes, IsEvents, IsForm, IsJsonLin
 use crate::__private::read::{Deserialized, Read};
 use crate::__private::text;
 use crate::client::{CallTimeout, KeepsDeadline};
-use crate::rest::{self, Error, Problem, Result, Route};
+use crate::{Error, Problem, Result, Route};
 
 mod redact;
 mod stream;
@@ -660,14 +660,14 @@ async fn answered_error<E>(
     })?;
     let detail = (shape.read)(&headers, &body);
     let message = detail.as_ref().and_then(shape.message);
-    let answer = detail.map(|detail| rest::Response::from_parts(status, version, headers, detail));
+    let answer = detail.map(|detail| crate::Response::from_parts(status, version, headers, detail));
 
     Ok(Error::upstream(status, answer, Some(body), message))
 }
 
 /// A call of a route, described and not sent yet: the request the route's arguments write, or why they could not,
 /// and how its answer is read, its errors of the shape `E`. It is what each method of a group's client returns, a
-/// [`rest::Call`].
+/// [`quoll::Call`](crate::Call).
 #[must_use = "a call does nothing until it is awaited"]
 pub struct Pending<'a, T, E = Problem> {
     request: Result<Request<'a>>,
@@ -714,8 +714,8 @@ impl<'a, T: Send + 'static, E: Send + 'static> IntoFuture for Pending<'a, T, E> 
     }
 }
 
-impl<T: Send + 'static, E: Send + 'static> rest::Call<T, E> for Pending<'_, T, E> {
-    async fn response(self) -> Result<rest::Response<Result<T, E>>, E> {
+impl<T: Send + 'static, E: Send + 'static> crate::Call<T, E> for Pending<'_, T, E> {
+    async fn response(self) -> Result<crate::Response<Result<T, E>>, E> {
         let Self {
             request,
             read,
@@ -732,14 +732,14 @@ impl<T: Send + 'static, E: Send + 'static> rest::Call<T, E> for Pending<'_, T, E
             match read(Answer { response, route }).await {
                 Ok(value) => Ok(value),
                 // An answer of no content that is not the route's result keeps its status and its headers.
-                Err(error) if rest::no_content(status) => Err(error.cast()),
+                Err(error) if crate::no_content(status) => Err(error.cast()),
                 Err(error) => return Err(error.cast()),
             }
         } else {
             Err(answered_error(response, route, shape).await?)
         };
 
-        Ok(rest::Response::from_parts(status, version, headers, body))
+        Ok(crate::Response::from_parts(status, version, headers, body))
     }
 
     fn timeout(mut self, duration: Duration) -> Self {
@@ -802,7 +802,7 @@ impl Answer {
     /// The body, read as JSON, as [`Answer::json`] reads it.
     async fn read_json<T: DeserializeOwned>(self, nullable: bool) -> Result<T> {
         let route = self.route;
-        let empty = nullable && rest::no_content(self.response.status());
+        let empty = nullable && crate::no_content(self.response.status());
         let body = self.read().await?;
         let body: &[u8] = if empty { b"null" } else { &body };
 
@@ -874,7 +874,7 @@ impl Answer {
     /// The answer's content type, or `application/octet-stream` when it has none, or one that is not a media type, or
     /// when it is a 204 or a 205, whose body, dropped, the type was of.
     fn content_type(&self) -> Cow<'static, str> {
-        if rest::no_content(self.response.status()) {
+        if crate::no_content(self.response.status()) {
             return Cow::Borrowed(OCTET_STREAM);
         }
 
@@ -957,7 +957,7 @@ impl Answer {
     /// again.
     async fn read_as(self, expected: &str, utf8: bool) -> Result<bytes::Bytes> {
         // A 204 or a 205 has no body, and so no content type: an empty text.
-        if rest::no_content(self.response.status())
+        if crate::no_content(self.response.status())
             || content_type::is(self.response.headers(), expected, utf8)
         {
             return self.read().await;
@@ -977,7 +977,7 @@ impl Answer {
         let Self { response, route } = self;
 
         // A 204 or a 205 has no body, and so no content type: a stream that ends at once.
-        if rest::no_content(response.status())
+        if crate::no_content(response.status())
             || expected
                 .iter()
                 .any(|expected| content_type::is(response.headers(), expected, false))
@@ -994,7 +994,7 @@ impl Answer {
     async fn read(self) -> Result<bytes::Bytes> {
         let Self { response, route } = self;
 
-        if rest::no_content(response.status()) {
+        if crate::no_content(response.status()) {
             // The call has its answer: a body past the limit only costs the connection.
             let _ = read_up_to_limit(response).await;
 

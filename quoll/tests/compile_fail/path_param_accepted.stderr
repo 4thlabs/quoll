@@ -1,5 +1,5 @@
 error: the path parameter `job` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants
- --> tests/compile_fail/path_param_accepted.rs:7:39
+ --> tests/compile_fail/path_param_accepted.rs:5:39
   |
-7 |         GET "/jobs/{job}" => get(job: Accepted<u64>) -> String;
+5 |         GET "/jobs/{job}" => get(job: Accepted<u64>) -> String;
   |                                       ^^^^^^^^^^^^^

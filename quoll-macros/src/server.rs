@@ -87,14 +87,14 @@ fn group_trait(cx: &Cx) -> TokenStream {
             (Some(first), _) => {
                 let first = scheme_type(first);
 
-                quote_spanned! {span=> , Caller = <Self as ::quoll::rest::Authenticate<#first>>::Caller }
+                quote_spanned! {span=> , Caller = <Self as ::quoll::Authenticate<#first>>::Caller }
             }
-            (None, true) => quote_spanned! {span=> , Caller: ::quoll::rest::Scoped },
+            (None, true) => quote_spanned! {span=> , Caller: ::quoll::Scoped },
             (None, false) => quote! {},
         };
 
         // Spanned on the scheme in its `#[auth(...)]`, where an error on the bound points.
-        quote_spanned! {span=> + ::quoll::rest::Authenticate<#scheme #caller> }
+        quote_spanned! {span=> + ::quoll::Authenticate<#scheme #caller> }
     });
 
     quote! {
@@ -127,7 +127,7 @@ fn method(prefix: Option<&str>, bounds: &Bounds, route: &Route) -> TokenStream {
         let scheme = scheme_type(scheme);
         // Its own hygiene, so that a route's argument may be named `caller` too.
         let caller = Ident::new("caller", Span::mixed_site().located_at(span));
-        let ty = quote_spanned! {span=> <Self as ::quoll::rest::Authenticate<#scheme>>::Caller };
+        let ty = quote_spanned! {span=> <Self as ::quoll::Authenticate<#scheme>>::Caller };
         let optional = route.auth.as_ref().is_some_and(|auth| auth.optional);
 
         // Spanned on the scheme, as a service that does not authenticate it is the mistake an error names then.
@@ -141,7 +141,7 @@ fn method(prefix: Option<&str>, bounds: &Bounds, route: &Route) -> TokenStream {
     quote_spanned! {route.name.span()=>
         #docs
         fn #name(&self, #caller #(#args),*)
-            -> impl ::core::future::Future<Output = ::quoll::rest::Result<::quoll::rest::Response<#output>>> + ::core::marker::Send;
+            -> impl ::core::future::Future<Output = ::quoll::Result<::quoll::Response<#output>>> + ::core::marker::Send;
     }
 }
 
@@ -233,7 +233,7 @@ fn router_fn(api: &Api) -> TokenStream {
 }
 
 /// The function of a group's descriptor that serves its routes, by the service given, on a router: each route takes
-/// its `rest::Route` from the table of the api, under its prefix.
+/// its `quoll::Route` from the table of the api, under its prefix.
 fn serve_fn(cx: &Cx) -> TokenStream {
     let group = cx.group;
     let descriptor = descriptor_name(&group.name);
@@ -255,7 +255,7 @@ fn serve_fn(cx: &Cx) -> TokenStream {
             pub fn serve(
                 #router: ::quoll::__private::server::Routes,
                 #service: impl #server_trait,
-                #routes_table: &'static [::quoll::rest::Route; #count],
+                #routes_table: &'static [::quoll::Route; #count],
             ) -> ::quoll::__private::server::Routes {
                 ::quoll::__private::server::Group::new(#router, #service)
                     #(#routes)*

@@ -5,8 +5,8 @@ use std::future::Future;
 use http::HeaderValue;
 use http::request::Parts;
 
-use crate::rest::Result;
-use crate::rest::openapi::SecurityScheme;
+use crate::Result;
+use crate::openapi::SecurityScheme;
 
 mod basic;
 mod bearer;
@@ -25,8 +25,7 @@ pub(crate) use bearer::is_b64token;
 ///
 /// ```
 /// use http::request::Parts;
-/// use quoll::rest::openapi::SecurityScheme;
-/// use quoll::rest::{Error, Result, Scheme};
+/// use quoll::{Error, Result, Scheme, openapi::SecurityScheme};
 ///
 /// /// A request signed with a key the server knows: `X-Signature: <key id>:<signature>`.
 /// struct Hmac;
@@ -62,16 +61,16 @@ pub(crate) use bearer::is_b64token;
 /// }
 /// ```
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a scheme: `#[auth(...)]` takes `Bearer`, `Basic`, a scheme the contract declares, or a type implementing `quoll::rest::Scheme`",
+    message = "`{Self}` is not a scheme: `#[auth(...)]` takes `Bearer`, `Basic`, a scheme the contract declares, or a type implementing `quoll::Scheme`",
     label = "not a scheme",
-    note = "declare it in the contract, as `pub scheme Key = header \"X-Api-Key\";`, or implement `quoll::rest::Scheme` for `{Self}`"
+    note = "declare it in the contract, as `pub scheme Key = header \"X-Api-Key\";`, or implement `quoll::Scheme` for `{Self}`"
 )]
 pub trait Scheme: 'static {
     /// The credential the scheme reads: the token of [`Bearer`]. It is `Send`, as the service's `authenticate` takes
     /// it across an `await`.
     type Credential: Send + 'static;
 
-    /// The scheme's name: what [`Route::schemes`](crate::rest::Route::schemes) holds for a route that takes it, and
+    /// The scheme's name: what [`Route::schemes`](crate::Route::schemes) holds for a route that takes it, and
     /// the scheme of its `WWW-Authenticate` challenge unless [`CHALLENGE`](Scheme::CHALLENGE) says another. Each
     /// scheme of an api has its own.
     const NAME: &'static str;
@@ -101,7 +100,7 @@ pub trait Scheme: 'static {
 /// before the handler when the caller lacks one of them.
 ///
 /// ```
-/// use quoll::rest::Scoped;
+/// use quoll::Scoped;
 ///
 /// /// Who a request comes from, with the scopes its token grants.
 /// struct User {
@@ -115,9 +114,9 @@ pub trait Scheme: 'static {
 /// }
 /// ```
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` does not implement `quoll::rest::Scoped`, which a route with `scopes(...)` needs of its caller",
+    message = "`{Self}` does not implement `quoll::Scoped`, which a route with `scopes(...)` needs of its caller",
     label = "this caller holds no scopes",
-    note = "implement `quoll::rest::Scoped` for `{Self}`, whose `has_scope` says whether the caller holds a scope"
+    note = "implement `quoll::Scoped` for `{Self}`, whose `has_scope` says whether the caller holds a scope"
 )]
 pub trait Scoped {
     /// Whether the caller holds `scope`, one of the scopes a route names in its `#[auth(...)]`.
@@ -131,7 +130,7 @@ pub trait Scoped {
 /// not authenticate does not compile.
 ///
 /// ```
-/// use quoll::rest::{Authenticate, Bearer, Error, Result};
+/// use quoll::{Authenticate, Bearer, Error, Result};
 ///
 /// /// Who a request comes from, once its token is checked.
 /// struct User {
@@ -154,7 +153,7 @@ pub trait Scoped {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not implement `Authenticate<{S}>`, which a group it serves takes",
     label = "this service authenticates no `{S}` credential",
-    note = "a group or a route with `#[auth({S})]` gives each handler its caller: implement `quoll::rest::Authenticate<{S}>` for `{Self}`, with its `type Caller` and its `async fn authenticate`"
+    note = "a group or a route with `#[auth({S})]` gives each handler its caller: implement `quoll::Authenticate<{S}>` for `{Self}`, with its `type Caller` and its `async fn authenticate`"
 )]
 pub trait Authenticate<S: Scheme>: Send + Sync + 'static {
     /// Who a request comes from, once its credential is checked: what the handlers receive.
@@ -171,8 +170,8 @@ pub trait Authenticate<S: Scheme>: Send + Sync + 'static {
     /// [`Error::internal`] for a failure of the server's own, as a database that does not answer, answered 500 so
     /// that the client does not take its credential for a wrong one.
     ///
-    /// [`Error::unauthorized`]: crate::rest::Error::unauthorized
-    /// [`Error::internal`]: crate::rest::Error::internal
+    /// [`Error::unauthorized`]: crate::Error::unauthorized
+    /// [`Error::internal`]: crate::Error::internal
     fn authenticate(
         &self,
         credential: S::Credential,

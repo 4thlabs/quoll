@@ -1,4 +1,3 @@
-use quoll::rest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +7,7 @@ pub struct Note {
 }
 
 // `Created` is the contract's own tokens: without its import, it is not found.
-rest::api! {
+quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
