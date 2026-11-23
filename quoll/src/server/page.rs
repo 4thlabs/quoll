@@ -1,15 +1,15 @@
-//! The page a bundler builds, served from its directory beside the api: each file of the directory, and `index.html`
-//! for a request of a page that is no file, so that the page's router takes it.
+//! The page a bundler builds, served from its directory beside the api by tower-http's `ServeDir`, with thin layers
+//! around it: a filter before it, the `Cache-Control` and the headers after it, and its fallback, `index.html` for a
+//! browser's request of a page that is no file.
 
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::error::Error as StdError;
 use std::fmt;
-use std::fs::{File, Metadata};
-use std::future::Future;
+use std::fs::Metadata;
+use std::future::{Future, poll_fn};
 use std::io;
-use std::path::Component;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll};
@@ -19,9 +19,8 @@ use axum::body::Body;
 use axum::extract::Request;
 use axum::response::{IntoResponse, Response};
 use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
-use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
-use tokio::io::AsyncReadExt;
-use tokio_util::io::ReaderStream;
+use percent_encoding::percent_decode_str;
+use tower_http::services::{ServeDir, ServeFile};
 use tower_service::Service;
 
 use crate::Error;
@@ -32,7 +31,7 @@ const IMMUTABLE: HeaderValue = HeaderValue::from_static("public, max-age=3153600
 /// The `Cache-Control` of any other file: kept, and checked again before each use.
 const NO_CACHE: HeaderValue = HeaderValue::from_static("no-cache");
 
-/// The file answered at `/`, and at any path that is no file.
+/// The file answered at `/`, in a directory, and for a browser's request of a page that is no file.
 const INDEX: &str = "index.html";
 
 /// The directory of the files the bundler names by their hash, as Vite names it.
@@ -41,18 +40,45 @@ const ASSETS: &str = "assets";
 /// The manifest Vite writes with `build.manifest`, which names the files it hashed, under the page's directory.
 const MANIFEST: &str = ".vite/manifest.json";
 
+/// The well-known directory of RFC 8615, the one hidden directory a page serves, at its root.
+const WELL_KNOWN: &str = ".well-known";
+
+/// The extensions of the compressed copies `ServeDir` sends in the place of a file.
+const COPIES: [&str; 3] = ["br", "gz", "zst"];
+
+/// The headers of a conditional or partial request, which `index.html` does not read: it is always sent whole.
+const CONDITIONS: [header::HeaderName; 6] = [
+    header::IF_MATCH,
+    header::IF_NONE_MATCH,
+    header::IF_MODIFIED_SINCE,
+    header::IF_UNMODIFIED_SINCE,
+    header::IF_RANGE,
+    header::RANGE,
+];
+
 /// The files of a page's directory, a service an axum router falls back to.
 #[derive(Debug, Clone)]
 pub(crate) struct Page {
     dir: Arc<Path>,
+    files: ServeDir<Fallback>,
     manifest: Arc<Manifest>,
 }
 
 impl Page {
     /// The page of the files in `dir`, read at each request.
     pub(crate) fn new(dir: PathBuf) -> Self {
+        let dir: Arc<Path> = dir.into();
+        let files = ServeDir::new(&*dir)
+            .precompressed_br()
+            .precompressed_gzip()
+            .precompressed_zstd()
+            .fallback(Fallback {
+                dir: Arc::clone(&dir),
+            });
+
         Self {
-            dir: dir.into(),
+            dir,
+            files,
             manifest: Arc::default(),
         }
     }
@@ -70,7 +96,7 @@ impl Service<Request> for Page {
     fn call(&mut self, request: Request) -> Self::Future {
         let page = self.clone();
 
-        Box::pin(async move { Ok(answer(page, request).await) })
+        Box::pin(async move { Ok(page.answer(request).await) })
     }
 }
 
@@ -123,77 +149,204 @@ impl StdError for NoIndex {
     }
 }
 
-/// The answer to `request` from the files of `page`.
-async fn answer(page: Page, request: Request) -> Response {
-    let (parts, _) = request.into_parts();
+impl Page {
+    /// The answer to `request`: refused by the filter, or `ServeDir`'s, with the headers of the page.
+    async fn answer(mut self, mut request: Request) -> Response {
+        if request.method() != Method::GET && request.method() != Method::HEAD {
+            return method_not_allowed();
+        }
 
-    if parts.method != Method::GET && parts.method != Method::HEAD {
-        let mut response = Error::new(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "the page answers `GET` and `HEAD` alone",
+        let path = request.uri().path();
+        let segments = match segments(path) {
+            Ok(segments) => segments,
+            Err(refused) => return Error::not_found(refused.detail()).into_response(),
+        };
+        let relative = segments.join("/");
+        let directory = segments.is_empty() || path.ends_with('/');
+
+        if directory || segments.last().is_some_and(|last| last == INDEX) {
+            unconditional(request.headers_mut());
+        }
+
+        let dir = Arc::clone(&self.dir);
+        let manifest = Arc::clone(&self.manifest);
+        let checked = {
+            let relative = relative.clone();
+
+            tokio::task::spawn_blocking(move || -> Result<Hashed, Refusal> {
+                filter(&dir, &relative, directory)?;
+
+                Ok(dir
+                    .canonicalize()
+                    .map_or(Hashed::Named, |root| manifest.hashed(&root)))
+            })
+            .await
+        };
+        let hashed = match checked {
+            Ok(Ok(hashed)) => hashed,
+            Ok(Err(refusal)) => return refusal.into_response(),
+            Err(error) => return Error::internal(error).into_response(),
+        };
+
+        // `ServeDir` is ready when its fallback is, which always is.
+        let _ = poll_fn(|cx| self.files.poll_ready(cx)).await;
+
+        let served = match self.files.call(request).await {
+            Ok(served) => served.map(Body::new),
+            Err(never) => match never {},
+        };
+
+        dressed(served, &relative, &hashed)
+    }
+}
+
+/// The 405 of a method other than `GET` and `HEAD`.
+fn method_not_allowed() -> Response {
+    let mut response = Error::new(
+        StatusCode::METHOD_NOT_ALLOWED,
+        "the page answers `GET` and `HEAD` alone",
+    )
+    .into_response();
+
+    response
+        .headers_mut()
+        .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
+    response
+}
+
+/// Removes from `headers` what makes a request conditional or partial, so that its file is sent whole.
+fn unconditional(headers: &mut HeaderMap) {
+    for name in CONDITIONS {
+        headers.remove(name);
+    }
+}
+
+/// `served`, an answer of `ServeDir`, of the file at `relative`, with the headers of the page: `nosniff`, a `Vary`
+/// on a compressed copy, the `Cache-Control` of a file that `hashed` tells, and a problem for an error it answered
+/// with no body.
+fn dressed(served: Response, relative: &str, hashed: &Hashed) -> Response {
+    let status = served.status();
+    let mut served = if status.is_server_error() {
+        Error::internal("the page's file cannot be read").into_response()
+    } else if status == StatusCode::PRECONDITION_FAILED {
+        Error::new(
+            status,
+            "the file was modified since the date the request gives",
         )
-        .into_response();
+        .into_response()
+    } else {
+        served
+    };
+    let headers = served.headers_mut();
 
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+
+    if headers.contains_key(header::CONTENT_ENCODING) {
+        headers.append(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
+
+    // The fallback gives its own; an error none.
+    let cached = status.is_success() || status == StatusCode::NOT_MODIFIED;
+
+    if cached && !headers.contains_key(header::CACHE_CONTROL) {
+        let cache = if hashed.names(relative) {
+            IMMUTABLE
+        } else {
+            NO_CACHE
+        };
+
+        headers.insert(header::CACHE_CONTROL, cache);
+    }
+
+    served
+}
+
+/// What `ServeDir` falls back to when a path is no file: `index.html` for a browser's request of a page, a problem
+/// 404 for any other request.
+#[derive(Debug, Clone)]
+struct Fallback {
+    dir: Arc<Path>,
+}
+
+impl Service<Request> for Fallback {
+    type Response = Response;
+    type Error = Infallible;
+    type Future = Pin<Box<dyn Future<Output = Result<Response, Infallible>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: Request) -> Self::Future {
+        let dir = Arc::clone(&self.dir);
+
+        Box::pin(async move { Ok(fall_back(dir, request).await) })
+    }
+}
+
+/// The answer to `request`, of a path that is no file of `dir`.
+async fn fall_back(dir: Arc<Path>, mut request: Request) -> Response {
+    let well_known = request
+        .uri()
+        .path()
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .is_some_and(|first| first == WELL_KNOWN);
+
+    // Programs read the files of `/.well-known/`, which are never a page.
+    if well_known {
+        return Error::not_found("the page has no file of this path").into_response();
+    }
+
+    if !accepts_html(request.headers()) {
+        let mut response = Error::not_found("the page has no file of this path").into_response();
+
+        // A request that accepted `text/html` would have had `index.html`.
         response
             .headers_mut()
-            .insert(header::ALLOW, HeaderValue::from_static("GET, HEAD"));
+            .insert(header::VARY, HeaderValue::from_static("accept"));
         return response;
     }
 
-    let segments = match segments(parts.uri.path()) {
-        Ok(segments) => segments,
-        Err(refused) => return Error::not_found(refused.detail()).into_response(),
-    };
-    let wanted = Wanted {
-        slashed: parts.uri.path().ends_with('/'),
-        query: parts.uri.query().map(str::to_owned),
-        // Never under `/.well-known/`, whose files are read by programs.
-        page: accepts_html(&parts.headers)
-            && segments.first().map(String::as_str) != Some(WELL_KNOWN),
-        encodings: accepted(&parts.headers),
-    };
-    let found = tokio::task::spawn_blocking(move || page.find(&segments, &wanted)).await;
+    let checked = {
+        let dir = Arc::clone(&dir);
 
-    match found {
-        Ok(Found::File(served)) => served.respond(&parts.headers, parts.method == Method::HEAD),
-        Ok(Found::Directory(location)) => {
-            let mut response = Response::new(Body::empty());
+        tokio::task::spawn_blocking(move || filter(&dir, "", true)).await
+    };
 
-            *response.status_mut() = StatusCode::PERMANENT_REDIRECT;
-            response.headers_mut().insert(header::LOCATION, location);
-            response
-        }
-        Ok(Found::Refused(refused)) => Error::not_found(refused.detail()).into_response(),
-        Ok(Found::Missing) => Error::not_found("the page has no file of this path").into_response(),
-        Err(error) => Error::internal(error).into_response(),
+    match checked {
+        Ok(Ok(())) => {}
+        Ok(Err(refusal)) => return refusal.into_response(),
+        Err(error) => return Error::internal(error).into_response(),
     }
+
+    unconditional(request.headers_mut());
+
+    let mut index = ServeFile::new(dir.join(INDEX))
+        .precompressed_br()
+        .precompressed_gzip()
+        .precompressed_zstd();
+    let mut served = match index.call(request).await {
+        Ok(served) => served.map(Body::new),
+        Err(never) => match never {},
+    };
+
+    if served.status() == StatusCode::NOT_FOUND {
+        return Error::not_found("the page has no `index.html`").into_response();
+    }
+
+    let headers = served.headers_mut();
+
+    headers.insert(header::CACHE_CONTROL, NO_CACHE);
+    headers.append(header::VARY, HeaderValue::from_static("accept"));
+    served
 }
 
-/// What a request wants of the page, besides its path.
-struct Wanted {
-    /// Whether its path ends with a `/`, as a directory's does.
-    slashed: bool,
-    /// Its query, which a redirection keeps.
-    query: Option<String>,
-    /// Whether it asks for a page, which `index.html` answers when its path is no file.
-    page: bool,
-    /// The codings it accepts, the most wanted first.
-    encodings: Vec<Encoding>,
-}
-
-/// What a path of the page leads to.
-enum Found {
-    /// A file, boxed as it is the largest by far.
-    File(Box<Served>),
-    /// A directory with an `index.html`, asked without its final `/`: the `Location` of the path with it.
-    Directory(HeaderValue),
-    /// A file the page does not serve.
-    Refused(Refused),
-    /// No file.
-    Missing,
-}
-
-/// Why a path of a request is refused before any file is looked for, each a 404.
+/// Why a path of a request is refused, each a 404.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Refused {
     /// A `..` segment, or a symbolic link whose target is out of the directory.
@@ -202,7 +355,7 @@ enum Refused {
     Hidden,
     /// A path that is not UTF-8 once decoded.
     NotUtf8,
-    /// A segment with a `\` or a NUL, which no segment of a file's path holds.
+    /// A segment with a `\` or a NUL, or empty, which no segment of a file's path is.
     Unnamable,
 }
 
@@ -216,25 +369,27 @@ impl Refused {
                 "the path is not UTF-8 once decoded, which no file of the page is named in"
             }
             Self::Unnamable => {
-                "the path holds a `\\` or a NUL, which no file of the page is named with"
+                "the path holds an empty segment, a `\\` or a NUL, which no file of the page is named with"
             }
         }
     }
 }
 
-/// The well-known directory of RFC 8615, the one hidden directory a page serves, at its root.
-const WELL_KNOWN: &str = ".well-known";
-
-/// The segments of a request's `path`, decoded, or why it is refused.
+/// The segments of a request's `path`, decoded, or why it is refused. An empty segment is refused but at the ends,
+/// `/` and `/docs/`, so that no path of a redirection `ServeDir` writes begins with `//`, another host.
 fn segments(path: &str) -> Result<Vec<String>, Refused> {
     let decoded = percent_decode_str(path)
         .decode_utf8()
         .map_err(|_| Refused::NotUtf8)?;
+    let parts: Vec<&str> = decoded.split('/').collect();
+    let last = parts.len().saturating_sub(1);
     let mut segments: Vec<String> = Vec::new();
 
-    for segment in decoded.split('/') {
+    for (at, segment) in parts.into_iter().enumerate() {
         match segment {
-            "" | "." => {}
+            "" if at == 0 || at == last => {}
+            "" => return Err(Refused::Unnamable),
+            "." => {}
             ".." => return Err(Refused::Outside),
             _ if segment.contains(['\\', '\0']) => return Err(Refused::Unnamable),
             WELL_KNOWN if segments.is_empty() => segments.push(segment.to_owned()),
@@ -246,267 +401,69 @@ fn segments(path: &str) -> Result<Vec<String>, Refused> {
     Ok(segments)
 }
 
-/// What a segment of a path holds escaped, as the URL standard escapes a path segment, and its `/` and `%`.
-const SEGMENT: &AsciiSet = &CONTROLS
-    .add(b' ')
-    .add(b'"')
-    .add(b'#')
-    .add(b'<')
-    .add(b'>')
-    .add(b'?')
-    .add(b'`')
-    .add(b'{')
-    .add(b'}')
-    .add(b'/')
-    .add(b'%');
-
-/// The path of `segments` with a final `/`, and `query`: the `Location` of a directory asked without it. It is
-/// written from the segments, so it always begins with one `/` and a segment, never `//`, another host.
-fn directory(segments: &[String], query: Option<&str>) -> Option<HeaderValue> {
-    let mut location = String::new();
-
-    for segment in segments {
-        location.push('/');
-        location.extend(utf8_percent_encode(segment, SEGMENT));
-    }
-
-    location.push('/');
-
-    if let Some(query) = query {
-        location.push('?');
-        location.push_str(query);
-    }
-
-    HeaderValue::from_str(&location).ok()
-}
-
-/// Whether `headers` accept `text/html`, as a browser's request of a page does, and a script's or an image's does
-/// not: the request that `index.html` answers when its path is no file.
-fn accepts_html(headers: &HeaderMap) -> bool {
-    headers
-        .get_all(header::ACCEPT)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .any(|range| {
-            let mut parts = range.split(';');
-            let media_type = parts.next().unwrap_or_default().trim();
-
-            media_type.eq_ignore_ascii_case("text/html") && weight(parts) > 0.0
-        })
-}
-
-/// The weight of an item of `Accept` or `Accept-Encoding`, from its parameters: its `q`, 1 when it has none, 0 when
-/// it does not read.
-fn weight<'a>(parameters: impl Iterator<Item = &'a str>) -> f32 {
-    parameters
-        .filter_map(|parameter| {
-            let parameter = parameter.trim();
-
-            parameter
-                .strip_prefix("q=")
-                .or_else(|| parameter.strip_prefix("Q="))
-        })
-        .map(|weight| weight.trim().parse::<f32>().unwrap_or(0.0))
-        .next()
-        .unwrap_or(1.0)
-}
-
-/// A content coding a file may be stored in beside itself, `app.js.br` beside `app.js`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Encoding {
-    Brotli,
-    Gzip,
-}
-
-impl Encoding {
-    /// The extension of the file stored in it.
-    const fn extension(self) -> &'static str {
-        match self {
-            Self::Brotli => "br",
-            Self::Gzip => "gz",
-        }
-    }
-
-    /// Its name in `Content-Encoding`.
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Brotli => "br",
-            Self::Gzip => "gzip",
-        }
-    }
-}
-
-/// The codings `headers` accept, the most wanted first, Brotli before gzip when they are wanted alike.
-fn accepted(headers: &HeaderMap) -> Vec<Encoding> {
-    let mut brotli = None;
-    let mut gzip = None;
-    let mut any = None;
-
-    let codings = headers
-        .get_all(header::ACCEPT_ENCODING)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','));
-
-    for coding in codings {
-        let mut parts = coding.split(';');
-        let name = parts.next().unwrap_or_default().trim();
-        let weight = weight(parts);
-
-        if name.eq_ignore_ascii_case("br") {
-            brotli = Some(weight);
-        } else if name.eq_ignore_ascii_case("gzip") || name.eq_ignore_ascii_case("x-gzip") {
-            gzip = Some(weight);
-        } else if name == "*" {
-            any = Some(weight);
-        }
-    }
-
-    let brotli = brotli.or(any).unwrap_or(0.0);
-    let gzip = gzip.or(any).unwrap_or(0.0);
-    let mut encodings = Vec::new();
-
-    if brotli > 0.0 {
-        encodings.push((Encoding::Brotli, brotli));
-    }
-
-    if gzip > 0.0 {
-        encodings.push((Encoding::Gzip, gzip));
-    }
-
-    // A stable sort keeps Brotli first when both weigh the same.
-    encodings.sort_by(|(_, first), (_, second)| second.total_cmp(first));
-    encodings
-        .into_iter()
-        .map(|(encoding, _)| encoding)
-        .collect()
-}
-
-impl Page {
-    /// The file at `segments` under the page's directory: the file of that path, else the `index.html` of a
-    /// directory of that path, else the page's `index.html` when the request asks for a page. Each is opened by its
-    /// real path, its symbolic links followed, which must be in the directory's, in the first coding of the request's
-    /// stored beside it.
-    fn find(&self, segments: &[String], wanted: &Wanted) -> Found {
-        let Ok(root) = self.dir.canonicalize() else {
-            return Found::Missing;
-        };
-        let hashed = self.manifest.hashed(&root);
-        let served = |path: &str| served(&root, path, &wanted.encodings, &hashed);
-
-        if segments.is_empty() {
-            return served(INDEX).into();
-        }
-
-        let path = segments.join("/");
-
-        match served(&path) {
-            Opened::No => {}
-            opened => return opened.into(),
-        }
-
-        // A file of that path is no directory, whose `index.html` is not opened then.
-        match served(&format!("{path}/{INDEX}")) {
-            Opened::Yes(_) if !wanted.slashed => {
-                return directory(segments, wanted.query.as_deref())
-                    .map_or(Found::Missing, Found::Directory);
-            }
-            Opened::No => {}
-            opened => return opened.into(),
-        }
-
-        if wanted.page {
-            return served(INDEX).into();
-        }
-
-        Found::Missing
-    }
-}
-
-impl From<Opened<Served>> for Found {
-    fn from(opened: Opened<Served>) -> Self {
-        match opened {
-            Opened::Yes(served) => Self::File(Box::new(served)),
-            Opened::Refused(refused) => Self::Refused(refused),
-            Opened::No => Self::Missing,
-        }
-    }
-}
-
-/// What opening a file gives.
-enum Opened<T> {
-    /// The file.
-    Yes(T),
-    /// A file the page does not serve: out of the directory, or hidden, by its real path.
+/// Why the filter refuses a request before `ServeDir` reads it.
+#[derive(Debug, PartialEq, Eq)]
+enum Refusal {
+    /// A file the page does not serve, by its real path.
     Refused(Refused),
-    /// No file.
-    No,
+    /// A file whose time no HTTP date holds, before 1970 or from the year 10000, which `ServeDir` cannot answer.
+    Undated(PathBuf),
 }
 
-/// The file at `path` under `root`, in the first of `encodings` stored beside it, or as it is, kept a year when
-/// `hashed` says the bundler named it by its hash.
-fn served(root: &Path, path: &str, encodings: &[Encoding], hashed: &Hashed) -> Opened<Served> {
-    let plain = root.join(path);
-    let (file, metadata) = match open(root, &plain) {
-        Opened::Yes(opened) => opened,
-        Opened::Refused(refused) => return Opened::Refused(refused),
-        Opened::No => return Opened::No,
-    };
-    let cache = if hashed.names(path) {
-        IMMUTABLE
-    } else {
-        NO_CACHE
-    };
-    let served = |file, metadata, encoding| Served {
-        path: path.to_owned(),
-        file,
-        metadata,
-        encoding,
-        cache: cache.clone(),
-    };
+impl IntoResponse for Refusal {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Refused(refused) => Error::not_found(refused.detail()).into_response(),
+            Self::Undated(file) => Error::internal(format!(
+                "the page's file `{}` has a time that no HTTP date holds, before 1970 or from the year 10000: touch it",
+                file.display()
+            ))
+            .into_response(),
+        }
+    }
+}
 
-    // A coding stored out of the directory, hidden, or that cannot be read, is passed over.
-    for &encoding in encodings {
-        let mut stored = plain.clone().into_os_string();
+/// The filter of a request of the file at `relative` under `dir`, or of its `index.html` when it asks for a
+/// `directory`: the file and each compressed copy of it that `ServeDir` may send, by their real paths, which must be
+/// under `dir`'s and not hidden, and each of a time an HTTP date holds. A file that is not there is left to
+/// `ServeDir`, which falls back.
+fn filter(dir: &Path, relative: &str, directory: bool) -> Result<(), Refusal> {
+    let Ok(root) = dir.canonicalize() else {
+        return Ok(());
+    };
+    let mut target = root.join(relative);
 
-        stored.push(".");
-        stored.push(encoding.extension());
+    if directory {
+        target.push(INDEX);
+    }
 
-        if let Opened::Yes((file, metadata)) = open(root, Path::new(&stored)) {
-            return Opened::Yes(served(file, metadata, Some(encoding)));
+    let copies = COPIES.map(|extension| {
+        let mut copy = target.clone().into_os_string();
+
+        copy.push(".");
+        copy.push(extension);
+        PathBuf::from(copy)
+    });
+
+    for candidate in std::iter::once(target).chain(copies) {
+        let Ok(real) = candidate.canonicalize() else {
+            continue;
+        };
+
+        under(&root, &real).map_err(Refusal::Refused)?;
+
+        let undated = std::fs::metadata(&real)
+            .ok()
+            .filter(Metadata::is_file)
+            .and_then(|metadata| metadata.modified().ok())
+            .is_some_and(|modified| !is_http_date(modified));
+
+        if undated {
+            return Err(Refusal::Undated(candidate));
         }
     }
 
-    Opened::Yes(served(file, metadata, None))
-}
-
-/// The regular file at `path`, by its real path, which must be under `root`, itself a real path, and not hidden.
-fn open(root: &Path, path: &Path) -> Opened<(File, Metadata)> {
-    let Ok(real) = path.canonicalize() else {
-        return Opened::No;
-    };
-
-    if let Err(refused) = under(root, &real) {
-        return Opened::Refused(refused);
-    }
-
-    let Ok(file) = File::open(&real) else {
-        return Opened::No;
-    };
-    let Ok(metadata) = file.metadata() else {
-        return Opened::No;
-    };
-
-    if !metadata.is_file() {
-        return Opened::No;
-    }
-
-    match opened_under(root, &real, &file, &metadata) {
-        Opened::Yes(()) => Opened::Yes((file, metadata)),
-        Opened::Refused(refused) => Opened::Refused(refused),
-        Opened::No => Opened::No,
-    }
+    Ok(())
 }
 
 /// Whether `real`, a real path, is a file the page serves under `root`, its real path: under it, and with no hidden
@@ -531,62 +488,44 @@ fn under(root: &Path, real: &Path) -> Result<(), Refused> {
     Ok(())
 }
 
-/// Whether `file`, opened at `real`, a real path the page serves under `root`, is still one: a directory of the path
-/// swapped for a symbolic link between the check and the open would have opened a file elsewhere.
-///
-/// On Linux, the real path of the opened file is read through `/proc/self/fd`. Elsewhere, or without `/proc`, by
-/// [`reopened_under`].
-fn opened_under(root: &Path, real: &Path, file: &File, metadata: &Metadata) -> Opened<()> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::fd::AsRawFd;
+/// The first second an HTTP date cannot hold, in the year 10000.
+const YEAR_10000: u64 = 253_402_300_800;
 
-        if let Ok(opened) = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd())) {
-            return match under(root, &opened) {
-                Ok(()) => Opened::Yes(()),
-                Err(refused) => Opened::Refused(refused),
-            };
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    let _ = file;
-
-    reopened_under(root, real, metadata)
+/// Whether an HTTP date holds `time`: from 1970, and before the year 10000.
+fn is_http_date(time: SystemTime) -> bool {
+    time.duration_since(UNIX_EPOCH)
+        .is_ok_and(|since| since.as_secs() < YEAR_10000)
 }
 
-/// Whether `real` is still a real path the page serves under `root`, made real again, and on Unix still the file of
-/// `metadata`, by its device and inode: a link swapped in and out again between the two checks is not seen. A file
-/// replaced or removed meanwhile, as a deployment does, is no file, not one out of the directory.
-fn reopened_under(root: &Path, real: &Path, metadata: &Metadata) -> Opened<()> {
-    let Ok(again) = real.canonicalize() else {
-        return Opened::No;
-    };
+/// Whether `headers` accept `text/html`, as a browser's request of a page does, and a script's or an image's does
+/// not: the request that `index.html` answers when its path is no file. `*/*` alone does not count.
+fn accepts_html(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(header::ACCEPT)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|range| {
+            let mut parts = range.split(';');
+            let media_type = parts.next().unwrap_or_default().trim();
 
-    if let Err(refused) = under(root, &again) {
-        return Opened::Refused(refused);
-    }
-
-    if !is_same_file(&again, metadata) {
-        return Opened::No;
-    }
-
-    Opened::Yes(())
+            media_type.eq_ignore_ascii_case("text/html") && weight(parts) > 0.0
+        })
 }
 
-/// Whether the file at `path` is the one of `metadata`, by its device and inode.
-#[cfg(unix)]
-fn is_same_file(path: &Path, metadata: &Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
+/// The weight of an item of `Accept`, from its parameters: its `q`, 1 when it has none, 0 when it does not read.
+fn weight<'a>(parameters: impl Iterator<Item = &'a str>) -> f32 {
+    parameters
+        .filter_map(|parameter| {
+            let parameter = parameter.trim();
 
-    std::fs::metadata(path)
-        .is_ok_and(|other| other.dev() == metadata.dev() && other.ino() == metadata.ino())
-}
-
-/// Windows names a file by no stable number: the path made real again is the check.
-#[cfg(not(unix))]
-fn is_same_file(_path: &Path, _metadata: &Metadata) -> bool {
-    true
+            parameter
+                .strip_prefix("q=")
+                .or_else(|| parameter.strip_prefix("Q="))
+        })
+        .map(|weight| weight.trim().parse::<f32>().unwrap_or(0.0))
+        .next()
+        .unwrap_or(1.0)
 }
 
 /// The names of the files Vite hashed, read from its manifest, again when the manifest changes.
@@ -595,63 +534,116 @@ struct Manifest {
     read: Mutex<Option<Read>>,
 }
 
-/// A manifest read: what it was when read, and the files it names, `None` when it does not read.
+/// A manifest read: what it was on disk, and the files it names, `None` when it does not read.
 #[derive(Debug)]
 struct Read {
-    stamp: (Option<SystemTime>, u64),
+    stamp: Stamp,
     files: Option<Arc<HashSet<String>>>,
 }
 
+/// What a file is on disk, which changes when it is written anew: its length, the time it was modified, and on Unix
+/// its device, its inode and the time its inode changed, which a build that fixes the times of its files,
+/// `SOURCE_DATE_EPOCH`, still changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Stamp {
+    len: u64,
+    modified: Option<SystemTime>,
+    #[cfg(unix)]
+    inode: (u64, u64, i64, i64),
+}
+
+impl Stamp {
+    fn of(metadata: &Metadata) -> Self {
+        #[cfg(unix)]
+        let inode = {
+            use std::os::unix::fs::MetadataExt;
+
+            (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            )
+        };
+
+        Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            inode,
+        }
+    }
+}
+
 /// How the files named by their hash are told.
+#[derive(Debug)]
 enum Hashed {
     /// By the manifest of Vite, which names them.
     Listed(Arc<HashSet<String>>),
-    /// By their names alone, with no manifest: [`is_hashed`].
+    /// By their names alone, with no manifest.
     Named,
 }
 
 impl Hashed {
-    /// Whether the file at `path`, under the page's directory, is named by its hash.
+    /// Whether the file at `path`, under the page's directory, is named by its hash: its name has the shape of one,
+    /// and the manifest names it, or the file it is the `.map` of. With no manifest, the file is under `assets/` and
+    /// its hash holds a digit, which a word does not: `assets/logo-Darkmode.svg` is not one.
     fn names(&self, path: &str) -> bool {
         match self {
-            Self::Listed(files) => files.contains(path),
-            Self::Named => is_hashed(path),
+            Self::Listed(files) => {
+                let listed = files.contains(path)
+                    || path
+                        .strip_suffix(".map")
+                        .is_some_and(|file| files.contains(file));
+
+                listed && hashes(path).next().is_some()
+            }
+            Self::Named => {
+                path.strip_prefix(ASSETS)
+                    .is_some_and(|rest| rest.starts_with('/'))
+                    && hashes(path).any(|hash| hash.iter().any(u8::is_ascii_digit))
+            }
         }
     }
 }
 
 impl Manifest {
     /// How the files under `root`, a real path, named by their hash are told: by `root/.vite/manifest.json` when it
-    /// reads, read again when its time or its length change, else by their names.
+    /// reads, else by their names. It is read again when its [`Stamp`] changes.
     fn hashed(&self, root: &Path) -> Hashed {
-        let path = root.join(MANIFEST);
-        let metadata = path
+        let real = root
+            .join(MANIFEST)
             .canonicalize()
             .ok()
-            .filter(|real| real.starts_with(root))
+            .filter(|real| real.starts_with(root));
+        let metadata = real
+            .as_ref()
             .and_then(|real| std::fs::metadata(real).ok())
             .filter(Metadata::is_file);
         let mut read = self.read.lock().unwrap_or_else(PoisonError::into_inner);
 
-        let Some(metadata) = metadata else {
+        let (Some(real), Some(metadata)) = (real, metadata) else {
             *read = None;
             return Hashed::Named;
         };
 
-        let stamp = (metadata.modified().ok(), metadata.len());
+        let stamp = Stamp::of(&metadata);
 
         if read.as_ref().is_none_or(|read| read.stamp != stamp) {
-            let files = std::fs::read(&path)
-                .ok()
-                .and_then(|bytes| listed(&bytes))
-                .map(Arc::new);
-
-            if files.is_none() {
-                tracing::warn!(
-                    manifest = %path.display(),
-                    "the page's Vite manifest does not read: its hashed files are told by their names"
-                );
-            }
+            let files = std::fs::read(&real)
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| listed(&bytes).map_err(|error| error.to_string()));
+            let files = match files {
+                Ok(files) => Some(Arc::new(files)),
+                Err(error) => {
+                    tracing::warn!(
+                        manifest = %real.display(),
+                        error = %error,
+                        "the page's Vite manifest does not read: its hashed files are told by their names"
+                    );
+                    None
+                }
+            };
 
             *read = Some(Read { stamp, files });
         }
@@ -663,11 +655,13 @@ impl Manifest {
     }
 }
 
-/// The files a manifest of Vite names, the `file`, `css` and `assets` of each of its chunks, or `None` when `bytes`
-/// is not one.
-fn listed(bytes: &[u8]) -> Option<HashSet<String>> {
-    let manifest: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_slice(bytes).ok()?;
+/// The files a manifest of Vite names, the `file`, `css` and `assets` of each of its chunks.
+///
+/// # Errors
+///
+/// When `bytes` are not a JSON object.
+fn listed(bytes: &[u8]) -> Result<HashSet<String>, serde_json::Error> {
+    let manifest: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(bytes)?;
     let mut files = HashSet::new();
 
     for chunk in manifest.values() {
@@ -686,206 +680,23 @@ fn listed(bytes: &[u8]) -> Option<HashSet<String>> {
         }
     }
 
-    Some(files)
+    Ok(files)
 }
 
-/// A file of the page, opened, to be answered.
-struct Served {
-    /// Its path under the directory, `/` between its segments, which names its type.
-    path: String,
-    file: File,
-    metadata: Metadata,
-    /// The coding it is stored in, or `None` as it is.
-    encoding: Option<Encoding>,
-    /// Its `Cache-Control`: kept a year when the bundler named it by its hash, checked again otherwise.
-    cache: HeaderValue,
-}
+/// The eight characters of each place where the name of the file at `path` has the shape of a hash, as Vite writes
+/// one: a `-`, eight characters of base64url, and a `.`, `index-BXa3kD9f.js`.
+fn hashes(path: &str) -> impl Iterator<Item = &[u8]> {
+    let name = path.rsplit('/').next().unwrap_or(path).as_bytes();
 
-impl Served {
-    /// The answer of the file to a request of `headers`: a 304 when the request's copy is the file's, else the file,
-    /// with no body for a `HEAD`.
-    fn respond(self, headers: &HeaderMap, head: bool) -> Response {
-        // A time an HTTP date cannot hold is no time: no `Last-Modified`, and `If-Modified-Since` is not read.
-        let modified = self
-            .metadata
-            .modified()
-            .ok()
-            .filter(|modified| http_date(*modified).is_some());
-        let tag = self.tag();
-        let mut response = Response::new(Body::empty());
-        let answered = response.headers_mut();
-
-        answered.insert(header::ETAG, tag.clone());
-        answered.insert(header::CACHE_CONTROL, self.cache.clone());
-        answered.insert(header::VARY, HeaderValue::from_static("accept-encoding"));
-        answered.insert(
-            header::X_CONTENT_TYPE_OPTIONS,
-            HeaderValue::from_static("nosniff"),
-        );
-
-        if let Some(date) = modified.and_then(http_date) {
-            answered.insert(header::LAST_MODIFIED, date);
-        }
-
-        if not_modified(headers, &tag, modified) {
-            *response.status_mut() = StatusCode::NOT_MODIFIED;
-            return response;
-        }
-
-        answered.insert(header::CONTENT_TYPE, self.content_type());
-        answered.insert(header::CONTENT_LENGTH, self.metadata.len().into());
-
-        if let Some(encoding) = self.encoding {
-            answered.insert(
-                header::CONTENT_ENCODING,
-                HeaderValue::from_static(encoding.name()),
-            );
-        }
-
-        // No more than its `Content-Length`, though the file grows as it is sent.
-        if !head {
-            let file = tokio::fs::File::from_std(self.file).take(self.metadata.len());
-
-            *response.body_mut() = Body::from_stream(ReaderStream::new(file));
-        }
-
-        response
-    }
-
-    /// Its entity tag: its length, the time it was modified, on Unix its inode and the time its inode changed, and
-    /// its coding. A build that fixes the time of its files, `SOURCE_DATE_EPOCH`, writes each anew, with a new inode
-    /// and change time. It is weak, as a layer may compress a file stored as it is, which keeps its tag.
-    fn tag(&self) -> HeaderValue {
-        let nanos = self
-            .metadata
-            .modified()
-            .ok()
-            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |since| since.as_nanos());
-        let coding = self.encoding.map_or(String::new(), |encoding| {
-            format!("-{}", encoding.extension())
-        });
-        let tag = format!(
-            "W/\"{:x}-{nanos:x}{}{coding}\"",
-            self.metadata.len(),
-            inode(&self.metadata)
-        );
-
-        HeaderValue::from_str(&tag).expect("a tag of hexadecimal digits is a header value")
-    }
-
-    /// The content type of its extension, in UTF-8 for text, `application/octet-stream` when none is known.
-    fn content_type(&self) -> HeaderValue {
-        let Some(mime) = mime_guess::from_path(&self.path).first() else {
-            return HeaderValue::from_static("application/octet-stream");
-        };
-
-        let content_type =
-            if mime.type_() == mime_guess::mime::TEXT && mime.get_param("charset").is_none() {
-                format!("{mime}; charset=utf-8")
-            } else {
-                mime.to_string()
-            };
-
-        HeaderValue::from_str(&content_type)
-            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"))
-    }
-}
-
-/// The inode of `metadata` and the time it changed, for its tag.
-#[cfg(unix)]
-fn inode(metadata: &Metadata) -> String {
-    use std::os::unix::fs::MetadataExt;
-
-    format!(
-        "-{:x}-{:x}.{:x}",
-        metadata.ino(),
-        metadata.ctime(),
-        metadata.ctime_nsec()
-    )
-}
-
-/// Windows names a file by no stable number.
-#[cfg(not(unix))]
-fn inode(_metadata: &Metadata) -> String {
-    String::new()
-}
-
-/// The first second an HTTP date cannot hold, in the year 10000.
-const YEAR_10000: u64 = 253_402_300_800;
-
-/// `time` as an HTTP date, or `None` before 1970 or from the year 10000 on, which it cannot hold.
-fn http_date(time: SystemTime) -> Option<HeaderValue> {
-    let since = time.duration_since(UNIX_EPOCH).ok()?;
-
-    if since.as_secs() >= YEAR_10000 {
-        return None;
-    }
-
-    HeaderValue::from_str(&httpdate::fmt_http_date(time)).ok()
-}
-
-/// Whether the copy a request of `headers` holds is the file of `tag`, modified at `modified`: by `If-None-Match`,
-/// or by `If-Modified-Since` when the request has no `If-None-Match`, as RFC 9110 says.
-fn not_modified(headers: &HeaderMap, tag: &HeaderValue, modified: Option<SystemTime>) -> bool {
-    let mut tags = headers.get_all(header::IF_NONE_MATCH).iter().peekable();
-
-    if tags.peek().is_some() {
-        let ours = weak(tag.to_str().unwrap_or_default());
-
-        return tags
-            .filter_map(|value| value.to_str().ok())
-            .flat_map(|value| value.split(','))
-            .map(str::trim)
-            .any(|theirs| theirs == "*" || weak(theirs) == ours);
-    }
-
-    let since = headers
-        .get(header::IF_MODIFIED_SINCE)
-        .and_then(|since| since.to_str().ok())
-        .and_then(|since| httpdate::parse_http_date(since).ok());
-    let (Some(since), Some(modified)) = (since, modified) else {
-        return false;
-    };
-
-    // An HTTP date counts whole seconds.
-    let seconds = |time: SystemTime| {
-        time.duration_since(UNIX_EPOCH)
-            .map_or(0, |since| since.as_secs())
-    };
-
-    seconds(modified) <= seconds(since)
-}
-
-/// A tag without its weak mark, `W/`, which `If-None-Match` compares without.
-fn weak(tag: &str) -> &str {
-    tag.strip_prefix("W/").unwrap_or(tag)
-}
-
-/// Whether the file at `path` is named by its hash, with no manifest of Vite, as Vite names what it writes in `assets/`: `index-BXa3kD9f.js`, a
-/// `-`, eight characters of base64url and a `.`. The eight hold a digit, which a word does not, so that a name written
-/// by hand, `assets/logo-Darkmode.svg`, is not kept a year; a hash with no digit, about a quarter of them, is checked
-/// again as any other file.
-fn is_hashed(path: &str) -> bool {
-    let Some(name) = path
-        .strip_prefix(ASSETS)
-        .and_then(|rest| rest.strip_prefix('/'))
-    else {
-        return false;
-    };
-    let name = name.rsplit('/').next().unwrap_or(name).as_bytes();
-
-    name.iter().enumerate().any(|(at, &byte)| {
-        let Some(hash) = name.get(at + 1..at + 9) else {
-            return false;
-        };
-
-        byte == b'-'
+    (0..name.len()).filter_map(move |at| {
+        let hash = name.get(at + 1..at + 9)?;
+        let shaped = name[at] == b'-'
             && name.get(at + 9) == Some(&b'.')
             && hash
                 .iter()
-                .all(|&byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-            && hash.iter().any(u8::is_ascii_digit)
+                .all(|&byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+
+        shaped.then_some(hash)
     })
 }
 
@@ -893,8 +704,12 @@ fn is_hashed(path: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn is_hashed(path: &str) -> bool {
+        Hashed::Named.names(path)
+    }
+
     #[test]
-    fn a_name_vite_writes_is_hashed() {
+    fn with_no_manifest_a_name_vite_writes_is_hashed() {
         assert!(is_hashed("assets/index-BXa3kD9f.js"));
         assert!(is_hashed("assets/index-B-3fk9aZ.css"));
         assert!(is_hashed("assets/vendor.lib-abc_1234.js"));
@@ -903,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn any_other_name_is_not() {
+    fn with_no_manifest_any_other_name_is_not() {
         assert!(!is_hashed("index.html"));
         assert!(!is_hashed("favicon-BXa3kD9f.ico"));
         assert!(!is_hashed("assets/logo.svg"));
@@ -917,6 +732,26 @@ mod tests {
     }
 
     #[test]
+    fn with_a_manifest_a_hash_must_both_have_its_shape_and_be_listed() {
+        let files = [
+            "assets/index-abcdefgh.js",
+            "assets/logo.svg",
+            "static/app-Q-_xYzWv.css",
+        ];
+        let hashed = Hashed::Listed(Arc::new(files.map(str::to_owned).into()));
+
+        // A hash of no digit is one when the manifest names it, wherever Vite writes it.
+        assert!(hashed.names("assets/index-abcdefgh.js"));
+        assert!(hashed.names("assets/index-abcdefgh.js.map"));
+        assert!(hashed.names("static/app-Q-_xYzWv.css"));
+        // Listed with no hash in its name: not kept a year.
+        assert!(!hashed.names("assets/logo.svg"));
+        // Shaped as a hash, but not listed.
+        assert!(!hashed.names("assets/index-BXa3kD9f.js"));
+        assert!(!hashed.names("assets/other-abcdefgh.js.map"));
+    }
+
+    #[test]
     fn a_segment_out_of_the_directory_is_refused() {
         assert_eq!(segments("/a/../b"), Err(Refused::Outside));
         assert_eq!(segments("/a/%2e%2e/b"), Err(Refused::Outside));
@@ -924,9 +759,19 @@ mod tests {
         assert_eq!(segments("/a\\b"), Err(Refused::Unnamable));
         assert_eq!(segments("/a%00b"), Err(Refused::Unnamable));
         assert_eq!(
-            segments("/assets//./app.js"),
+            segments("/assets/./app.js"),
             Ok(vec!["assets".to_owned(), "app.js".to_owned()])
         );
+    }
+
+    #[test]
+    fn an_empty_segment_is_refused_but_at_the_ends() {
+        assert_eq!(segments("/"), Ok(Vec::new()));
+        assert_eq!(segments("/docs/"), Ok(vec!["docs".to_owned()]));
+        // `ServeDir` would redirect `//evil.example`, a directory, to `//evil.example/`, another host.
+        assert_eq!(segments("//evil.example"), Err(Refused::Unnamable));
+        assert_eq!(segments("/assets//app.js"), Err(Refused::Unnamable));
+        assert_eq!(segments("/a%2F%2Fb"), Err(Refused::Unnamable));
     }
 
     #[test]
@@ -965,29 +810,6 @@ mod tests {
         assert!(!accepts("text/css,*/*;q=0.1"));
         assert!(!accepts("text/html;q=0"));
         assert!(!accepts_html(&HeaderMap::new()));
-    }
-
-    #[test]
-    fn a_directory_is_redirected_to_its_path_with_a_slash() {
-        let segments = |path: &str| segments(path).expect("a path of the page");
-
-        assert_eq!(
-            directory(&segments("/docs"), Some("a=1&b")),
-            Some(HeaderValue::from_static("/docs/?a=1&b"))
-        );
-        assert_eq!(
-            directory(&segments("/r%C3%A9sum%C3%A9/a%20b"), None),
-            Some(HeaderValue::from_static("/r%C3%A9sum%C3%A9/a%20b/"))
-        );
-        // Never `//`, which a browser reads as another host.
-        assert_eq!(
-            directory(&segments("//evil.example"), None),
-            Some(HeaderValue::from_static("/evil.example/"))
-        );
-        assert_eq!(
-            directory(&segments("/a%2F%2Fb"), None),
-            Some(HeaderValue::from_static("/a/b/"))
-        );
     }
 
     #[test]
@@ -1036,137 +858,40 @@ mod tests {
         assert!(files.contains("assets/index-ABCDEFGH.css"));
         assert!(files.contains("assets/logo-Darkmode.svg"));
         assert!(!files.contains("index.html"));
-        assert_eq!(listed(b"[1, 2]"), None);
-        assert_eq!(listed(b"not json"), None);
+        assert!(listed(b"[1, 2]").is_err());
+        assert!(listed(b"not json").is_err());
     }
 
     #[test]
-    fn a_time_out_of_the_http_dates_has_none() {
+    fn only_the_times_an_http_date_holds_are_dated() {
         let year_10000 = UNIX_EPOCH + std::time::Duration::from_secs(YEAR_10000);
 
-        assert!(http_date(UNIX_EPOCH - std::time::Duration::from_secs(1)).is_none());
-        assert!(http_date(year_10000).is_none());
-        assert_eq!(
-            http_date(year_10000 - std::time::Duration::from_secs(1)),
-            Some(HeaderValue::from_static("Fri, 31 Dec 9999 23:59:59 GMT"))
-        );
-        assert_eq!(
-            http_date(UNIX_EPOCH),
-            Some(HeaderValue::from_static("Thu, 01 Jan 1970 00:00:00 GMT"))
-        );
-    }
-
-    #[tokio::test]
-    async fn a_file_that_grows_as_it_is_sent_is_cut_at_its_length() {
-        let dir = tempfile::tempdir().expect("a temporary directory is made");
-        let path = dir.path().join("log.txt");
-
-        std::fs::write(&path, "first").expect("the file is written");
-
-        let wanted = Wanted {
-            slashed: false,
-            query: None,
-            page: false,
-            encodings: Vec::new(),
-        };
-        let found = Page::new(dir.path().to_owned()).find(&["log.txt".to_owned()], &wanted);
-        let Found::File(served) = found else {
-            panic!("the file is found");
-        };
-        let response = served.respond(&HeaderMap::new(), false);
-
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .and_then(|mut file| std::io::Write::write_all(&mut file, b" and more"))
-            .expect("the file grows");
-
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("the body is read");
-
-        assert_eq!(body, "first");
+        assert!(is_http_date(UNIX_EPOCH));
+        assert!(is_http_date(year_10000 - std::time::Duration::from_secs(1)));
+        assert!(!is_http_date(
+            UNIX_EPOCH - std::time::Duration::from_secs(1)
+        ));
+        assert!(!is_http_date(year_10000));
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_file_opened_elsewhere_than_its_checked_path_is_refused() {
+    fn the_filter_reads_each_copy_by_its_real_path() {
         let outer = tempfile::tempdir().expect("a temporary directory is made");
-        let root = outer.path().join("dist");
+        let dist = outer.path().join("dist");
 
-        std::fs::create_dir(&root).expect("the directory is made");
-        std::fs::write(root.join("app.js"), "inside").expect("the file is written");
-        std::fs::write(outer.path().join("secret.txt"), "secret").expect("the file is written");
-
-        let root = root.canonicalize().expect("a real path");
-        let checked = root.join("app.js");
-        let inside = File::open(&checked).expect("the file opens");
-        let elsewhere = File::open(outer.path().join("secret.txt")).expect("the file opens");
-        let metadata = |file: &File| file.metadata().expect("its metadata");
-
-        assert!(matches!(
-            opened_under(&root, &checked, &inside, &metadata(&inside)),
-            Opened::Yes(())
-        ));
-        assert!(!matches!(
-            opened_under(&root, &checked, &elsewhere, &metadata(&elsewhere)),
-            Opened::Yes(())
-        ));
-        assert!(matches!(
-            reopened_under(&root, &checked, &metadata(&elsewhere)),
-            Opened::No
-        ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_file_replaced_or_removed_after_its_open_is_no_file_not_one_outside() {
-        let dir = tempfile::tempdir().expect("a temporary directory is made");
-        let root = dir.path().canonicalize().expect("a real path");
-        let checked = root.join("app.js");
-
-        std::fs::write(&checked, "old").expect("the file is written");
-
-        let opened = File::open(&checked).expect("the file opens");
-        let metadata = opened.metadata().expect("its metadata");
-
-        // A deployment writes the new file beside it, then renames it over the old one.
-        std::fs::write(root.join("app.js.new"), "new").expect("the file is written");
-        std::fs::rename(root.join("app.js.new"), &checked).expect("the file is replaced");
-
-        assert!(matches!(
-            reopened_under(&root, &checked, &metadata),
-            Opened::No
-        ));
-
-        std::fs::remove_file(&checked).expect("the file is removed");
-
-        assert!(matches!(
-            reopened_under(&root, &checked, &metadata),
-            Opened::No
-        ));
-    }
-
-    #[test]
-    fn the_codings_come_by_their_weight() {
-        let headers = |value: &'static str| {
-            let mut headers = HeaderMap::new();
-
-            headers.insert(header::ACCEPT_ENCODING, HeaderValue::from_static(value));
-            headers
-        };
+        std::fs::create_dir(&dist).expect("the directory is made");
+        std::fs::write(dist.join("app.js"), "inside").expect("the file is written");
+        std::fs::write(dist.join("index.html"), "index").expect("the file is written");
+        std::fs::write(outer.path().join("secret"), "secret").expect("the file is written");
+        std::os::unix::fs::symlink(outer.path().join("secret"), dist.join("app.js.gz"))
+            .expect("the link is made");
 
         assert_eq!(
-            accepted(&headers("gzip, deflate, br")),
-            [Encoding::Brotli, Encoding::Gzip]
+            filter(&dist, "app.js", false),
+            Err(Refusal::Refused(Refused::Outside))
         );
-        assert_eq!(
-            accepted(&headers("br;q=0.5, gzip")),
-            [Encoding::Gzip, Encoding::Brotli]
-        );
-        assert_eq!(accepted(&headers("br;q=0, gzip")), [Encoding::Gzip]);
-        assert_eq!(accepted(&headers("*")), [Encoding::Brotli, Encoding::Gzip]);
-        assert_eq!(accepted(&headers("identity")), []);
-        assert_eq!(accepted(&HeaderMap::new()), []);
+        assert_eq!(filter(&dist, "", true), Ok(()));
+        assert_eq!(filter(&dist, "gone.js", false), Ok(()));
     }
 }
