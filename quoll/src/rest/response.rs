@@ -397,7 +397,7 @@ impl IntoStatus for NoContent {
 #[diagnostic::on_unimplemented(
     message = "a 204 or a 205 says there is no body, and a `{T}` is a value that the route answers",
     label = "a status of no content, on a route of a `{T}`",
-    note = "a route that may answer no content returns an `Option`: in the contract, `-> Option<{T}>` in place of `-> {T}`, `-> Created<{T}>` or `-> Accepted<{T}>`, and in the handler, `Response::new(None)` with this status"
+    note = "a route `-> {T}` that may answer no content returns an `Option`: `-> Option<{T}>` in the contract, and `Response::new(None)` with this status in the handler; a 204 is no answer of a route `-> Created<{T}>` or `-> Accepted<{T}>`, whose status carries its value"
 )]
 pub trait Allows<T>: sealed::Sealed {}
 

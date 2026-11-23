@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: a `Created<T>` answers its value with a 201, and `Option<Note>` may be empty, which a 204 answers and a `Created` does not: its `T` is the type of the value
+  --> tests/compile_fail/created_of_option.rs:16:59
+   |
+16 |         POST "/notes" => create(title: String) -> Created<Option<Note>>;
+   |                                                           ^^^^^^ evaluation of `_` failed here

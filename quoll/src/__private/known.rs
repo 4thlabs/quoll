@@ -6,6 +6,9 @@
 //! these names fails on it, with a message that says so. The checks of [`created`], [`accepted`], [`form`], [`text`],
 //! [`bytes`], [`events`], [`json_lines`] and [`byte_stream`] are written whatever the features of `quoll`, so that a contract crate
 //! built with neither feature checks them too.
+//!
+//! [`Nullable`] and [`MayBeEmpty`] tell a result's type at compile time, by the impls of the types they name: whether
+//! a 204 reads as `null`, and whether a 204 may answer it at all, which a `Created<T>` or an `Accepted<T>` may not.
 
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -30,6 +33,43 @@ impl Nullable<()> {
     /// `()`, which `null` is.
     pub const IS: bool = true;
 }
+
+/// Whether a type `T` may be empty, a result a 204 answers as `rest::Allows` lists them: [`IS`](MayBeEmpty::IS) is
+/// `true` for `()`, an `Option<T>`, `Text`, `Bytes`, `Events<T>`, `JsonLines<T>` and `ByteStream`, by their impls, and
+/// `false` for any other, by [`NotEmpty`]. The `T` of a `Created<T>` or an `Accepted<T>` is none of them: its status
+/// carries a value, which a 204 would not.
+#[derive(Debug)]
+pub struct MayBeEmpty<T>(PhantomData<fn() -> T>);
+
+/// Gives `MayBeEmpty` of each result that may be empty its constant, `T` its parameter where it has one.
+macro_rules! may_be_empty {
+    ($($ty:ty $(=> $param:ident)?),* $(,)?) => {
+        $(
+            impl$(<$param>)? MayBeEmpty<$ty> {
+                /// A result that may be empty.
+                pub const IS: bool = true;
+            }
+        )*
+    };
+}
+
+may_be_empty! {
+    (),
+    Option<T> => T,
+    Text,
+    Bytes,
+    Events<T> => T,
+    JsonLines<T> => T,
+    ByteStream,
+}
+
+/// The constant of any type that is not empty, which the code of a contract brings into scope.
+pub trait NotEmpty {
+    /// A value.
+    const IS: bool = false;
+}
+
+impl<T> NotEmpty for MayBeEmpty<T> {}
 
 /// The constant of any type but an `Option<T>` and `()`, which the code of a contract brings into scope.
 pub trait NotNullable {

@@ -66,6 +66,7 @@ rest::api! {
         GET "/empty/value" => value() -> serde_json::Value;
         GET "/reset/text" => reset_text() -> Text;
         GET "/reset/events" => reset_events() -> Events<u32>;
+        GET "/reset/bytes" => reset_bytes() -> Bytes;
     }
 }
 
@@ -227,6 +228,10 @@ impl PagesServer for App {
     }
 
     async fn reset_events(&self) -> Result<Response<Events<u32>>> {
+        unreachable!("the 205 is served by a router of its own")
+    }
+
+    async fn reset_bytes(&self) -> Result<Response<Bytes>> {
         unreachable!("the 205 is served by a router of its own")
     }
 }
@@ -497,6 +502,16 @@ async fn the_body_another_api_sends_with_a_205_is_dropped() -> Result<()> {
             }),
         )
         .route(
+            "/api/reset/bytes",
+            axum::routing::get(|| async {
+                (
+                    StatusCode::RESET_CONTENT,
+                    [(CONTENT_TYPE, "image/png")],
+                    "unsent",
+                )
+            }),
+        )
+        .route(
             "/api/reset/events",
             axum::routing::get(|| async {
                 (
@@ -510,6 +525,12 @@ async fn the_body_another_api_sends_with_a_205_is_dropped() -> Result<()> {
     let pages = Api::client(&url)?.pages();
 
     assert_eq!(&*pages.reset_text().await?, "");
+
+    // Of no type: the type was the dropped body's.
+    let bytes = pages.reset_bytes().await?;
+
+    assert_eq!(bytes.content_type(), "application/octet-stream");
+    assert!(bytes.into_vec().is_empty());
     assert!(
         pages
             .reset_events()

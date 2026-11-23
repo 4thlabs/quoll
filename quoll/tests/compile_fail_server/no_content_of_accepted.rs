@@ -19,7 +19,7 @@ rest::api! {
 struct App;
 
 impl NotesServer for App {
-    // A 204 has no body, which a `Accepted<Note>` carries.
+    // A 204 has no body, which an `Accepted<Note>` carries.
     async fn write(&self, title: String) -> Result<Response<Note>> {
         Ok(Response::new(Note { title }).with_status(Status::NO_CONTENT))
     }
