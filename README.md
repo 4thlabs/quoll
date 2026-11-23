@@ -250,7 +250,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 `cargo run -- serve` serves it on `127.0.0.1:8080`. In another terminal, `cargo run` calls it and prints
 `note 1: Milk`. `cargo run -- openapi` prints its OpenAPI document.
 
-[The guides](docs/README.md) cover each part.
+[The guides](docs/README.md) cover each part. The API documentation is the crate's rustdoc:
+`cargo doc -p quoll --all-features --open` opens it.
 
 ## What the contract gives
 
@@ -273,7 +274,7 @@ its server, a command line, and a web page built on the hooks that orval writes.
 orval and Vite, on `http://localhost:5173`:
 
 ```bash
-cargo install --git https://github.com/4thlabs/quoll quoll-cli
+cargo install --path quoll-cli
 cd examples/notes
 npm ci --prefix web
 cargo quoll dev
@@ -290,9 +291,8 @@ cargo run -p docker-cli -- ps -a
 
 ## Agent ready
 
-**Agent ready.** The contract is checked when it compiles: a route without its handler, a call with the wrong
-arguments, or a client out of step with the server is a compile error, spanned on the token at fault and saying what
-to write instead. An agent that gets it wrong finds out at once, and fixes it from the message.
+The contract is checked when it compiles: a route without its handler, a call with the wrong arguments, or a client
+out of step with the server is a compile error, spanned on the token at fault and saying what to write instead. An agent that gets it wrong finds out at once, and fixes it from the message.
 
 The compiler checks the contract, not what a handler does: [a test](docs/guides/testing.md) does, a server and its
 client in a few lines.
