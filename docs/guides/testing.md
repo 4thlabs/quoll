@@ -6,7 +6,7 @@ takes a fake as well. A snapshot of the OpenAPI document catches a change to the
 ## A server and its client
 
 `quoll::test::spawn(router)` serves a router on a free port of 127.0.0.1, and gives its URL. The server runs on the
-test's tokio runtime: `#[tokio::test]` gives each test its own, which stops the server when the test returns.
+test's tokio runtime. `#[tokio::test]` gives each test its own runtime, which stops the server when the test returns.
 
 ```rust,test_harness
 use quoll::{Error, Response, Result, client, test};
@@ -55,8 +55,8 @@ async fn a_missing_note_is_a_404() -> anyhow::Result<()> {
 }
 ```
 
-`test::spawn` comes with the feature `server`, and the client with `client`: a test of the server turns on the
-contract crate's `client` feature in its dev-dependencies.
+`test::spawn` comes with the feature `server`, and the client with `client`. So a test of the server turns on the
+`client` feature of the contract crate, in its dev-dependencies.
 
 ```toml
 [dependencies]
@@ -68,8 +68,8 @@ notes-api = { path = "../api", features = ["client"] }
 
 ### With the server's layers
 
-`server::Builder::into_router` gives the router with its layers, so that a test runs them as the server does. An
-application that builds its server in a function serves the same in its tests:
+`server::Builder::into_router` gives the router with its layers, so that a test runs them the same way the server
+does. An application that builds its server in a function serves the same server in its tests:
 
 ```rust,test_harness
 use std::time::Duration;
@@ -112,8 +112,8 @@ async fn the_server_answers_with_its_layers() -> anyhow::Result<()> {
 
 ## Fakes
 
-The trait of a group, `Notes`, is the one the client implements. Code written for `&impl Notes` takes the client, and
-a fake in its tests, with no server:
+The trait of a group, `Notes`, is the one that the client implements. Code written for `&impl Notes` takes the
+client, and a fake in its tests, with no server:
 
 ```rust,test_harness
 use std::collections::BTreeMap;
@@ -203,16 +203,17 @@ async fn a_copy_has_the_title_of_its_note() -> Result<()> {
 }
 ```
 
-A fake's methods have the client's signatures: no caller, the `T` of a `Created<T>`, and an `impl Call<T>`, which
-an `async move` block is. A route left out, or a method of the wrong signature, does not compile. The fake of an api
-that answers its errors in a shape of its own, `#[error(E)]`, returns an `impl Call<T, E>`, and builds the error of
-an answer with `quoll::Error::answered(StatusCode::NOT_FOUND, e)`: [Another API's errors](errors.md#another-apis-errors)
-shows one.
+A fake's methods have the client's signatures: no caller, the `T` of a `Created<T>`, and an `impl Call<T>`. An
+`async move` block is an `impl Call<T>`. A route left out, or a method with the wrong signature, does not compile.
+
+Some apis answer their errors in a shape of their own, with `#[error(E)]`. A fake of such an api returns an
+`impl Call<T, E>`. It builds the error of an answer with `quoll::Error::answered(StatusCode::NOT_FOUND, e)`:
+[Another API's errors](errors.md#another-apis-errors) shows one.
 
 ## The OpenAPI snapshot
 
-A test keeps a snapshot of the document beside it, and fails when the document changes, so that a change to the
-contract is reviewed in the diff. It is written again when the test runs with `SNAPSHOT=overwrite`.
+A test keeps a snapshot of the document beside it, and fails when the document changes. So a change to the contract
+is reviewed in the diff. The test writes the snapshot again when it runs with `SNAPSHOT=overwrite`.
 
 ```rust,no_run,test_harness
 quoll::api! {
@@ -246,11 +247,11 @@ fn the_document_is_the_snapshot() {
 }
 ```
 
-In the notes example's directory, `examples/notes`, the snapshot of its contract is written again with:
+In the directory of the notes example, `examples/notes`, this writes the snapshot of its contract again:
 
 ```bash
 SNAPSHOT=overwrite cargo test -p notes-api --test openapi
 ```
 
-The test compares JSON values, so that the order of the keys does not count. It also catches a mistake the macro
-cannot see: two schemes of different types and one `NAME`, from two blocks, make `Api::openapi()` panic.
+The test compares JSON values, so the order of the keys does not count. It also catches a mistake that the macro
+cannot see: two schemes of different types with one `NAME`, from two blocks, make `Api::openapi()` panic.
