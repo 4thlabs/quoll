@@ -37,6 +37,10 @@ mod errors {}
 mod testing {}
 
 #[cfg(doctest)]
+#[doc = include_str!("another-api.md")]
+mod another_api {}
+
+#[cfg(doctest)]
 #[doc = include_str!("openapi.md")]
 mod openapi {}
 
