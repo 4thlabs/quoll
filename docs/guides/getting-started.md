@@ -4,7 +4,7 @@ This guide builds a first contract, its server and its client, in one crate, and
 
 ## The crate
 
-quoll is used from git until it is published. A new crate adds it with both features. It also needs the crates that a
+quoll is used from git, at the tag of a version. A new crate adds it with both features. It also needs the crates that a
 contract uses: serde for the bodies, schemars for the OpenAPI document, and tokio to run.
 
 ```bash
@@ -16,7 +16,7 @@ cd notes
 
 ```toml
 [dependencies]
-quoll = { git = "https://github.com/4thlabs/quoll", features = ["server", "client"] }
+quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.0", features = ["server", "client"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
@@ -194,7 +194,7 @@ server = ["quoll/server"]
 client = ["quoll/client"]
 
 [dependencies]
-quoll = { git = "https://github.com/4thlabs/quoll" }
+quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.0" }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 ```
