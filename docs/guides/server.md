@@ -1,7 +1,8 @@
 # The server
 
-With the feature `server`, a contract gives a trait per group, which a service implements, and `Api::router`, which
-gives the `axum::Router` of the api. `quoll::server::builder()` serves it with its layers.
+With the feature `server`, a contract gives one trait per group, which a service implements. It also gives
+`Api::router`, which builds the `axum::Router` of the api. `quoll::server::builder()` serves that router with its
+layers.
 
 ## A server
 
@@ -104,19 +105,19 @@ async fn main() -> std::io::Result<()> {
 
 ## Services
 
-- A group `Notes` gives the trait `NotesServer`, with a handler per route. An implementation writes `async fn`.
-- A handler takes the route's arguments in the contract's order, and returns a `quoll::Result` of a `quoll::Response` of
-  the route's result, the `T` of a `Created<T>` or an `Accepted<T>`, whose status the contract gives:
-  `Ok(Response::new(note))`, with the headers it sends, `.header(LOCATION, location)`, as [Responses](#responses)
-  says.
+- A group `Notes` gives the trait `NotesServer`, with one handler per route. An implementation writes `async fn`.
+- A handler takes the route's arguments in the contract's order. It returns a `quoll::Result` of a `quoll::Response`
+  of the route's result: `Ok(Response::new(note))`. For a `Created<T>` or an `Accepted<T>`, that result is the `T`,
+  and the contract gives the status. The response carries the headers that the handler sends,
+  `.header(LOCATION, location)`: [Responses](#responses) says how.
 - A handler of a route that takes a credential receives the caller after `&self`: see
   [Authentication](authentication.md).
 - One type may implement the traits of several groups.
 - A service is `Send + Sync + 'static`. The router holds it in an `Arc`, and its state is its own fields: there is no
   axum `State`.
 
-`ApiServices` has a field per group, named after it in snake case, `notes` for `Notes`. A field left out does not
-compile, nor does a service that does not implement its group's trait:
+`ApiServices` has one field per group, named after it in snake case: `notes` for `Notes`. A field left out does not
+compile, and neither does a service that does not implement its group's trait:
 
 ```rust
 use quoll::{Response, Result};
@@ -158,27 +159,33 @@ let router = Api::router(ApiServices {
 ## Responses
 
 A handler returns a `quoll::Response` of the route's value: `Note` for `-> Note`, `-> Created<Note>` and
-`-> Accepted<Note>`, `()` for a route with no result, the stream for a stream.
+`-> Accepted<Note>`, `()` for a route with no result, and the stream for a stream.
 
 - `Response::new(value)` answers the status the contract says: 200, 201 for `Created<T>`, 202 for `Accepted<T>`, 204
   for no result.
-- `.header(name, value)` adds a header, after those of its name: an `ETag`, a `Location`, a `Cache-Control`. A
-  handler's header takes the place of one quoll puts of its name, as a stream's `Cache-Control`.
-- `.with_status(Status::...)` answers another success or a redirection in place of the contract's: a `PUT` that
-  answers 201 when it creates and 200 when it replaces, a 304 Not Modified, a 206. `quoll::Status` holds a `2xx` or a
-  `3xx` alone, so an error's status does not compile there: an error is an `Err(quoll::Error)`, as
-  [Errors](errors.md) says.
-- `Status::NO_CONTENT` and `Status::RESET_CONTENT`, a 204 and a 205, say there is no body: they go on a value that
-  may be empty, `()`, an `Option<T>`, `Response::new(None)`, a `Text`, `Bytes` or a stream, and the `()` or the
-  `Option<T>` of a `Created` or an `Accepted`, which answers JSON, `-> Accepted<()>` or `-> Created<Option<Note>>`;
-  the client reads them as `()`, `None`, empty, or a stream that ends at once. On a value that must be one, the
-  `Note` of `-> Note`, `-> Created<Note>` or `-> Accepted<Note>`, they do not compile: write an `Option<Note>`.
+- `.header(name, value)` adds a header, after those of the same name: an `ETag`, a `Location`, a `Cache-Control`. A
+  handler's header replaces a header of that name that quoll puts, such as a stream's `Cache-Control`.
+- `.with_status(Status::...)` answers another success or a redirection in place of the contract's status. For
+  example: a `PUT` that answers 201 when it creates and 200 when it replaces, a 304 Not Modified, or a 206.
+  `quoll::Status` holds only a `2xx` or a `3xx`, so an error's status does not compile there. An error is an
+  `Err(quoll::Error)`: see [Errors](errors.md).
+- `Status::NO_CONTENT` and `Status::RESET_CONTENT`, a 204 and a 205, say there is no body. They go on a value that
+  may be empty:
+  - `()`, an `Option<T>` such as `Response::new(None)`, a `Text`, `Bytes` or a stream;
+  - the `()` or the `Option<T>` of a `Created` or an `Accepted`, which answers JSON: `-> Accepted<()>` or
+    `-> Created<Option<Note>>`.
+
+  The client reads them as `()`, `None`, empty, or a stream that ends at once. On a value that must be there, such as
+  the `Note` of `-> Note`, `-> Created<Note>` or `-> Accepted<Note>`, they do not compile: write an `Option<Note>`.
 - `Status::NO_CONTENT` and `Status::RESET_CONTENT` are constants of type `quoll::NoContent`, not `Status`, so that
-  one `if` cannot pick between a 201 and a 204: a handler that answers either, as it creates or replaces, calls
-  `with_status` in each branch. `NoContent::try_from(status)` gives one back from another API's answer.
-- A 204, a 205 or a 304 is sent without a body, as HTTP has none for them: the value of the `Response` is not sent.
-- A name or a value that is not a header's, or a `Content-Type`, a `Content-Length` or a `Transfer-Encoding`, which
-  quoll writes from the route's result, answers 500, logged without the value.
+  one `if` cannot pick between a 201 and a 204. A handler that answers either one, depending on whether it creates or
+  replaces, calls `with_status` in each branch. `NoContent::try_from(status)` gives a `NoContent` from the status of
+  another API's answer.
+- A 204, a 205 or a 304 is sent without a body, because HTTP has none for them: the value of the `Response` is not
+  sent.
+- quoll answers 500 for a name or a value that is not valid in a header, and logs it without the value. It does the
+  same for a `Content-Type`, a `Content-Length` or a `Transfer-Encoding`, which quoll writes from the route's
+  result.
 
 The OpenAPI document describes the contract's status and none of these headers.
 
@@ -239,16 +246,23 @@ impl NotesServer for App {
 | `server::request_id()`  | keeps the caller's `X-Request-Id` or makes one, and sends it back                    |
 | `server::trace()`       | a tracing span per request, with its operation and its id, and a line per answer     |
 | `server::cors(origins)?`| CORS for the pages of the origins given                                              |
-| `server::compression()` | gzip, brotli and zstd answers, as the caller accepts, streams aside                  |
+| `server::compression()` | gzip, brotli and zstd answers, as the caller accepts, but not streams               |
 | `server::timeout(d)`    | a handler that takes longer than `d` answers 503                                     |
 | `server::body_limit(n)` | a body larger than `n` bytes answers 413                                             |
 
-Each answers its errors as RFC 9457 problems, as handlers do.
+Each one answers its errors as RFC 9457 problems, like handlers.
 
-The builder puts quoll's layers in the order they work in, whatever the order they are given in, from the outermost:
-`request_id`, `trace`, `cors`, `compression`, `timeout`, `body_limit`. So a request gets its id, then its span, and a
-503 of `timeout` or a 413 of `body_limit` is traced, carries the id and the headers of CORS. Any other layer keeps the
-place it is given at, the first given the outermost.
+The builder puts quoll's layers in the order they work in, whatever order they are given in. From the outermost:
+
+1. `request_id`;
+2. `trace`;
+3. `cors`;
+4. `compression`;
+5. `timeout`;
+6. `body_limit`.
+
+So a request gets its id, then its span. A 503 of `timeout` or a 413 of `body_limit` is traced, and carries the id and
+the CORS headers. Any other layer keeps the place it is given, and the first one given is the outermost.
 
 ```rust
 use quoll::server;
@@ -264,15 +278,15 @@ fn served(router: axum::Router) -> Result<axum::Router, server::InvalidOrigin> {
 }
 ```
 
-`cors` returns a `server::InvalidOrigin` for what is not an origin, as `*` or `https://example.com/app`. It allows no
-credentials: a page of another origin sends a token or a key in a header.
+`cors` returns a `server::InvalidOrigin` for what is not an origin, such as `*` or `https://example.com/app`. It
+allows no credentials: a page of another origin sends a token or a key in a header.
 
-The docs of each helper, under `quoll::server`, say what it does in full: which ids `request_id` keeps, what `trace`
-logs and at which level, what `compression` leaves out.
+The docs of each helper, under `quoll::server`, say in full what it does: which ids `request_id` keeps, what `trace`
+logs and at which level, and what `compression` leaves out.
 
-### A layer of the application's
+### An application's own layer
 
-Any tower layer goes to `with`, as one of axum's `middleware::from_fn`. The answer of each route carries its
+Any tower layer goes to `with`, such as one of axum's `middleware::from_fn`. The answer of each route carries its
 `quoll::Route`, which a layer reads:
 
 ```rust
@@ -300,7 +314,8 @@ fn served(router: axum::Router) -> axum::Router {
 }
 ```
 
-An answer no route made carries no `Route`: axum's 404 and 405, a 503 of `timeout`, an early 413 of `body_limit`.
+An answer that no route made carries no `Route`: axum's 404 and 405, a 503 of `timeout`, or an early 413 of
+`body_limit`.
 
 ### The request id
 
@@ -321,12 +336,13 @@ assert_eq!(request(), "none");
 ## Serving
 
 - `.serve(address, router)` binds an address and serves: `"0.0.0.0:8080"`, a `String`, or a `SocketAddr`.
-- `.serve_on(listener, router)` serves a listener bound already: a `TcpListener` on port 0, or a `UnixListener`.
+- `.serve_on(listener, router)` serves a listener that is already bound: a `TcpListener` on port 0, or a
+  `UnixListener`.
 - `.into_router(router)` gives the router with its layers, for an application that serves it itself, or for
   [a test](testing.md).
 
-`serve` and `serve_on` return an `std::io::Result<()>`: an error when the address cannot be bound, or the signals
-cannot be listened to.
+`serve` and `serve_on` return an `std::io::Result<()>`. It is an error when the address cannot be bound, or when the
+signals cannot be listened to.
 
 ```rust,no_run
 use quoll::server;
@@ -345,24 +361,24 @@ async fn main() -> std::io::Result<()> {
 
 ## Shutdown
 
-A server serves until Ctrl-C, or `SIGTERM` on Unix, which `docker stop` and Kubernetes send. Told to stop, it accepts
-no more connections, and waits for the requests it serves to end: 5 s, or what `.grace(duration)` says, or until a
-second Ctrl-C or `SIGTERM`. Then it logs at `WARN` that connections were left open, and returns `Ok`: they end with
-the runtime, as `main` returns.
+A server serves until Ctrl-C, or until `SIGTERM` on Unix, which `docker stop` and Kubernetes send. Once told to stop,
+it accepts no more connections, and waits for the requests it serves to end. It waits 5 s, or what `.grace(duration)`
+says, or until a second Ctrl-C or `SIGTERM`. Then it logs at `WARN` that connections were left open, and returns `Ok`.
+Those connections end with the runtime, when `main` returns.
 
 The streams in flight:
 
-- An `Events` stream ends at once, after the event it is sending, with no `event: problem`: its client, and a proxy
-  between, reads a clean end, as when the handler's stream ends. An `EventSource` connects again after it, as
-  [the TypeScript guide](typescript.md#events-with-a-cookie) says.
-- A `JsonLines` or a `ByteStream` is not ended: it runs on until the grace has passed, and is then cut, which its
-  client reads as an error.
+- An `Events` stream ends at once, after the event it is sending, with no `event: problem`. Its client, and any proxy
+  between, reads a clean end, the same as when the handler's stream ends. An `EventSource` connects again after it:
+  see [the TypeScript guide](typescript.md#events-with-a-cookie).
+- A `JsonLines` or a `ByteStream` is not ended. It runs on until the grace has passed, and is then cut. Its client
+  reads that as an error.
 
-What a stream should say of a stop is an open question, [#70](https://github.com/4thlabs/quoll/issues/70). A router
+What a stream should say about a stop is an open question: [#70](https://github.com/4thlabs/quoll/issues/70). A router
 served by `axum::serve` itself, or by `quoll::test::spawn`, leaves its streams to run until their connection closes.
 
-`.shutdown(signal)` stops it when a future ends, in the place of the signals: a channel of a test, or
-`std::future::pending()` for a server that is never told to stop.
+`.shutdown(signal)` stops the server when a future ends, in place of the signals. The future may be a channel in a
+test, or `std::future::pending()` for a server that is never told to stop.
 
 ```rust
 use std::time::Duration;
@@ -389,11 +405,11 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
-Once a server has listened to Ctrl-C and `SIGTERM`, they stay tokio's: the process does not get their default action
-back when it returns.
+Once a server has listened to Ctrl-C and `SIGTERM`, tokio keeps handling them: the process does not get their default
+action back when the server returns.
 
 ## Errors
 
-A handler returns a `quoll::Error`, which the server answers with its status and an RFC 9457 problem, as
+A handler returns a `quoll::Error`. The server answers it with its status and an RFC 9457 problem, like
 `Error::not_found("no such note")` above. `Error::internal(cause)` logs its cause and answers a bare 500.
 [Errors](errors.md) says what each error answers.
