@@ -382,12 +382,23 @@ The server reads the directory at each request. A relative path is relative to t
 new page is deployed without a new build of the server. `serve` and `serve_on` refuse to start when the directory has
 no `index.html`. `.page(dir)` replaces any fallback the router has.
 
+The server checks the real path of each file, its symbolic links followed, before it opens it. On Linux it checks
+the opened file again, through `/proc/self/fd`. Elsewhere it checks the path again after the open. A symbolic link
+swapped in and out again between those two checks is not seen. Only someone who can write in the directory can do
+that.
+
 What the server answers:
 
 - `/` answers `index.html`. Any other path answers the file of that path in the directory.
-- A path that is no file and no route answers `index.html` too. The page's router then shows that path.
+- A path that is a directory answers that directory's `index.html`, as a page of a multi-page build.
+- A path that is no file and looks like a route, `/notes/3`, answers `index.html` too. The page's router then shows
+  that path.
+- A path that names a file answers a problem 404 when the file is missing: a path under `assets/`, or whose last
+  segment has an extension, `/favicon.ico` or `/notes/v1.2`. A missing script is a 404, not `index.html`.
 - A path under the api's prefix that is no route answers a problem 404. It never reaches the page.
 - `HEAD` gets the headers alone. A method other than `GET` and `HEAD` is a problem 405.
+- A hidden file or directory, whose name begins with a `.`, is never sent: it answers a problem 404. Only
+  `/.well-known/` is served.
 - No file outside the directory is sent. A path with `..` answers a problem 404. So does a symbolic link whose target
   is outside the directory.
 
@@ -396,8 +407,10 @@ The headers of a file:
 - `Content-Type` comes from the file's extension, with `charset=utf-8` for text. `X-Content-Type-Options: nosniff` is
   always set.
 - Vite names the files of `assets/` by their hash, like `assets/index-BXa3kD9f.js`. Their content never changes, so
-  they are `Cache-Control: public, max-age=31536000, immutable`. `index.html` and every other file are `no-cache`: the
-  browser checks them again before each use.
+  they are `Cache-Control: public, max-age=31536000, immutable`. A name is taken for a hashed one when it is under
+  `assets/` and holds a `-`, then eight letters, digits, `-` or `_` with at least one digit, then a `.`. So
+  `assets/logo-Darkmode.svg` is not. About a quarter of Vite's hashes hold no digit: those files are `no-cache` too.
+- `index.html` and every other file are `no-cache`: the browser checks them again before each use.
 - `ETag` and `Last-Modified` answer `If-None-Match` and `If-Modified-Since` with a 304.
 - A compressed copy beside a file, `app.js.br` or `app.js.gz`, is sent in its place when the request accepts its
   coding. Brotli comes first. Vite does not write these copies by default. Every file carries
@@ -420,8 +433,8 @@ A release is two things: the server's binary, from `cargo build --release`, and 
 `cargo quoll build`. Deploy both. Run the server from the directory that holds `web/dist`, or give `.page` an absolute
 path.
 
-The notes server serves `web/dist` when it holds an `index.html`. Under `cargo quoll dev`, Vite serves the page and
-proxies `/api` to the server.
+The notes server serves its page when `NOTES_PAGE` names the directory: `NOTES_PAGE=web/dist`. `cargo quoll dev` does
+not set it: Vite serves the page there, and proxies `/api` to the server.
 
 ## Shutdown
 

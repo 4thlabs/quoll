@@ -62,6 +62,9 @@ fn page() -> TempDir {
     write(dir.path(), &format!("{HASHED}.br"), b"brotli bytes");
     write(dir.path(), &format!("{HASHED}.gz"), b"gzip bytes");
     write(dir.path(), "robots.txt", b"User-agent: *");
+    write(dir.path(), ".env", b"SECRET=1");
+    write(dir.path(), ".well-known/security.txt", b"Contact: ops");
+    write(dir.path(), "docs/index.html", b"<title>docs</title>");
     dir
 }
 
@@ -165,7 +168,7 @@ async fn a_path_that_is_no_file_and_no_route_answers_index_html() {
     let dir = page();
     let url = serve(dir.path()).await;
 
-    for path in ["/notes/3", "/settings", "/assets"] {
+    for path in ["/notes/3", "/settings", "/notes/3/"] {
         let response = get(&format!("{url}{path}")).await;
 
         assert_eq!(response.status(), StatusCode::OK, "{path}");
@@ -173,6 +176,103 @@ async fn a_path_that_is_no_file_and_no_route_answers_index_html() {
         assert_eq!(header(&response, CONTENT_TYPE), "text/html; charset=utf-8");
         assert_eq!(response.text().await.expect("a text"), INDEX);
     }
+}
+
+#[tokio::test]
+async fn a_missing_file_is_a_problem_404_not_index_html() {
+    let dir = page();
+    let url = serve(dir.path()).await;
+
+    for path in [
+        "/assets/index-Gone1234.js",
+        "/assets/gone",
+        "/favicon.ico",
+        "/notes/v1.2",
+    ] {
+        let response = get(&format!("{url}{path}")).await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(header(&response, CONTENT_TYPE), "application/problem+json");
+
+        let problem: Value = response.json().await.expect("a problem");
+
+        assert_eq!(problem["detail"], "the page has no file of this path");
+    }
+}
+
+#[tokio::test]
+async fn a_directory_answers_its_index_html() {
+    let dir = page();
+    let url = serve(dir.path()).await;
+
+    for path in ["/docs", "/docs/"] {
+        let response = get(&format!("{url}{path}")).await;
+
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(header(&response, CONTENT_TYPE), "text/html; charset=utf-8");
+        assert_eq!(header(&response, CACHE_CONTROL), "no-cache");
+        assert_eq!(
+            response.text().await.expect("a text"),
+            "<title>docs</title>"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_hidden_file_is_refused_but_the_well_known_directory() {
+    let dir = page();
+    let url = serve(dir.path()).await;
+
+    let hidden = get(&format!("{url}/.env")).await;
+    let well_known = get(&format!("{url}/.well-known/security.txt")).await;
+
+    assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+    assert_eq!(header(&hidden, CONTENT_TYPE), "application/problem+json");
+    assert!(!hidden.text().await.expect("a body").contains("SECRET"));
+    assert_eq!(well_known.status(), StatusCode::OK);
+    assert_eq!(well_known.text().await.expect("a text"), "Contact: ops");
+}
+
+#[tokio::test]
+async fn a_path_not_utf8_says_so() {
+    let dir = page();
+    let url = serve(dir.path()).await;
+
+    let response = get(&format!("{url}/%FF.js")).await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let problem: Value = response.json().await.expect("a problem");
+
+    assert_eq!(
+        problem["detail"],
+        "the path is not UTF-8 once decoded, which no file of the page is named in"
+    );
+}
+
+#[tokio::test]
+async fn a_file_modified_before_1970_has_no_last_modified() {
+    let dir = page();
+    let before = std::time::UNIX_EPOCH - std::time::Duration::from_secs(86_400);
+
+    fs::File::options()
+        .write(true)
+        .open(dir.path().join("robots.txt"))
+        .and_then(|file| file.set_modified(before))
+        .expect("the time is set");
+
+    let url = serve(dir.path()).await;
+    let response = client()
+        .get(format!("{url}/robots.txt"))
+        .header(IF_MODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:00 GMT")
+        .send()
+        .await
+        .expect("the server answers");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get(LAST_MODIFIED).is_none());
+    assert!(!header(&response, ETAG).is_empty());
+    assert_eq!(response.text().await.expect("a text"), "User-agent: *");
 }
 
 #[tokio::test]
