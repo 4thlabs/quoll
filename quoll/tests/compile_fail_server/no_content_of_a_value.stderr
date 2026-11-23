@@ -1,25 +1,27 @@
-error[E0277]: a 204 or a 205 says there is no body, which a `Response<String>` of a value has
+error[E0277]: a 204 or a 205 says there is no body, and a `String` is a value that the route answers
   --> tests/compile_fail_server/no_content_of_a_value.rs:17:53
    |
 17 |         Ok(Response::new(String::new()).with_status(Status::NO_CONTENT))
-   |                                         ----------- ^^^^^^^^^^^^^^^^^^ a status of no content, on a route with a value
+   |                                         ----------- ^^^^^^^^^^^^^^^^^^ a status of no content, on a route of a `String`
    |                                         |
    |                                         required by a bound introduced by this call
    |
-   = help: the trait `StatusOf<String>` is not implemented for `NoContent`
-   = note: a route that may answer no content returns an `Option`: write `-> Option<Note>` in the contract, and `Response::new(None).with_status(Status::NO_CONTENT)` in its handler
-help: `NoContent` implements trait `StatusOf<T>`
-  --> src/rest/response.rs
-   |
-   | impl StatusOf<()> for NoContent {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `StatusOf<()>`
-...
-   | impl<T> StatusOf<Option<T>> for NoContent {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `StatusOf<Option<T>>`
+   = help: the trait `Allows<String>` is not implemented for `rest::response::sealed::NoBody`
+   = note: a route that may answer no content returns an `Option`: write `-> Option<String>` in the contract, and `Response::new(None)` with this status in the handler
+   = help: `rest::response::sealed::NoBody` implements trait `Allows<T>`:
+             Allows<()>
+             Allows<ByteStream>
+             Allows<Events<T>>
+             Allows<JsonLines<T>>
+             Allows<Option<T>>
+             Allows<Text>
+             Allows<quoll::rest::Bytes>
 note: required by a bound in `Response::<T>::with_status`
   --> src/rest/response.rs
    |
    | impl<T> Response<T> {
 ...
-   |     pub fn with_status<S: StatusOf<T>>(mut self, status: S) -> Self {
-   |                           ^^^^^^^^^^^ required by this bound in `Response::<T>::with_status`
+   |     pub fn with_status<S>(mut self, status: S) -> Self
+...
+   |         S::Body: Allows<T>,
+   |                  ^^^^^^^^^ required by this bound in `Response::<T>::with_status`

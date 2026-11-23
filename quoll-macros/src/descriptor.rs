@@ -459,6 +459,8 @@ fn takes_error(api: &Api, group: &GroupRef) -> Option<TokenStream> {
 
     Some(quote_spanned! {group.span()=>
         const _: () = {
+            // Unused where the shape is quoll's `Problem`, whose constant is its type's own.
+            #[allow(unused_imports)]
             use ::quoll::__private::group::OtherShape as _;
 
             if let ::core::option::Option::Some(error) = ::quoll::__private::group::check_error(

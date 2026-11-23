@@ -16,7 +16,10 @@ use futures_util::{StreamExt, stream};
 use http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use http::{HeaderValue, StatusCode};
 use quoll::client;
-use quoll::rest::{self, Bytes, Call, Created, Error, Events, Response, Result, Status};
+use quoll::rest::{
+    self, ByteStream, Bytes, Call, Created, Error, Events, JsonLines, Response, Result, Status,
+    Text,
+};
 use reqwest_middleware::ClientBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -45,6 +48,15 @@ rest::api! {
         GET  "/events"         => events() -> Events<u32>;
         GET  "/logo"           => logo() -> Bytes;
         GET  "/drafts/{id}"    => draft(id: i64) -> Option<Note>;
+    }
+
+    /// Results that may be empty, each answered with a 204 by the server below.
+    group Quiet {
+        GET "/quiet/text"   => text() -> Text;
+        GET "/quiet/bytes"  => bytes() -> Bytes;
+        GET "/quiet/events" => events() -> Events<u32>;
+        GET "/quiet/lines"  => lines() -> JsonLines<u32>;
+        GET "/quiet/output" => output() -> ByteStream;
     }
 
     /// A route the server below answers with a page of HTML.
@@ -165,6 +177,35 @@ impl NotesServer for App {
     }
 }
 
+/// Each result given a body, which a 204 leaves unsent.
+impl QuietServer for App {
+    async fn text(&self) -> Result<Response<Text>> {
+        Ok(Response::new(Text::from("unsent")).with_status(Status::NO_CONTENT))
+    }
+
+    async fn bytes(&self) -> Result<Response<Bytes>> {
+        Ok(Response::new(Bytes::new(b"unsent".to_vec())).with_status(Status::NO_CONTENT))
+    }
+
+    async fn events(&self) -> Result<Response<Events<u32>>> {
+        let events = Events::new(stream::iter([1, 2]));
+
+        Ok(Response::new(events).with_status(Status::RESET_CONTENT))
+    }
+
+    async fn lines(&self) -> Result<Response<JsonLines<u32>>> {
+        let lines = JsonLines::new(stream::iter([1, 2]));
+
+        Ok(Response::new(lines).with_status(Status::NO_CONTENT))
+    }
+
+    async fn output(&self) -> Result<Response<ByteStream>> {
+        let output = ByteStream::new(stream::iter([b"unsent".to_vec()]));
+
+        Ok(Response::new(output).with_status(Status::NO_CONTENT))
+    }
+}
+
 impl PagesServer for App {
     async fn page(&self) -> Result<Response<Note>> {
         unreachable!("the page is served by a router of its own")
@@ -179,6 +220,7 @@ impl PagesServer for App {
 async fn serve(app: &App) -> String {
     quoll::test::spawn(Api::router(ApiServices {
         notes: app.clone(),
+        quiet: app.clone(),
         pages: app.clone(),
     }))
     .await
@@ -357,6 +399,27 @@ async fn a_204_of_a_route_of_an_option_is_none() -> Result<()> {
     assert_eq!(response.into_value()?, None);
     assert_eq!(api.notes().draft(0).await?, None);
     assert_eq!(api.notes().draft(2).await?.map(|note| note.id), Some(2));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_204_of_a_result_that_may_be_empty_is_read_empty() -> Result<()> {
+    let url = serve(&App::default()).await;
+    let quiet = Api::client(&url)?.quiet();
+
+    let text = quiet.text().response().await?;
+
+    assert_eq!(text.status(), StatusCode::NO_CONTENT);
+    assert_eq!(&*text.into_value()?, "");
+    assert!(quiet.bytes().await?.into_vec().is_empty());
+
+    let events = quiet.events().await?;
+    let lines = quiet.lines().await?;
+    let output = quiet.output().await?;
+
+    assert!(events.collect::<Vec<_>>().await.is_empty());
+    assert!(lines.collect::<Vec<_>>().await.is_empty());
+    assert!(output.collect::<Vec<_>>().await.is_empty());
     Ok(())
 }
 

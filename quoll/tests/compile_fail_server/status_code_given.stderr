@@ -1,0 +1,44 @@
+error[E0277]: `StatusCode` is not a status a handler gives
+  --> tests/compile_fail_server/status_code_given.rs:18:42
+   |
+18 |         Ok(Response::new(()).with_status(StatusCode::CREATED))
+   |                              ----------- ^^^^^^^^^^^^^^^^^^^ a `rest::Status` or a `rest::NoContent`
+   |                              |
+   |                              required by a bound introduced by this call
+   |
+   = help: the trait `IntoStatus` is not implemented for `StatusCode`
+   = note: a status is one of `rest::Status`'s, `Status::CREATED`, or `Status::try_from(status)?` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT` or `NoContent::try_from(status)?`
+help: the following other types implement trait `IntoStatus`
+  --> src/rest/response.rs
+   |
+   | impl IntoStatus for Status {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `Status`
+...
+   | impl IntoStatus for NoContent {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoContent`
+note: required by a bound in `quoll::rest::Response::<T>::with_status`
+  --> src/rest/response.rs
+   |
+   | impl<T> Response<T> {
+...
+   |     pub fn with_status<S>(mut self, status: S) -> Self
+   |     where
+   |         S: IntoStatus,
+   |            ^^^^^^^^^^ required by this bound in `Response::<T>::with_status`
+
+error[E0277]: `StatusCode` is not a status a handler gives
+  --> tests/compile_fail_server/status_code_given.rs:18:12
+   |
+18 |         Ok(Response::new(()).with_status(StatusCode::CREATED))
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a `rest::Status` or a `rest::NoContent`
+   |
+   = help: the trait `IntoStatus` is not implemented for `StatusCode`
+   = note: a status is one of `rest::Status`'s, `Status::CREATED`, or `Status::try_from(status)?` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT` or `NoContent::try_from(status)?`
+help: the following other types implement trait `IntoStatus`
+  --> src/rest/response.rs
+   |
+   | impl IntoStatus for Status {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `Status`
+...
+   | impl IntoStatus for NoContent {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoContent`

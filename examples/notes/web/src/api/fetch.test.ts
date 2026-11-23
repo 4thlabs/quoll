@@ -55,12 +55,15 @@ describe("apiFetch", () => {
     expect(headers[1].get("Accept")).toBe("application/json");
   });
 
-  it("returns the body, and nothing for a 204", async () => {
+  it("returns the body, and null for a 204 or a 205", async () => {
     answer(() => Response.json({ id: 1 }));
     await expect(apiFetch("/api/notes/1", {})).resolves.toEqual({ id: 1 });
 
     answer(() => new Response(null, { status: 204 }));
-    await expect(apiFetch("/api/notes/1", { method: "DELETE" })).resolves.toBeUndefined();
+    await expect(apiFetch("/api/notes/1", { method: "DELETE" })).resolves.toBeNull();
+
+    answer(() => new Response(null, { status: 205 }));
+    await expect(apiFetch("/api/notes/1", { method: "DELETE" })).resolves.toBeNull();
   });
 
   it("throws the problem of an error, its detail as the message", async () => {

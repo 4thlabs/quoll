@@ -4,8 +4,8 @@
 //! - `tests/compile_fail/`, built with each of the four feature sets, so that its messages are the same whatever the
 //!   features: the mistakes the macro finds itself.
 //! - `tests/compile_fail_server/`, built with the feature `server`: what only the server's code checks, a route left
-//!   out of a service, a handler of the wrong signature, a status of no content on a route of a value, a body that is
-//!   not `Deserialize`, a service that does not authenticate.
+//!   out of a service, a handler of the wrong signature, a status of no content on a route of a value or one that is
+//!   not a status, a body that is not `Deserialize`, a service that does not authenticate.
 //! - `tests/compile_fail_client/`, built with the feature `client`: what only the client's checks, a fake of the wrong
 //!   signature, a result that is not `Deserialize`, `build` or `key` on the wrong type, a call not awaited.
 //! - `tests/compile_fail_neither/`, built with neither feature: what each side would repeat a message of its own for.

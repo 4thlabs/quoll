@@ -129,10 +129,10 @@ pub trait Call<T, E = Problem>:
     /// Sends the call, and gives the answer it got, whatever its status: its status, its headers, and its body read
     /// as the route's value on a success, or as the error of the answer otherwise, with its status, its detail when
     /// the body is an `E`, and its body. A 304 Not Modified is such an error, with no detail: it comes to a call that
-    /// sent `If-None-Match`, whose answer's headers are these. A 204 or a 205 is a success, read as `()` or `None`: on
-    /// a route whose value is not an `Option`, as another API may answer it, its body is the error of a body that is
-    /// not the route's result, with no status, and the response keeps the answer's status and headers.
-    /// [`Response::into_value`] gives the value, or that error, to go up with `?`.
+    /// sent `If-None-Match`, whose answer's headers are these. A 204 or a 205 is a success, read as `()`, `None`, an
+    /// empty text or bytes, or a stream that ends at once: on a route of a value, as another API may answer it, its
+    /// body is the error of a body that is not the route's result, with no status, and the response keeps the
+    /// answer's status and headers. [`Response::into_value`] gives the value, or that error, to go up with `?`.
     ///
     /// # Errors
     ///

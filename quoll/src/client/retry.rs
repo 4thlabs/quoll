@@ -320,7 +320,8 @@ impl Attempt<'_> {
     ///
     /// A date is measured from the answer's `Date`, the server's clock, plus its `Age` when a cache or a CDN served
     /// it, or from the client's clock when it has no `Date`, so that a client whose clock is ahead waits as long as
-    /// the server asks; a date that is not after it is the backoff.
+    /// the server asks; a date that is not after it is the backoff. A number of seconds loses the `Age` too, and is
+    /// the backoff once the `Age` covers it.
     ///
     /// It says when to try again, not whether the request may be sent twice: a `429` or a `503` with a `Retry-After`
     /// says the server did not act on it, which the closure of [`when`](Retrying::when) tells by the status.
@@ -334,13 +335,20 @@ impl Attempt<'_> {
             return Retry::Backoff;
         };
 
-        let seconds = !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit());
+        let age = self.header(AGE).and_then(seconds).unwrap_or(Duration::ZERO);
 
-        // A number of seconds too large for a `u64` is a wait longer than any `max_wait`.
-        let wait = if seconds {
-            value.parse().map_or(self.max_wait, Duration::from_secs)
+        let wait = if let Some(wait) = seconds(value) {
+            // The seconds a cache kept the answer have passed already: a wait they cover is the backoff.
+            match wait.checked_sub(age) {
+                Some(wait) if age.is_zero() || !wait.is_zero() => wait,
+                _ => return Retry::Backoff,
+            }
         } else if let Ok(at) = httpdate::parse_http_date(value) {
-            match at.duration_since(self.answered_at()) {
+            let Some(now) = self.server_now(age) else {
+                return Retry::Backoff;
+            };
+
+            match at.duration_since(now) {
                 Ok(wait) if !wait.is_zero() => wait,
                 _ => return Retry::Backoff,
             }
@@ -351,24 +359,36 @@ impl Attempt<'_> {
         Retry::After(wait.min(self.max_wait))
     }
 
-    /// Now, by the server's clock: the answer's `Date` plus its `Age`, the seconds a cache kept it, or the client's
-    /// clock when it has no `Date` that can be read.
-    fn answered_at(&self) -> SystemTime {
-        let header = |name| {
-            self.headers()
-                .and_then(|headers| headers.get(name))
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-        };
-        let Some(date) = header(DATE).and_then(|date| httpdate::parse_http_date(date).ok()) else {
-            return SystemTime::now();
-        };
-        let age = header(AGE)
-            .and_then(|age| age.parse().ok())
-            .map_or(Duration::ZERO, Duration::from_secs);
-
-        date.checked_add(age).unwrap_or(date)
+    /// The answer's header `name`, as text without the blanks at its ends.
+    fn header(&self, name: http::HeaderName) -> Option<&str> {
+        self.headers()
+            .and_then(|headers| headers.get(name))
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
     }
+
+    /// Now, by the server's clock: the answer's `Date` plus `age`, the time a cache kept it, or the client's clock
+    /// when it has no `Date` that can be read; `None` past any time a clock holds.
+    fn server_now(&self, age: Duration) -> Option<SystemTime> {
+        let Some(date) = self
+            .header(DATE)
+            .and_then(|date| httpdate::parse_http_date(date).ok())
+        else {
+            return Some(SystemTime::now());
+        };
+
+        date.checked_add(age)
+    }
+}
+
+/// The number of seconds `value` is, digits alone: one too large for a `u64` is `u64::MAX` of them, longer than any
+/// wait.
+fn seconds(value: &str) -> Option<Duration> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    Some(Duration::from_secs(value.parse().unwrap_or(u64::MAX)))
 }
 
 /// Whether an attempt that got no answer may pass if tried again: no connection, a deadline passed, a connection
@@ -546,6 +566,35 @@ mod tests {
             aged(Some(&at), Some(&date), Some("soon"), MAX_WAIT),
             Retry::After(Duration::from_secs(20)),
             "an age that cannot be read"
+        );
+        assert_eq!(
+            aged(
+                Some(&at),
+                Some(&date),
+                Some("99999999999999999999"),
+                MAX_WAIT
+            ),
+            Retry::Backoff,
+            "an age past any clock"
+        );
+    }
+
+    #[test]
+    fn retry_after_seconds_counts_the_age_of_a_cached_answer() {
+        assert_eq!(
+            aged(Some("20"), None, Some("15"), MAX_WAIT),
+            Retry::After(Duration::from_secs(5))
+        );
+        assert_eq!(aged(Some("20"), None, Some("20"), MAX_WAIT), Retry::Backoff);
+        assert_eq!(
+            aged(Some("20"), None, Some("99999999999999999999"), MAX_WAIT),
+            Retry::Backoff,
+            "an age too large for a `u64`"
+        );
+        assert_eq!(
+            aged(Some("0"), None, None, MAX_WAIT),
+            Retry::After(Duration::ZERO),
+            "no age: the server's own zero"
         );
     }
 
