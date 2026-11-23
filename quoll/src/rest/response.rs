@@ -127,7 +127,7 @@ impl<T> Response<T> {
     ///
     /// A 204, a 205 and a 304 are answered without their body, which HTTP gives them none: the value the `Response`
     /// holds is not sent, a `Some(note)` given a 204 as a `Note` given a 304. The OpenAPI document describes the
-    /// contract's status, and a 204 on a route whose result may be empty.
+    /// contract's status, and a 204 on a response whose value may be empty.
     #[must_use]
     pub fn with_status<S>(mut self, status: S) -> Self
     where
@@ -265,9 +265,9 @@ impl Status {
     pub const ACCEPTED: Self = Self(StatusCode::ACCEPTED);
     /// 203 Non-Authoritative Information.
     pub const NON_AUTHORITATIVE_INFORMATION: Self = Self(StatusCode::NON_AUTHORITATIVE_INFORMATION);
-    /// 204 No Content, of a route whose result may be empty: a [`NoContent`].
+    /// 204 No Content, of a response whose value may be empty: a [`NoContent`].
     pub const NO_CONTENT: NoContent = NoContent(StatusCode::NO_CONTENT);
-    /// 205 Reset Content, of a route whose result may be empty: a [`NoContent`].
+    /// 205 Reset Content, of a response whose value may be empty: a [`NoContent`].
     pub const RESET_CONTENT: NoContent = NoContent(StatusCode::RESET_CONTENT);
     /// 206 Partial Content.
     pub const PARTIAL_CONTENT: Self = Self(StatusCode::PARTIAL_CONTENT);
@@ -359,7 +359,7 @@ impl TryFrom<StatusCode> for NoContent {
 }
 
 /// A status a [`Response`] is given with [`Response::with_status`]: a [`Status`], or a [`NoContent`], which only a
-/// route whose result may be empty takes.
+/// response whose value may be empty takes.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a status a handler gives",
     label = "a `rest::Status` or a `rest::NoContent`",
@@ -394,8 +394,9 @@ impl IntoStatus for NoContent {
 /// What a status says of the body allows of a [`Response`]'s value `T`: any, for a [`Status`]; for a 204 or a 205,
 /// a [`NoContent`], a value that may be empty alone, `()`, an `Option<T>`, a `Text`, `Bytes`, `Events<T>`,
 /// `JsonLines<T>` or a `ByteStream`, the one list of them, which the OpenAPI document reads too. The route's result
-/// does not count, only the handler's value: a `Created<Option<Note>>` and an `Accepted<()>` take a 204, a `Note` of
-/// `-> Note`, `-> Created<Note>` or `-> Accepted<Note>` does not.
+/// does not count, only the handler's value: a `Created<T>` or an `Accepted<T>` answers the JSON of its `T`, so that
+/// `-> Created<Option<Note>>` and `-> Accepted<()>` take a 204, and the `Note` of `-> Note`, `-> Created<Note>` or
+/// `-> Accepted<Note>` does not.
 #[diagnostic::on_unimplemented(
     message = "a 204 or a 205 says there is no body, and a `{T}` is a value that the route answers",
     label = "a status of no content, on a value `{T}`",
@@ -473,7 +474,7 @@ impl fmt::Display for InvalidStatus {
         if no_content(self.0) {
             return write!(
                 f,
-                "{status} says there is no body: it is a `NoContent`, `NoContent::try_from(status)`, of a route whose result may be empty"
+                "{status} says there is no body: it is a `NoContent`, `NoContent::try_from(status)`, of a response whose value may be empty"
             );
         }
 
@@ -533,7 +534,7 @@ mod tests {
             Status::try_from(StatusCode::NO_CONTENT)
                 .expect_err("one of no content")
                 .to_string(),
-            "204 says there is no body: it is a `NoContent`, `NoContent::try_from(status)`, of a route whose result may be empty"
+            "204 says there is no body: it is a `NoContent`, `NoContent::try_from(status)`, of a response whose value may be empty"
         );
 
         let text = Response::new(Text::from("")).with_status(Status::NO_CONTENT);

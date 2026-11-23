@@ -54,6 +54,7 @@ rest::api! {
         GET  "/maybe/{id}"     => maybe(id: i64) -> MaybeNote;
         POST "/drafts"         => publish(title: String) -> Created<Option<Note>>;
         PUT  "/jobs/{id}"      => start(id: i64) -> Accepted<()>;
+        POST "/exports"        => export(title: String) -> Accepted<Note>;
     }
 
     /// Results that may be empty, each answered with a 204 by the server below.
@@ -189,6 +190,9 @@ impl NotesServer for App {
         if title.is_empty() {
             return Ok(Response::new(None).with_status(Status::NO_CONTENT));
         }
+        if title == "reset" {
+            return Ok(Response::new(None).with_status(Status::RESET_CONTENT));
+        }
 
         Ok(Response::new(Some(Note { id: 8, title })))
     }
@@ -197,8 +201,15 @@ impl NotesServer for App {
         if id == 0 {
             return Ok(Response::new(()).with_status(Status::NO_CONTENT));
         }
+        if id < 0 {
+            return Ok(Response::new(()).with_status(Status::RESET_CONTENT));
+        }
 
         Ok(Response::new(()))
+    }
+
+    async fn export(&self, title: String) -> Result<Response<Note>> {
+        Ok(Response::new(Note { id: 9, title }))
     }
 
     async fn logo(&self) -> Result<Response<Bytes>> {
@@ -467,12 +478,20 @@ async fn a_204_is_given_by_the_handlers_value_whatever_the_result_wraps_it_in() 
         Some(8)
     );
 
+    let reset = notes.publish("reset".into()).response().await?;
+
+    assert_eq!(reset.status(), StatusCode::RESET_CONTENT);
+    assert_eq!(reset.into_value()?, None);
+
     let started = notes.start(1).response().await?;
     let skipped = notes.start(0).response().await?;
+    let reset = notes.start(-1).response().await?;
 
     assert_eq!(started.status(), StatusCode::ACCEPTED);
     assert_eq!(skipped.status(), StatusCode::NO_CONTENT);
+    assert_eq!(reset.status(), StatusCode::RESET_CONTENT);
     skipped.into_value()?;
+    reset.into_value()?;
 
     assert_eq!(notes.maybe(0).await?, None);
     assert_eq!(notes.maybe(3).await?.map(|note| note.id), Some(3));
@@ -508,11 +527,15 @@ fn the_document_lists_a_204_by_the_handlers_value() {
         );
     }
 
-    assert!(
-        !listed("/api/notes", "post")
-            .iter()
-            .any(|listed| listed == "204")
-    );
+    // A value that must be one, a `Created<Note>` or an `Accepted<Note>`.
+    for (path, method) in [("/api/notes", "post"), ("/api/exports", "post")] {
+        let listed = listed(path, method);
+
+        assert!(
+            !listed.iter().any(|listed| listed == "204"),
+            "{method} {path}: {listed:?}"
+        );
+    }
 }
 
 #[tokio::test]

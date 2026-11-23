@@ -13,6 +13,8 @@
 use std::borrow::Cow;
 use std::marker::PhantomData;
 
+use serde::de::DeserializeOwned;
+
 use crate::rest::{
     Accepted, Allows, ByteStream, Bytes, Created, Events, Form, JsonLines, NoBody, Text,
 };
@@ -20,19 +22,18 @@ use crate::rest::{
 pub use crate::rest::stream::Items;
 
 /// Whether a result's type `T` reads an empty answer, a 204 or a 205, as `null`: [`IS`](Nullable::IS) is `true` for
-/// an `Option<T>` and `()` alone, by their impls, and `false` for any other type, by [`NotNullable`], whose constant a
-/// path reaches only where no impl of the type's own has one. The client reads such an answer so, and the OpenAPI
-/// document lists a 204 for it.
+/// a value that may be empty, of the one list `rest::Allows` holds, and that is read as JSON, `()` and an `Option<T>`,
+/// by the impl whose bounds say so, and `false` for any other type, by [`NotNullable`], whose constant a path reaches
+/// only where no impl of the type's own has one.
 #[derive(Debug)]
 pub struct Nullable<T>(PhantomData<fn() -> T>);
 
-impl<T> Nullable<Option<T>> {
-    /// An `Option<T>`, `None` when empty.
-    pub const IS: bool = true;
-}
-
-impl Nullable<()> {
-    /// `()`, which `null` is.
+impl<T> Nullable<T>
+where
+    NoBody: Allows<T>,
+    T: DeserializeOwned,
+{
+    /// A value that may be empty, read as JSON: `null` when empty.
     pub const IS: bool = true;
 }
 
@@ -284,3 +285,23 @@ pub const fn json_lines<T: IsJsonLines>() {}
 
 /// Checks that `T`, a result named `ByteStream`, is the crate's.
 pub const fn byte_stream<T: IsByteStream>() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_value_that_may_be_empty_is_null_when_it_is_read_as_json() {
+        // The one list, `rest::Allows`'s: its JSON values are `null` when empty, the others empty of their own. Checked
+        // as the test is built.
+        const { assert!(<MayBeEmpty<()>>::IS && <Nullable<()>>::IS) };
+        const { assert!(<MayBeEmpty<Option<u8>>>::IS && <Nullable<Option<u8>>>::IS) };
+        const { assert!(<MayBeEmpty<Text>>::IS && !<Nullable<Text>>::IS) };
+        const { assert!(<MayBeEmpty<Bytes>>::IS && !<Nullable<Bytes>>::IS) };
+        const { assert!(<MayBeEmpty<Events<u8>>>::IS && !<Nullable<Events<u8>>>::IS) };
+        const { assert!(<MayBeEmpty<JsonLines<u8>>>::IS && !<Nullable<JsonLines<u8>>>::IS) };
+        const { assert!(<MayBeEmpty<ByteStream>>::IS && !<Nullable<ByteStream>>::IS) };
+        const { assert!(!<MayBeEmpty<u8>>::IS && !<Nullable<u8>>::IS) };
+        const { assert!(!<MayBeEmpty<serde_json::Value>>::IS && !<Nullable<serde_json::Value>>::IS) };
+    }
+}

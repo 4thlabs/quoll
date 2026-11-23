@@ -289,22 +289,23 @@ rest::api! {
 
 ## Results
 
-| The route returns | The server answers                         | The client returns |
-| ----------------- | ------------------------------------------ | ------------------ |
-| nothing           | 204, no body                               | `()`               |
-| `T`               | 200, the JSON of `T`                       | `T`                |
-| `Option<T>`       | 200, the JSON of the option, or 204        | `Option<T>`        |
-| `Created<T>`      | 201, the JSON of `T`, a `Location`         | `T`                |
-| `Accepted<T>`     | 202, the JSON of `T`                       | `T`                |
-| `Text`            | 200, `text/plain; charset=utf-8`, or 204   | `Text`             |
-| `Bytes`           | 200, their content type, or 204            | `Bytes`            |
-| `Events<T>`       | 200, server-sent events, or 204            | a stream of `T`    |
-| `JsonLines<T>`    | 200, one JSON value per line, or 204       | a stream of `T`    |
-| `ByteStream`      | 200, bytes as they come, or 204            | a stream of bytes  |
+| The route returns | The server answers                                               | The client returns |
+| ----------------- | ---------------------------------------------------------------- | ------------------ |
+| nothing           | 204, no body                                                     | `()`               |
+| `T`               | 200, the JSON of `T`                                             | `T`                |
+| `Option<T>`       | 200, the JSON of the option, or 204                              | `Option<T>`        |
+| `Created<T>`      | 201, the JSON of `T`, a `Location`, or 204 when `T` may be empty | `T`                |
+| `Accepted<T>`     | 202, the JSON of `T`, or 204 when `T` may be empty               | `T`                |
+| `Text`            | 200, `text/plain; charset=utf-8`, or 204                         | `Text`             |
+| `Bytes`           | 200, their content type, or 204                                  | `Bytes`            |
+| `Events<T>`       | 200, server-sent events, or 204                                  | a stream of `T`    |
+| `JsonLines<T>`    | 200, one JSON value per line, or 204                             | a stream of `T`    |
+| `ByteStream`      | 200, bytes as they come, or 204                                  | a stream of bytes  |
 
 A 204 or a 205, `Status::NO_CONTENT` or `Status::RESET_CONTENT`, is the handler's to give, on a value that may be
-empty alone, whatever the result wraps it in: `-> Created<Option<Note>>` and `-> Accepted<()>` take one, the `Note` of
-`-> Created<Note>` does not. The client reads it as `()`, `None`, an empty text or bytes, or a stream that ends at once,
+empty alone: no result, an `Option<T>`, a `Text`, `Bytes` or a stream; and in a `Created<T>` or an `Accepted<T>`, whose
+`T` is JSON, a `()` or an `Option<T>`, `-> Created<Option<Note>>` and `-> Accepted<()>`, but not the `Note` of
+`-> Created<Note>`. The client reads it as `()`, `None`, an empty text or bytes, or a stream that ends at once,
 and the document lists it. `NoContent::try_from(status)` gives one back from another API's answer.
 
 A handler returns each of them in a `Response`, the `T` alone for a `Created<T>` or an `Accepted<T>`, whose status

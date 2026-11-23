@@ -170,9 +170,9 @@ A handler returns a `rest::Response` of the route's value: `Note` for `-> Note`,
   `3xx` alone, so an error's status does not compile there: an error is an `Err(rest::Error)`, as
   [Errors](errors.md) says.
 - `Status::NO_CONTENT` and `Status::RESET_CONTENT`, a 204 and a 205, say there is no body: they go on a value that
-  may be empty, `()`, an `Option<T>`, `Response::new(None)`, a `Text`, `Bytes` or a stream, whatever the result wraps
-  it in, an `Accepted<()>` or a `Created<Option<Note>>` too, and the client reads them as `()`, `None`, empty, or a
-  stream that ends at once. On a value that must be one, the `Note` of `-> Note`, `-> Created<Note>` or
+  may be empty, `()`, an `Option<T>`, `Response::new(None)`, a `Text`, `Bytes` or a stream, and the `()` or the
+  `Option<T>` of a `Created` or an `Accepted`, which answers JSON, `-> Accepted<()>` or `-> Created<Option<Note>>`;
+  the client reads them as `()`, `None`, empty, or a stream that ends at once. On a value that must be one, the `Note` of `-> Note`, `-> Created<Note>` or
   `-> Accepted<Note>`, they do not compile: write an `Option<Note>`. `NoContent::try_from(status)` gives one back from
   another API's answer, and a route with no result that answers 201 or 204 gives each in its own branch.
 - A 204, a 205 or a 304 is sent without its body, which HTTP gives them none: the value of the `Response` is not sent.
