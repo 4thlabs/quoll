@@ -68,6 +68,9 @@ rest::api! {
         #[body("n" = -1)]
         POST "/entries" => old_entry(entry: Form<Entry>) -> Answered;
 
+        #[body("kind" = "note")]
+        POST "/notes" => note(entry: Form<Entry>) -> Answered;
+
         #[body("stream" = true)]
         POST "/strict" => strict(request: Strict) -> Answered;
 
@@ -121,6 +124,10 @@ impl ChatServer for Service {
 
     async fn old_entry(&self, entry: Form<Entry>) -> Result<Response<Answered>> {
         answered("old_entry", entry.0.title)
+    }
+
+    async fn note(&self, entry: Form<Entry>) -> Result<Response<Answered>> {
+        answered("note", entry.0.title)
     }
 
     async fn strict(&self, request: Strict) -> Result<Response<Answered>> {
@@ -282,46 +289,55 @@ async fn post(url: &str, path: &str, content_type: &str, body: &str) -> (StatusC
 async fn a_body_without_the_fields_of_any_route_is_a_bad_request_that_names_none() {
     let url = serve().await;
     let json = "application/json";
+    let form = "application/x-www-form-urlencoded";
 
     let (missing, missing_body) = post(&url, "/messages", json, r#"{"model":"m"}"#).await;
     let (twice, _) = post(&url, "/messages", json, r#"{"stream":true,"stream":true}"#).await;
-    let (alone, alone_body) =
-        post(&url, "/override", json, r#"{"model":"m","stream":false}"#).await;
-    let (form, _) = post(
-        &url,
-        "/entries",
-        "application/x-www-form-urlencoded",
-        "kind=note&n=3&title=t",
-    )
-    .await;
+    let (kind, kind_body) = post(&url, "/messages", json, r#"{"model":"m","stream":"yes"}"#).await;
+    let (syntax, _) = post(&url, "/messages", json, r#"{"stream":tru"#).await;
+    let (other, _) = post(&url, "/entries", form, "kind=note&n=3&title=t").await;
+    let (form_twice, _) = post(&url, "/entries", form, "kind=note&kind=note&n=2&title=t").await;
 
-    assert_eq!(missing, StatusCode::BAD_REQUEST);
-    assert!(
-        missing_body
-            .contains("does not hold the fixed fields of any route of this method and path"),
-        "{missing_body}"
-    );
-    assert!(!missing_body.contains("chat_"), "{missing_body}");
+    for (status, body) in [(missing, missing_body), (kind, kind_body)] {
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body.contains("does not hold the fixed fields of any route of this method and path"),
+            "{body}"
+        );
+        assert!(
+            !body.contains("chat_") && !body.contains("stream"),
+            "{body}"
+        );
+    }
     assert_eq!(twice, StatusCode::BAD_REQUEST);
-    assert_eq!(alone, StatusCode::BAD_REQUEST);
-    assert!(alone_body.contains(r#"\"stream\": true"#), "{alone_body}");
-    assert_eq!(form, StatusCode::BAD_REQUEST);
+    assert_eq!(syntax, StatusCode::BAD_REQUEST);
+    assert_eq!(other, StatusCode::BAD_REQUEST);
+    assert_eq!(form_twice, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
-async fn a_body_that_does_not_read_is_a_bad_request_of_its_own() {
+async fn a_route_alone_says_once_authenticated_why_its_body_is_refused() {
     let url = serve().await;
     let json = "application/json";
+    let form = "application/x-www-form-urlencoded";
 
-    let (syntax, syntax_body) = post(&url, "/messages", json, r#"{"stream":tru"#).await;
-    let (kind, kind_body) = post(&url, "/messages", json, r#"{"model":"m","stream":"yes"}"#).await;
-    let (alone, alone_body) = post(&url, "/override", json, r#"{"stream":tru"#).await;
+    let (missing, missing_body) =
+        post(&url, "/override", json, r#"{"model":"m","stream":false}"#).await;
+    let (twice, twice_body) = post(&url, "/notes", form, "kind=note&kind=note&title=t").await;
+    let (syntax, syntax_body) = post(&url, "/override", json, r#"{"stream":tru"#).await;
+    let (kind, kind_body) = post(&url, "/override", json, r#"{"model":"m","stream":"yes"}"#).await;
 
-    for (status, body) in [
-        (syntax, syntax_body),
-        (kind, kind_body),
-        (alone, alone_body),
-    ] {
+    assert_eq!(missing, StatusCode::BAD_REQUEST);
+    assert!(
+        missing_body.contains(r#"\"stream\": true"#),
+        "{missing_body}"
+    );
+    assert_eq!(twice, StatusCode::BAD_REQUEST);
+    assert!(
+        twice_body.contains("does not hold the fields this route fixes"),
+        "{twice_body}"
+    );
+    for (status, body) in [(syntax, syntax_body), (kind, kind_body)] {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(body.contains("the body is not valid"), "{body}");
     }

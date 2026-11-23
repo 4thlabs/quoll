@@ -332,9 +332,10 @@ rest::api! {
 - Two routes share a method and a path when a field both fix has two values of one kind. The server reads the body's
   fields first, which pick the route, then its handler's type from the same bytes, which ignores them: a type with
   `#[serde(deny_unknown_fields)]` refuses them, a 400 whose message names the field. A body that holds the fields of
-  no route answers 400, one that does not read as them a 400 of its own, and a content type no route reads 415.
-- A route alone on its method and path checks its fields too, after it authenticates. Two routes that share them read
-  the body first, within its limit, to pick one, then authenticate: the 400 of a body of no route's names none.
+  no route answers 400, and a content type no route reads 415.
+- A route alone on its method and path checks its fields too, after it authenticates: a body that does not read as
+  them is a 400 of its own. Two routes that share them read the body first, within its limit, to pick one, then
+  authenticate: the 400 of a body of no route's, or that does not read, names none.
 - The OpenAPI document describes a route's fields as `const` properties of its body. It does not describe two routes of
   one method and path yet: they compile in an api `#[openapi(none)]`, a contract of another API.
 
