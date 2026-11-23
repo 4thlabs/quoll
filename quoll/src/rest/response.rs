@@ -6,7 +6,7 @@ use std::fmt;
 
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Version};
 
-use crate::rest::Result;
+use crate::rest::{ByteStream, Bytes, Events, JsonLines, Result, Text};
 
 /// The answer of a route, as HTTP has it: its status, its version, its headers, and its body, a `T`.
 ///
@@ -87,9 +87,11 @@ impl<T> Response<T> {
     /// # let _ = replaced;
     /// ```
     ///
-    /// A 204 or a 205, [`Status::NO_CONTENT`] and [`Status::RESET_CONTENT`], says there is no body: it is a status of
-    /// a route with no result, a `Response<()>`, or of a route that returns an `Option<T>`, a `Response<Option<T>>`,
-    /// whose client reads it as `None`, and does not compile on any other.
+    /// A 204 or a 205, [`Status::NO_CONTENT`] and [`Status::RESET_CONTENT`], a [`NoContent`], says there is no
+    /// body: it is the status of a route whose result may be empty, which [`Allows`] lists, and the client reads
+    /// it as `()`, `None`, an empty text or bytes, or a stream that ends at once. A route of a value, `-> Note`, a
+    /// `Created<Note>` or an `Accepted<Note>`, takes none: it does not compile, and the route returns
+    /// `-> Option<Note>`.
     ///
     /// ```
     /// use quoll::rest::{Response, Status};
@@ -105,10 +107,32 @@ impl<T> Response<T> {
     /// let note = Response::new(3).with_status(Status::NO_CONTENT);
     /// ```
     ///
-    /// A 204, a 205 and a 304 are answered without their body, which HTTP gives them none: a `Response<Note>` of a
-    /// 304 holds a `Note` that is not sent. The OpenAPI document describes the contract's status alone.
+    /// A route with no result that answers 201 when it creates and 204 when it replaces gives each in its branch:
+    ///
+    /// ```
+    /// use quoll::rest::{Response, Status};
+    ///
+    /// fn put(created: bool) -> Response<()> {
+    ///     let response = Response::new(());
+    ///
+    ///     if created {
+    ///         return response.with_status(Status::CREATED);
+    ///     }
+    ///
+    ///     response.with_status(Status::NO_CONTENT)
+    /// }
+    /// # assert_eq!(put(false).status(), http::StatusCode::NO_CONTENT);
+    /// ```
+    ///
+    /// A 204, a 205 and a 304 are answered without their body, which HTTP gives them none: the value the `Response`
+    /// holds is not sent, a `Some(note)` given a 204 as a `Note` given a 304. The OpenAPI document describes the
+    /// contract's status, and a 204 on a route whose result may be empty.
     #[must_use]
-    pub fn with_status<S: StatusOf<T>>(mut self, status: S) -> Self {
+    pub fn with_status<S>(mut self, status: S) -> Self
+    where
+        S: IntoStatus,
+        S::Body: Allows<T>,
+    {
         self.status = Some(status.into_status_code());
         self
     }
@@ -240,9 +264,9 @@ impl Status {
     pub const ACCEPTED: Self = Self(StatusCode::ACCEPTED);
     /// 203 Non-Authoritative Information.
     pub const NON_AUTHORITATIVE_INFORMATION: Self = Self(StatusCode::NON_AUTHORITATIVE_INFORMATION);
-    /// 204 No Content, of a route with no result or an `Option<T>`: a [`NoContent`].
+    /// 204 No Content, of a route whose result may be empty: a [`NoContent`].
     pub const NO_CONTENT: NoContent = NoContent(StatusCode::NO_CONTENT);
-    /// 205 Reset Content, of a route with no result or an `Option<T>`: a [`NoContent`].
+    /// 205 Reset Content, of a route whose result may be empty: a [`NoContent`].
     pub const RESET_CONTENT: NoContent = NoContent(StatusCode::RESET_CONTENT);
     /// 206 Partial Content.
     pub const PARTIAL_CONTENT: Self = Self(StatusCode::PARTIAL_CONTENT);
@@ -294,7 +318,7 @@ impl TryFrom<StatusCode> for Status {
 }
 
 /// A status of no content, a 204 or a 205, [`Status::NO_CONTENT`] and [`Status::RESET_CONTENT`]: the status of a
-/// route with no result, or of one that returns an `Option<T>`, as [`Response::with_status`] says.
+/// route whose result may be empty, which [`Allows`] lists, as [`Response::with_status`] says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NoContent(StatusCode);
 
@@ -316,47 +340,108 @@ pub(crate) fn no_content(status: StatusCode) -> bool {
     matches!(status, StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT)
 }
 
-/// A status a `Response<T>` may be given with [`Response::with_status`]: a [`Status`] on any, a [`NoContent`] on a
-/// `Response<()>` or a `Response<Option<T>>` alone, which a 204 or a 205 leaves with no body.
+impl TryFrom<StatusCode> for NoContent {
+    type Error = InvalidStatus;
+
+    /// `status`, when it is a 204 or a 205: one another API answered, given again.
+    ///
+    /// # Errors
+    ///
+    /// An [`InvalidStatus`] for any other status.
+    fn try_from(status: StatusCode) -> std::result::Result<Self, InvalidStatus> {
+        if no_content(status) {
+            return Ok(Self(status));
+        }
+
+        Err(InvalidStatus(status))
+    }
+}
+
+/// A status a [`Response`] is given with [`Response::with_status`]: a [`Status`], or a [`NoContent`], which only a
+/// route whose result may be empty takes.
 #[diagnostic::on_unimplemented(
-    message = "a 204 or a 205 says there is no body, which a `Response<{T}>` of a value has",
-    label = "a status of no content, on a route with a value",
-    note = "a route that may answer no content returns an `Option`: write `-> Option<Note>` in the contract, and `Response::new(None).with_status(Status::NO_CONTENT)` in its handler"
+    message = "`{Self}` is not a status a handler gives",
+    label = "a `rest::Status` or a `rest::NoContent`",
+    note = "a status is one of `rest::Status`'s, `Status::CREATED`, or `Status::try_from(status)?` for an `http::StatusCode`; a 204 or a 205 is `Status::NO_CONTENT` or `NoContent::try_from(status)?`"
 )]
-pub trait StatusOf<T>: sealed::Sealed {
+pub trait IntoStatus: sealed::Sealed {
+    /// What the status says of the body: any for a [`Status`], none for a [`NoContent`].
+    #[doc(hidden)]
+    type Body;
+
     /// The status, as http has it.
     #[doc(hidden)]
     fn into_status_code(self) -> StatusCode;
 }
 
-impl<T> StatusOf<T> for Status {
+impl IntoStatus for Status {
+    type Body = sealed::AnyBody;
+
     fn into_status_code(self) -> StatusCode {
         self.0
     }
 }
 
-impl StatusOf<()> for NoContent {
+impl IntoStatus for NoContent {
+    type Body = sealed::NoBody;
+
     fn into_status_code(self) -> StatusCode {
         self.0
     }
 }
 
-impl<T> StatusOf<Option<T>> for NoContent {
-    fn into_status_code(self) -> StatusCode {
-        self.0
-    }
+/// What a status says of the body, [`IntoStatus::Body`], allows of a [`Response`]'s value `T`: any, for a
+/// [`Status`]; for a 204 or a 205, a [`NoContent`], a result that may be empty alone, `()`, an `Option<T>`, a `Text`,
+/// `Bytes`, `Events<T>`, `JsonLines<T>` or a `ByteStream`. A value, `T`, a `Created<T>` or an `Accepted<T>`, is not:
+/// an `Option<T>` is.
+#[diagnostic::on_unimplemented(
+    message = "a 204 or a 205 says there is no body, and a `{T}` is a value that the route answers",
+    label = "a status of no content, on a route of a `{T}`",
+    note = "a route that may answer no content returns an `Option`: write `-> Option<{T}>` in the contract, and `Response::new(None)` with this status in the handler"
+)]
+pub trait Allows<T>: sealed::Sealed {}
+
+impl<T> Allows<T> for sealed::AnyBody {}
+
+/// Implements `Allows` of a 204 on each result that may be empty, `T` its parameter where it has one.
+macro_rules! may_be_empty {
+    ($($ty:ty $(=> $param:ident)?),* $(,)?) => {
+        $(
+            impl$(<$param>)? Allows<$ty> for sealed::NoBody {}
+        )*
+    };
+}
+
+may_be_empty! {
+    (),
+    Option<T> => T,
+    Text,
+    Bytes,
+    Events<T> => T,
+    JsonLines<T> => T,
+    ByteStream,
 }
 
 mod sealed {
-    /// What only the statuses of quoll implement: an application cannot give a `NoContent` to a route with a value.
+    /// What only the statuses of quoll implement.
     pub trait Sealed {}
 
     impl Sealed for super::Status {}
     impl Sealed for super::NoContent {}
+    impl Sealed for AnyBody {}
+    impl Sealed for NoBody {}
+
+    /// A status that leaves the body as it is.
+    #[derive(Debug)]
+    pub struct AnyBody;
+
+    /// A status of no content, which a body may not have.
+    #[derive(Debug)]
+    pub struct NoBody;
 }
 
 /// A status that is not a [`Status`] a handler gives: an informational one, an error's, which an `Err(rest::Error)`
-/// answers, or one of no content, which a [`NoContent`] holds.
+/// answers, or one of no content, which a [`NoContent`] holds; or, for `NoContent::try_from`, any status of a body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InvalidStatus(StatusCode);
 
@@ -377,10 +462,16 @@ impl fmt::Display for InvalidStatus {
                 "{status} is an informational status, which answers nothing"
             );
         }
+        if !no_content(self.0) && (self.0.is_success() || self.0.is_redirection()) {
+            return write!(
+                f,
+                "{status} is not a status of no content: it is a `Status`, `Status::try_from(status)`"
+            );
+        }
         if no_content(self.0) {
             return write!(
                 f,
-                "{status} says there is no body: it is `Status::NO_CONTENT` or `Status::RESET_CONTENT`, of a route with no result or an `Option<T>`"
+                "{status} says there is no body: it is a `NoContent`, `NoContent::try_from(status)`, of a route whose result may be empty"
             );
         }
 
@@ -440,7 +531,19 @@ mod tests {
             Status::try_from(StatusCode::NO_CONTENT)
                 .expect_err("one of no content")
                 .to_string(),
-            "204 says there is no body: it is `Status::NO_CONTENT` or `Status::RESET_CONTENT`, of a route with no result or an `Option<T>`"
+            "204 says there is no body: it is a `NoContent`, `NoContent::try_from(status)`, of a route whose result may be empty"
+        );
+
+        let text = Response::new(Text::from("")).with_status(Status::NO_CONTENT);
+        let again = NoContent::try_from(StatusCode::RESET_CONTENT).expect("one of no content");
+
+        assert_eq!(text.status(), StatusCode::NO_CONTENT);
+        assert_eq!(StatusCode::from(again), StatusCode::RESET_CONTENT);
+        assert_eq!(
+            NoContent::try_from(StatusCode::OK)
+                .expect_err("a status of a body")
+                .to_string(),
+            "200 is not a status of no content: it is a `Status`, `Status::try_from(status)`"
         );
     }
 

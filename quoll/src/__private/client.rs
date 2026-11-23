@@ -721,7 +721,7 @@ impl<T: Send + 'static, E: Send + 'static> rest::Call<T, E> for Pending<'_, T, E
             match read(Answer { response, route }).await {
                 Ok(value) => Ok(value),
                 // An answer of no content that is not the route's result keeps its status and its headers.
-                Err(error) if no_content(status) => Err(error.cast()),
+                Err(error) if rest::no_content(status) => Err(error.cast()),
                 Err(error) => return Err(error.cast()),
             }
         } else {
@@ -777,7 +777,7 @@ impl fmt::Debug for Answer {
 
 impl Answer {
     /// The body, read as the JSON of `T`: what a route returning `T`, `Created<T>` or `Accepted<T>` gives. It is read
-    /// whole: it is the route's data. A 204 or a 205, which has no body, is read as `null`: `None` for an `Option<T>`.
+    /// whole: it is the route's data. A 204 or a 205, which has no body, is read as `null`: `()`, or `None` for an `Option<T>`.
     ///
     /// # Errors
     ///
@@ -790,7 +790,7 @@ impl Answer {
     /// The body, read as JSON, as [`Answer::json`] reads it.
     async fn read_json<T: DeserializeOwned>(self) -> Result<T> {
         let route = self.route;
-        let empty = no_content(self.response.status());
+        let empty = rest::no_content(self.response.status());
         let body = self.read().await?;
         let body: &[u8] = if empty { b"null" } else { &body };
 
@@ -932,12 +932,16 @@ impl Answer {
         )))
     }
 
-    /// The whole body, when the answer's content type is `expected`, with no charset but UTF-8 when `utf8` is set: a
+    /// The whole body, empty on a 204 or a 205, or when the answer's content type is `expected`, with no charset but
+    /// UTF-8 when `utf8` is set: a
     /// body of another type is not the route's result, even when it would read as one, as a page of HTML would as
     /// text. Such a body is read and dropped up to 64 KiB, as [`Answer::none`] does, so that the connection serves
     /// again.
     async fn read_as(self, expected: &str, utf8: bool) -> Result<bytes::Bytes> {
-        if content_type::is(self.response.headers(), expected, utf8) {
+        // A 204 or a 205 has no body, and so no content type: an empty text.
+        if rest::no_content(self.response.status())
+            || content_type::is(self.response.headers(), expected, utf8)
+        {
             return self.read().await;
         }
 
@@ -947,15 +951,18 @@ impl Answer {
         Err(not_of_type(self.route, &[expected], utf8))
     }
 
-    /// The answer of a stream, when its content type is one of `expected`. An answer of another type is dropped at
+    /// The answer of a stream, when its content type is one of `expected`, or a 204 or a 205, whose stream ends at
+    /// once. An answer of another type is dropped at
     /// once, which closes its connection, rather than drained as [`Answer::read_as`] drains it: it may be an endless
     /// stream of its own, whose 64 KiB never come.
     fn stream_of(self, expected: &[&str]) -> Result<reqwest::Response> {
         let Self { response, route } = self;
 
-        if expected
-            .iter()
-            .any(|expected| content_type::is(response.headers(), expected, false))
+        // A 204 or a 205 has no body, and so no content type: a stream that ends at once.
+        if rest::no_content(response.status())
+            || expected
+                .iter()
+                .any(|expected| content_type::is(response.headers(), expected, false))
         {
             return Ok(response);
         }
@@ -988,11 +995,6 @@ impl Answer {
             Ok(())
         })
     }
-}
-
-/// Whether `status` says there is no body, a 204 or a 205: what a route with no result or an `Option<T>` answers.
-fn no_content(status: StatusCode) -> bool {
-    matches!(status, StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT)
 }
 
 /// What the error of an answer that is not the route's result says.

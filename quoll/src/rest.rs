@@ -478,6 +478,8 @@ pub use created::Created;
 pub use error::{Error, Result};
 pub use problem::Problem;
 pub use quoll_macros::{api, group};
-pub use response::{InvalidStatus, NoContent, Response, Status, StatusOf};
+#[cfg(any(feature = "server", feature = "client"))]
+pub(crate) use response::no_content;
+pub use response::{Allows, IntoStatus, InvalidStatus, NoContent, Response, Status};
 pub use route::Route;
 pub use stream::{ByteStream, Events, JsonLines};

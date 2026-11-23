@@ -543,6 +543,9 @@
             },
             "description": "Server-sent events, the data of each the JSON of an item, whose schema is `x-item`. A failure ends the stream with an event `problem`, whose data is a `Problem`."
           },
+          "204": {
+            "description": "No Content"
+          },
           "400": {
             "$ref": "#/components/responses/BadRequest"
           },

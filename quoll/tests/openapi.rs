@@ -207,6 +207,7 @@ rest::api! {
         GET  "/find"         => find(query find: Find) -> Vec<String>;
         GET  "/old"          => old() -> Renamed;
         GET  "/page"         => page() -> Page;
+        GET  "/drafts/{id}"  => draft(id: i64) -> Option<Page>;
         #[auth(Crumb)]
         POST "/crumbs"       => crumb();
     }
@@ -501,13 +502,42 @@ fn a_byte_stream_is_bytes_of_any_type_said_to_stream() {
 }
 
 #[test]
+fn a_result_that_may_be_empty_lists_a_204() {
+    let draft = &operation("/api/drafts/{id}", "get")["responses"];
+
+    assert_eq!(
+        responses("/api/drafts/{id}", "get"),
+        ["200", "204", "400", "default"]
+    );
+    assert_eq!(draft["204"], json!({ "description": "No Content" }));
+
+    for (path, method) in [
+        ("/api/public", "get"),
+        ("/api/files/{name}", "get"),
+        ("/api/notes/{id}/events", "get"),
+        ("/api/output", "get"),
+    ] {
+        assert!(responses(path, method).contains(&"204"), "{method} {path}");
+    }
+
+    // A value, whatever its status: a 204 is no answer of it.
+    for (path, method) in [
+        ("/api/page", "get"),
+        ("/api/notes", "post"),
+        ("/api/files/{name}", "put"),
+    ] {
+        assert!(!responses(path, method).contains(&"204"), "{method} {path}");
+    }
+}
+
+#[test]
 fn each_route_lists_the_errors_quoll_answers_itself() {
-    // Nothing read, no credential.
-    assert_eq!(responses("/api/lines", "get"), ["200", "default"]);
-    // An argument.
+    // Nothing read, no credential, a result that may be empty.
+    assert_eq!(responses("/api/lines", "get"), ["200", "204", "default"]);
+    // An argument, bytes that may be empty.
     assert_eq!(
         responses("/api/files/{name}", "get"),
-        ["200", "400", "default"]
+        ["200", "204", "400", "default"]
     );
     // A body.
     assert_eq!(

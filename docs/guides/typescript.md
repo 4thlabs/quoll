@@ -287,7 +287,10 @@ export async function apiFetch<T>(url: string, init: RequestInit): Promise<T> {
     throw await apiError(response, sent);
   }
 
-  return (response.status === 204 ? undefined : await response.json()) as T;
+  // A 204 or a 205 has no body: `null`, the JSON of an `Option` that is `None`.
+  const empty = response.status === 204 || response.status === 205;
+
+  return (empty ? null : await response.json()) as T;
 }
 ```
 

@@ -169,9 +169,11 @@ A handler returns a `rest::Response` of the route's value: `Note` for `-> Note`,
   answers 201 when it creates and 200 when it replaces, a 304 Not Modified, a 206. `rest::Status` holds a `2xx` or a
   `3xx` alone, so an error's status does not compile there: an error is an `Err(rest::Error)`, as
   [Errors](errors.md) says.
-- `Status::NO_CONTENT` and `Status::RESET_CONTENT`, a 204 and a 205, say there is no body: they go on a route with no
-  result, or on one that returns an `Option<T>`, `Response::new(None)`, which the client reads as `None`. On a route of
-  a value, `-> Note`, they do not compile: write `-> Option<Note>`.
+- `Status::NO_CONTENT` and `Status::RESET_CONTENT`, a 204 and a 205, say there is no body: they go on a result that
+  may be empty, no result, an `Option<T>`, `Response::new(None)`, a `Text`, `Bytes` or a stream, which the client reads
+  as `()`, `None`, empty, or a stream that ends at once. On a value, `-> Note`, a `Created<Note>` or an
+  `Accepted<Note>`, they do not compile: write `-> Option<Note>`. `NoContent::try_from(status)` gives one back from
+  another API's answer, and a route with no result that answers 201 or 204 gives each in its own branch.
 - A 204, a 205 or a 304 is sent without its body, which HTTP gives them none: the value of the `Response` is not sent.
 - A name or a value that is not a header's, or a `Content-Type`, a `Content-Length` or a `Transfer-Encoding`, which
   quoll writes from the route's result, answers 500, logged without the value.

@@ -287,7 +287,24 @@ fn route_description(group: &Group, route: &Route) -> TokenStream {
             let kind = returned.kind();
             let variant = syn::Ident::new(kind.document, proc_macro2::Span::call_site());
 
-            if kind.schema {
+            if kind.document == "Json" {
+                let served = &returned.served;
+                let schema = schema_fn(served);
+
+                // An `Option<T>` may answer a 204, which its type says.
+                quote! {
+                    {
+                        #[allow(unused_imports)]
+                        use ::quoll::__private::openapi::NotOptional as _;
+
+                        if <::quoll::__private::openapi::Optional<#served>>::IS {
+                            ::quoll::__private::openapi::Reply::Optional(#schema)
+                        } else {
+                            ::quoll::__private::openapi::Reply::Json(#schema)
+                        }
+                    }
+                }
+            } else if kind.schema {
                 let schema = schema_fn(returned.inner.as_ref().unwrap_or(&returned.served));
 
                 quote! { ::quoll::__private::openapi::Reply::#variant(#schema) }

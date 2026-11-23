@@ -708,10 +708,7 @@ pub(crate) fn with_headers(mut response: Response, given: Given) -> Result<Respo
 
     *response.status_mut() = status;
 
-    if matches!(
-        status,
-        StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT | StatusCode::NOT_MODIFIED
-    ) {
+    if rest::no_content(status) || status == StatusCode::NOT_MODIFIED {
         for written in &WRITTEN {
             response.headers_mut().remove(written);
         }
