@@ -324,8 +324,6 @@ fn http() -> quoll::Result<reqwest_middleware::ClientWithMiddleware> {
   route whose result is a stream, it bounds the head of the answer alone.
 - A call's `.timeout(duration)` is a deadline for that call alone, in place of `timeout`'s, with the same meaning: a
   long call, a slow export, waits longer than the others, and a client with no `timeout` takes it too.
-- `redirects(hops)` follows up to `hops` redirects, each hop through the middleware after it. A hop to another origin
-  carries no credential.
 
 ```rust,no_run
 use std::time::Duration;
@@ -347,6 +345,9 @@ async fn export(api: &ApiClient) -> quoll::Result<u64> {
         .await
 }
 ```
+
+`redirects(hops)` follows up to `hops` redirects, each hop through the middleware after it. A hop to another origin
+carries no credential.
 
 Given a credential, `bearer`, `bearer_from`, `basic`, `key` or `on_request`, and no `redirects`, the builder adds
 `redirects(10)` itself, so that redirects are still followed, and no hop to another origin carries a credential.

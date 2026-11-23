@@ -173,8 +173,9 @@ A handler returns a `quoll::Response` of the route's value: `Note` for `-> Note`
   `Option<T>` of a `Created` or an `Accepted`, which answers JSON, `-> Accepted<()>` or `-> Created<Option<Note>>`;
   the client reads them as `()`, `None`, empty, or a stream that ends at once. On a value that must be one, the
   `Note` of `-> Note`, `-> Created<Note>` or `-> Accepted<Note>`, they do not compile: write an `Option<Note>`.
-- A 204 and a 205 are a `quoll::NoContent`, not a `Status`: a handler that answers a 201 or a 204, as it creates or
-  replaces, calls `with_status` in each branch.
+- `Status::NO_CONTENT` and `Status::RESET_CONTENT` are constants of type `quoll::NoContent`, not `Status`, so that
+  one `if` cannot pick between a 201 and a 204: a handler that answers either, as it creates or replaces, calls
+  `with_status` in each branch. `NoContent::try_from(status)` gives one back from another API's answer.
 - A 204, a 205 or a 304 is sent without a body, as HTTP has none for them: the value of the `Response` is not sent.
 - A name or a value that is not a header's, or a `Content-Type`, a `Content-Length` or a `Transfer-Encoding`, which
   quoll writes from the route's result, answers 500, logged without the value.

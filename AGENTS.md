@@ -73,7 +73,7 @@ cargo quoll dev                                                    # the notes s
   Its dev-dependency on `notes-api` is a path into the notes example's workspace, which cargo builds from the root.
   GitHub shows the lines rustdoc hides, so the README's short blocks take theirs from its `build.rs`: a block after
   `<!-- doctest NAME: WORD... -->` begins, hidden, with each file of `preludes/` and each earlier block the comment
-  names.
+  names. Its doctests run on a copy in `OUT_DIR` whose lines are the README's, named by the line of the comment.
   A guide says how to use quoll and links to the rustdoc for each item's detail; the why stays in the spec.
   The TypeScript guide's TypeScript and TOML blocks are excerpts of the notes example, each under the name of its
   file, which the page's `src/guide/excerpts.test.ts` checks; the code the page does not use is in its `src/guide/`.
