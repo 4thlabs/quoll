@@ -87,11 +87,29 @@ impl<T> Response<T> {
     /// # let _ = replaced;
     /// ```
     ///
+    /// A 204 or a 205, [`Status::NO_CONTENT`] and [`Status::RESET_CONTENT`], says there is no body: it is a status of
+    /// a route with no result, a `Response<()>`, or of a route that returns an `Option<T>`, a `Response<Option<T>>`,
+    /// whose client reads it as `None`, and does not compile on any other.
+    ///
+    /// ```
+    /// use quoll::rest::{Response, Status};
+    ///
+    /// # struct Note;
+    /// let missing: Response<Option<Note>> = Response::new(None).with_status(Status::NO_CONTENT);
+    /// # let _ = missing;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use quoll::rest::{Response, Status};
+    ///
+    /// let note = Response::new(3).with_status(Status::NO_CONTENT);
+    /// ```
+    ///
     /// A 204, a 205 and a 304 are answered without their body, which HTTP gives them none: a `Response<Note>` of a
     /// 304 holds a `Note` that is not sent. The OpenAPI document describes the contract's status alone.
     #[must_use]
-    pub fn with_status(mut self, status: Status) -> Self {
-        self.status = Some(status.0);
+    pub fn with_status<S: StatusOf<T>>(mut self, status: S) -> Self {
+        self.status = Some(status.into_status_code());
         self
     }
 
@@ -199,7 +217,8 @@ impl<T: Default> Default for Response<T> {
 }
 
 /// A status a handler gives its [`Response`]: a success, `2xx`, or a redirection, `3xx`. An error's status, `4xx` or
-/// `5xx`, is an `Err(rest::Error)`, which answers its problem with it; an informational one, `1xx`, is no answer.
+/// `5xx`, is an `Err(rest::Error)`, which answers its problem with it; an informational one, `1xx`, is no answer; a
+/// 204 or a 205 is a [`NoContent`], of a route with no result or an `Option<T>`.
 ///
 /// ```
 /// use http::StatusCode;
@@ -221,10 +240,10 @@ impl Status {
     pub const ACCEPTED: Self = Self(StatusCode::ACCEPTED);
     /// 203 Non-Authoritative Information.
     pub const NON_AUTHORITATIVE_INFORMATION: Self = Self(StatusCode::NON_AUTHORITATIVE_INFORMATION);
-    /// 204 No Content.
-    pub const NO_CONTENT: Self = Self(StatusCode::NO_CONTENT);
-    /// 205 Reset Content.
-    pub const RESET_CONTENT: Self = Self(StatusCode::RESET_CONTENT);
+    /// 204 No Content, of a route with no result or an `Option<T>`: a [`NoContent`].
+    pub const NO_CONTENT: NoContent = NoContent(StatusCode::NO_CONTENT);
+    /// 205 Reset Content, of a route with no result or an `Option<T>`: a [`NoContent`].
+    pub const RESET_CONTENT: NoContent = NoContent(StatusCode::RESET_CONTENT);
     /// 206 Partial Content.
     pub const PARTIAL_CONTENT: Self = Self(StatusCode::PARTIAL_CONTENT);
     /// 300 Multiple Choices.
@@ -257,12 +276,15 @@ impl From<Status> for StatusCode {
 impl TryFrom<StatusCode> for Status {
     type Error = InvalidStatus;
 
-    /// `status`, when it is a success or a redirection.
+    /// `status`, when it is a success or a redirection, but a 204 or a 205, which a [`NoContent`] holds.
     ///
     /// # Errors
     ///
-    /// An [`InvalidStatus`] for an informational status, `1xx`, or an error's, `4xx` or `5xx`.
+    /// An [`InvalidStatus`] for an informational status, `1xx`, an error's, `4xx` or `5xx`, a 204 or a 205.
     fn try_from(status: StatusCode) -> std::result::Result<Self, InvalidStatus> {
+        if no_content(status) {
+            return Err(InvalidStatus(status));
+        }
         if status.is_success() || status.is_redirection() {
             return Ok(Self(status));
         }
@@ -271,8 +293,70 @@ impl TryFrom<StatusCode> for Status {
     }
 }
 
-/// A status that is not a [`Status`] a handler gives: an informational one, or an error's, which an
-/// `Err(rest::Error)` answers.
+/// A status of no content, a 204 or a 205, [`Status::NO_CONTENT`] and [`Status::RESET_CONTENT`]: the status of a
+/// route with no result, or of one that returns an `Option<T>`, as [`Response::with_status`] says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NoContent(StatusCode);
+
+impl NoContent {
+    /// The status, as http has it.
+    pub fn as_status_code(self) -> StatusCode {
+        self.0
+    }
+}
+
+impl From<NoContent> for StatusCode {
+    fn from(status: NoContent) -> Self {
+        status.0
+    }
+}
+
+/// Whether `status` is one of no content, a 204 or a 205.
+pub(crate) fn no_content(status: StatusCode) -> bool {
+    matches!(status, StatusCode::NO_CONTENT | StatusCode::RESET_CONTENT)
+}
+
+/// A status a `Response<T>` may be given with [`Response::with_status`]: a [`Status`] on any, a [`NoContent`] on a
+/// `Response<()>` or a `Response<Option<T>>` alone, which a 204 or a 205 leaves with no body.
+#[diagnostic::on_unimplemented(
+    message = "a 204 or a 205 says there is no body, which a `Response<{T}>` of a value has",
+    label = "a status of no content, on a route with a value",
+    note = "a route that may answer no content returns an `Option`: write `-> Option<Note>` in the contract, and `Response::new(None).with_status(Status::NO_CONTENT)` in its handler"
+)]
+pub trait StatusOf<T>: sealed::Sealed {
+    /// The status, as http has it.
+    #[doc(hidden)]
+    fn into_status_code(self) -> StatusCode;
+}
+
+impl<T> StatusOf<T> for Status {
+    fn into_status_code(self) -> StatusCode {
+        self.0
+    }
+}
+
+impl StatusOf<()> for NoContent {
+    fn into_status_code(self) -> StatusCode {
+        self.0
+    }
+}
+
+impl<T> StatusOf<Option<T>> for NoContent {
+    fn into_status_code(self) -> StatusCode {
+        self.0
+    }
+}
+
+mod sealed {
+    /// What only the statuses of quoll implement: an application cannot give a `NoContent` to a route with a value.
+    pub trait Sealed {}
+
+    impl Sealed for super::Status {}
+    impl Sealed for super::NoContent {}
+}
+
+/// A status that is not a [`Status`] a handler gives: an informational one, an error's, which an `Err(rest::Error)`
+/// answers, or one of no content, which a [`NoContent`] holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InvalidStatus(StatusCode);
 
@@ -291,6 +375,12 @@ impl fmt::Display for InvalidStatus {
             return write!(
                 f,
                 "{status} is an informational status, which answers nothing"
+            );
+        }
+        if no_content(self.0) {
+            return write!(
+                f,
+                "{status} says there is no body: it is `Status::NO_CONTENT` or `Status::RESET_CONTENT`, of a route with no result or an `Option<T>`"
             );
         }
 
@@ -321,6 +411,8 @@ mod tests {
 
         for status in [
             StatusCode::CONTINUE,
+            StatusCode::NO_CONTENT,
+            StatusCode::RESET_CONTENT,
             StatusCode::NOT_FOUND,
             StatusCode::INTERNAL_SERVER_ERROR,
         ] {
@@ -334,6 +426,21 @@ mod tests {
                 .expect_err("an error's")
                 .to_string(),
             "404 is an error's status, which a handler answers with an `Err(rest::Error)`"
+        );
+    }
+
+    #[test]
+    fn a_status_of_no_content_is_one_of_its_own() {
+        let none: Response<Option<u32>> = Response::new(None).with_status(Status::NO_CONTENT);
+        let reset = Response::new(()).with_status(Status::RESET_CONTENT);
+
+        assert_eq!(none.status(), StatusCode::NO_CONTENT);
+        assert_eq!(reset.status(), StatusCode::RESET_CONTENT);
+        assert_eq!(
+            Status::try_from(StatusCode::NO_CONTENT)
+                .expect_err("one of no content")
+                .to_string(),
+            "204 says there is no body: it is `Status::NO_CONTENT` or `Status::RESET_CONTENT`, of a route with no result or an `Option<T>`"
         );
     }
 
