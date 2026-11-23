@@ -287,29 +287,28 @@ fn route_description(group: &Group, route: &Route) -> TokenStream {
             let kind = returned.kind();
             let variant = syn::Ident::new(kind.document, proc_macro2::Span::call_site());
 
-            if kind.document == "Json" {
-                let served = &returned.served;
-                let schema = schema_fn(served);
-
-                // An `Option<T>` may answer a 204, which its type says.
-                quote! {
-                    {
-                        #[allow(unused_imports)]
-                        use ::quoll::__private::known::NotNullable as _;
-
-                        if <::quoll::__private::known::Nullable<#served>>::IS {
-                            ::quoll::__private::openapi::Reply::Nullable(#schema)
-                        } else {
-                            ::quoll::__private::openapi::Reply::Json(#schema)
-                        }
-                    }
-                }
-            } else if kind.schema {
+            if kind.schema {
                 let schema = schema_fn(returned.inner.as_ref().unwrap_or(&returned.served));
 
                 quote! { ::quoll::__private::openapi::Reply::#variant(#schema) }
             } else {
                 quote! { ::quoll::__private::openapi::Reply::#variant }
+            }
+        }
+    };
+    // A handler's value that may be empty, whatever the result wraps it in, may answer a 204, which its type says.
+    let may_be_empty = match route.reply.as_deref() {
+        None => quote! { false },
+        Some(returned) => {
+            let value = &returned.value;
+
+            quote! {
+                {
+                    #[allow(unused_imports)]
+                    use ::quoll::__private::known::NotEmpty as _;
+
+                    <::quoll::__private::known::MayBeEmpty<#value>>::IS
+                }
             }
         }
     };
@@ -345,6 +344,7 @@ fn route_description(group: &Group, route: &Route) -> TokenStream {
             headers: #headers,
             body: #body,
             reply: #reply,
+            may_be_empty: #may_be_empty,
             auth: #auth,
         }
     }

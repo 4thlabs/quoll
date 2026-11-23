@@ -821,7 +821,7 @@ impl Answer {
 
     /// The body, read whole as its bytes, of any content type: what a route returning `Bytes` gives. They keep the
     /// answer's content type, or `application/octet-stream`, bytes of no known type, when it has none, or one that is
-    /// not a media type.
+    /// not a media type, and for a 204 or a 205, which are no bytes.
     ///
     /// # Errors
     ///
@@ -839,7 +839,8 @@ impl Answer {
     }
 
     /// The body, read as its chunks as they come, of any content type: what a route returning `ByteStream` gives. It
-    /// keeps the answer's content type, or `application/octet-stream`, as [`Answer::bytes`] does.
+    /// keeps the answer's content type, or `application/octet-stream`, as [`Answer::bytes`] does, and ends at once on a
+    /// 204 or a 205.
     ///
     /// # Errors
     ///

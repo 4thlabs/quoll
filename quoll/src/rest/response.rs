@@ -88,10 +88,11 @@ impl<T> Response<T> {
     /// ```
     ///
     /// A 204 or a 205, [`Status::NO_CONTENT`] and [`Status::RESET_CONTENT`], a [`NoContent`], says there is no
-    /// body: it is the status of a route whose result may be empty, which [`Allows`] lists, and the client reads
-    /// it as `()`, `None`, an empty text or bytes, or a stream that ends at once. A route of a value, `-> Note`, a
-    /// `Created<Note>` or an `Accepted<Note>`, takes none: it does not compile, and the route returns
-    /// `-> Option<Note>`.
+    /// body: it is the status of a response whose value may be empty, which [`Allows`] lists, whatever the route's
+    /// result wraps it in, and the client reads it as `()`, `None`, an empty text or bytes, or a stream that ends at
+    /// once. A value that must be one, a `Note` of `-> Note`, `-> Created<Note>` or `-> Accepted<Note>`, takes none:
+    /// it does not compile, and the route returns an `Option<Note>`, `-> Created<Option<Note>>` among them, and an
+    /// `Accepted<()>` takes it as its 202 does.
     ///
     /// ```
     /// use quoll::rest::{Response, Status};
@@ -318,7 +319,7 @@ impl TryFrom<StatusCode> for Status {
 }
 
 /// A status of no content, a 204 or a 205, [`Status::NO_CONTENT`] and [`Status::RESET_CONTENT`]: the status of a
-/// route whose result may be empty, which [`Allows`] lists, as [`Response::with_status`] says.
+/// response whose value may be empty, which [`Allows`] lists, as [`Response::with_status`] says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NoContent(StatusCode);
 
@@ -390,14 +391,15 @@ impl IntoStatus for NoContent {
     }
 }
 
-/// What a status says of the body allows of a [`Response`]'s value `T`: any, for a
-/// [`Status`]; for a 204 or a 205, a [`NoContent`], a result that may be empty alone, `()`, an `Option<T>`, a `Text`,
-/// `Bytes`, `Events<T>`, `JsonLines<T>` or a `ByteStream`. A value, `T`, a `Created<T>` or an `Accepted<T>`, is not:
-/// an `Option<T>` is.
+/// What a status says of the body allows of a [`Response`]'s value `T`: any, for a [`Status`]; for a 204 or a 205,
+/// a [`NoContent`], a value that may be empty alone, `()`, an `Option<T>`, a `Text`, `Bytes`, `Events<T>`,
+/// `JsonLines<T>` or a `ByteStream`, the one list of them, which the OpenAPI document reads too. The route's result
+/// does not count, only the handler's value: a `Created<Option<Note>>` and an `Accepted<()>` take a 204, a `Note` of
+/// `-> Note`, `-> Created<Note>` or `-> Accepted<Note>` does not.
 #[diagnostic::on_unimplemented(
     message = "a 204 or a 205 says there is no body, and a `{T}` is a value that the route answers",
-    label = "a status of no content, on a route of a `{T}`",
-    note = "a route `-> {T}` that may answer no content returns an `Option`: `-> Option<{T}>` in the contract, and `Response::new(None)` with this status in the handler; a 204 is no answer of a route `-> Created<{T}>` or `-> Accepted<{T}>`, whose status carries its value"
+    label = "a status of no content, on a value `{T}`",
+    note = "a handler's value that may answer no content is an `Option`: `Option<{T}>` in place of `{T}` in the contract, `-> Option<{T}>`, `-> Created<Option<{T}>>` or `-> Accepted<Option<{T}>>`, and `Response::new(None)` with this status in the handler"
 )]
 pub trait Allows<T>: sealed::Sealed {}
 
@@ -422,7 +424,7 @@ may_be_empty! {
     ByteStream,
 }
 
-mod sealed {
+pub(crate) mod sealed {
     /// What only the statuses of quoll implement.
     pub trait Sealed {}
 

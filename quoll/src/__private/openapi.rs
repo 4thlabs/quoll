@@ -104,6 +104,10 @@ pub struct Route {
     pub body: Option<Body>,
     /// Its result.
     pub reply: Reply,
+    /// Whether the handler's value may be empty, so that a 204 answers it beside its own status, as
+    /// `rest::Allows` gives it one: an `Option<T>`, `Text`, `Bytes` or a stream, in a `Created<T>` or an `Accepted<T>`
+    /// too; `false` for a route with no result, whose own status is the 204.
+    pub may_be_empty: bool,
     /// Its authentication, if it takes a credential.
     pub auth: Option<Auth>,
 }
@@ -161,8 +165,6 @@ pub enum Reply {
     Empty,
     /// The JSON of a type.
     Json(SchemaFn),
-    /// The JSON of a type that is `null` when empty, an `Option<T>`, or a 204 with no body.
-    Nullable(SchemaFn),
     /// `Created<T>`.
     Created(SchemaFn),
     /// `Accepted<T>`.
@@ -177,22 +179,6 @@ pub enum Reply {
     JsonLines(SchemaFn),
     /// `ByteStream`.
     ByteStream,
-}
-
-impl Reply {
-    /// Whether the result may be empty, and so answered with a 204 beside its own status: what a handler may give a
-    /// `rest::NoContent`, as `rest::Allows` says, but a route with no result, whose status is the 204.
-    fn may_be_empty(&self) -> bool {
-        match self {
-            Self::Nullable(_)
-            | Self::Text
-            | Self::Bytes
-            | Self::Events(_)
-            | Self::JsonLines(_)
-            | Self::ByteStream => true,
-            Self::Empty | Self::Json(_) | Self::Created(_) | Self::Accepted(_) => false,
-        }
-    }
 }
 
 /// The authentication of a route.
@@ -589,7 +575,7 @@ impl Builder {
         let (status, success) = self.success(&route.reply);
         responses.insert(status.into(), success);
 
-        if route.reply.may_be_empty() {
+        if route.may_be_empty {
             responses.insert("204".into(), json!({ "description": "No Content" }));
         }
 
@@ -634,7 +620,7 @@ impl Builder {
     fn success(&mut self, reply: &Reply) -> (&'static str, Value) {
         match reply {
             Reply::Empty => ("204", json!({ "description": "No Content" })),
-            Reply::Json(schema) | Reply::Nullable(schema) => ("200", self.json("OK", *schema)),
+            Reply::Json(schema) => ("200", self.json("OK", *schema)),
             Reply::Created(schema) => {
                 let mut created = self.json("Created", *schema);
                 created["headers"] = json!({

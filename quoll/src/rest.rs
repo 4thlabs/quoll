@@ -480,6 +480,7 @@ pub use problem::Problem;
 pub use quoll_macros::{api, group};
 #[cfg(any(feature = "server", feature = "client"))]
 pub(crate) use response::no_content;
+pub(crate) use response::sealed::NoBody;
 pub use response::{Allows, IntoStatus, InvalidStatus, NoContent, Response, Status};
 pub use route::Route;
 pub use stream::{ByteStream, Events, JsonLines};
