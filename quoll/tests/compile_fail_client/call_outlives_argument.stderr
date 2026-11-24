@@ -1,0 +1,12 @@
+error[E0597]: `owner` does not live long enough
+  --> tests/compile_fail_client/call_outlives_argument.rs:15:19
+   |
+12 |     let call = {
+   |         ---- borrow later stored here
+13 |         let owner = String::from("ana");
+   |             ----- binding `owner` declared here
+14 |
+15 |         repos.get(&owner)
+   |                   ^^^^^^ borrowed value does not live long enough
+16 |     };
+   |     - `owner` dropped here while still borrowed

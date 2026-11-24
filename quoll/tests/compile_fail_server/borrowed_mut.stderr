@@ -1,0 +1,5 @@
+error: the client reads an argument and never writes it back, and the server receives it owned: write `&X` to borrow it, or `X` to take it
+ --> tests/compile_fail_server/borrowed_mut.rs:5:38
+  |
+5 |         GET "/notes/{id}" => get(id: &mut str);
+  |                                      ^^^^

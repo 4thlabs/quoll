@@ -1,0 +1,5 @@
+error: the client borrows an argument for the call alone, which needs no lifetime: write `&X`, without it
+ --> tests/compile_fail/borrowed_lifetime.rs:5:39
+  |
+5 |         GET "/notes/{id}" => get(id: &'a str);
+  |                                       ^^

@@ -7,13 +7,14 @@
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
-use syn::{Ident, ext::IdentExt, spanned::Spanned};
+use syn::{Ident, Lifetime, Type, ext::IdentExt, spanned::Spanned};
 
+use crate::borrowed;
 use crate::descriptor::{Cx, descriptor_name, table};
 use crate::docs::{doc_attrs, route_docs};
 use crate::fields::route_fields;
 use crate::headers::{api_headers, route_headers};
-use crate::model::{Api, Param, Route};
+use crate::model::{Api, Param, Route, peel};
 use crate::path::Segment;
 
 /// The client's code of a group, behind the feature `client` of `quoll`: its trait, its client, and the function of
@@ -137,12 +138,16 @@ fn group_trait(cx: &Cx) -> TokenStream {
 
 /// `fn get(&self, id: i64) -> impl quoll::Call<Note, Problem>`, of the shape of the route's errors: a `Created<T>` or
 /// an `Accepted<T>` gives its `T`, as the 201 or the 202 is only the server's answer.
+///
+/// The arguments are the contract's types as written, `&str` for a `&str`, which the client borrows. The call keeps
+/// the default capture: it may borrow its arguments until it is awaited, so that a fake reads them in its
+/// `async move`.
 fn signature(cx: &Cx, route: &Route) -> TokenStream {
     let name = &route.name;
     let args = route
         .params
         .iter()
-        .map(|Param { name, ty, .. }| quote! { #name: #ty });
+        .map(|Param { name, written, .. }| quote! { #name: #written });
     let output = match route.reply.as_deref() {
         None => quote! { () },
         Some(returned) => {
@@ -248,8 +253,13 @@ fn method(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
     });
     let body = route.body().map(|(param, kind)| {
         let (name, ty) = (&param.name, &param.ty);
+        // A body the contract writes `&T` is written from the borrow.
+        let method = match peel(&param.written) {
+            Type::Reference(_) => kind.borrowed,
+            _ => kind.method,
+        };
         // Spanned on the type, as a type that is not `Serialize` is the mistake an error names then.
-        let write = Ident::new(kind.method, ty.span());
+        let write = Ident::new(method, ty.span());
         let fallible = kind.fallible.then(|| quote! { ? });
         // A body that may hold fixed fields is written with the route's, which may be none.
         let fields = kind.format.map(|_| {
@@ -379,10 +389,17 @@ fn query(route: &Route) -> Option<(TokenStream, TokenStream)> {
     // An item, not a local: its name is spelled so that it hides none of the crate's types.
     let query_type = Ident::new("__QuollQuery", Span::mixed_site());
     let names = params.iter().map(|(param, _)| &param.name);
+    // The arguments as the client takes them, borrowed ones with the struct's lifetime.
+    let lifetime = Lifetime::new("'__quoll", Span::mixed_site());
+    let borrows = params
+        .iter()
+        .any(|(param, _)| borrowed::borrows(&param.written));
+    let generics = borrows.then(|| quote! { <#lifetime> });
     let fields = params.iter().map(|(param, key)| {
-        let (name, ty) = (&param.name, &param.ty);
+        let name = &param.name;
+        let ty = borrowed::with_lifetime(&param.written, &lifetime);
 
-        quote_spanned! {ty.span()=>
+        quote_spanned! {param.written.span()=>
             #[serde(rename = #key)]
             #name: #ty,
         }
@@ -390,7 +407,7 @@ fn query(route: &Route) -> Option<(TokenStream, TokenStream)> {
     let item = quote! {
         #[derive(::quoll::__private::serde::Serialize)]
         #[serde(crate = "::quoll::__private::serde")]
-        struct #query_type {
+        struct #query_type #generics {
             #(#fields)*
         }
     };

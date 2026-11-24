@@ -1,0 +1,5 @@
+error: the client borrows an argument once, and the server receives it owned: write `&X`
+ --> tests/compile_fail_server/borrowed_twice.rs:5:39
+  |
+5 |         GET "/notes/{id}" => get(id: &&str);
+  |                                       ^

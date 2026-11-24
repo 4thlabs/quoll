@@ -1,0 +1,22 @@
+error[E0053]: method `get` has an incompatible type for trait
+  --> tests/compile_fail_client/fake_owned_argument.rs:15:26
+   |
+15 |     fn get(&self, owner: String, _sort: Option<String>) -> impl Call<String> {
+   |                          ^^^^^^                            -----------------
+   |                          |                                 |
+   |                          |                                 the expected opaque type
+   |                          |                                 the found opaque type
+   |                          expected `&str`, found `String`
+   |
+note: type in trait
+  --> tests/compile_fail_client/fake_owned_argument.rs:7:56
+   |
+ 7 |         GET "/repos/{owner}?sort={sort}" => get(owner: &str, sort: Option<&str>) -> String;
+   |                                                        ^^^^
+   = note: expected signature `fn(&Fake, &str, Option<&str>) -> impl Call<String>`
+              found signature `fn(&Fake, String, Option<String>) -> impl Call<String>`
+help: change the parameter type to match the trait
+   |
+15 -     fn get(&self, owner: String, _sort: Option<String>) -> impl Call<String> {
+15 +     fn get(&self, owner: &str, _sort: Option<String>) -> impl Call<String> {
+   |
