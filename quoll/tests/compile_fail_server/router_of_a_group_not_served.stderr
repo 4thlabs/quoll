@@ -1,0 +1,47 @@
+error[E0277]: the group has no server side, which the api that lists it serves
+  --> tests/compile_fail_server/router_of_a_group_not_served.rs:13:28
+   |
+13 |     pub api Api = "/api" { notes::Notes };
+   |                            ^^^^^^^^^^^^ a group with `#[server(none)]`
+   |
+help: the trait `quoll::__private::group::Served` is not implemented for `__QuollGroupNotes`
+  --> tests/compile_fail_server/router_of_a_group_not_served.rs:2:5
+   |
+ 2 | /     quoll::group! {
+ 3 | |         #[server(none)]
+ 4 | |         pub group Notes {
+   | |_______________________^
+   = note: remove `#[server(none)]` from the group's `quoll::group!`, or write it on the api, which then only calls its groups
+note: required by a bound in `quoll::__private::group::is_served`
+  --> src/__private/group.rs
+   |
+   | pub const fn is_served<G: Served>() {}
+   |                           ^^^^^^ required by this bound in `is_served`
+   = note: this error originates in the macro `quoll::group` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the group has no server side, which no service can serve
+  --> tests/compile_fail_server/router_of_a_group_not_served.rs:19:25
+   |
+19 |     let _ = Api::router(ApiServices { notes: App });
+   |             ----------- ^^^^^^^^^^^^^^^^^^^^^^^^^^ a service of a group with `#[server(none)]`
+   |             |
+   |             required by a bound introduced by this call
+   |
+help: the trait `quoll::__private::server::Serve<_>` is not implemented for `__QuollGroupNotes`
+  --> tests/compile_fail_server/router_of_a_group_not_served.rs:2:5
+   |
+ 2 | /     quoll::group! {
+ 3 | |         #[server(none)]
+ 4 | |         pub group Notes {
+   | |_______________________^
+   = note: remove `#[server(none)]` from the group's `quoll::group!`, or write it on the api, which then only calls its groups
+note: required by a bound in `Api::router`
+  --> tests/compile_fail_server/router_of_a_group_not_served.rs:13:35
+   |
+10 | quoll::api! {
+11 |     /// Served, with no document.
+12 |     #[openapi(none)]
+13 |     pub api Api = "/api" { notes::Notes };
+   |                                   ^^^^^ required by this bound in `Api::router`
+14 | }
+   = note: this error originates in the macro `quoll::group` (in Nightly builds, run with -Z macro-backtrace for more info)

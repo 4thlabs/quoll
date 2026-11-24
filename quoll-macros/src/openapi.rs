@@ -16,12 +16,29 @@ use crate::scheme::scheme_type;
 
 /// The document of a group, on its descriptor, unless it has none.
 pub(crate) fn group(cx: &Cx) -> TokenStream {
+    let group = cx.group;
+    let descriptor = descriptor_name(&group.name);
+
+    // A group with no server side has no document. Only an api that serves has one, and refuses the group first by its
+    // check of `Served`: an empty document, which no api that builds reads, keeps that refusal the one error.
+    if !cx.server {
+        let name = group.name.unraw().to_string();
+
+        return quote! {
+            impl ::quoll::__private::openapi::GroupDocument for #descriptor {
+                const GROUP: ::quoll::__private::openapi::Group = ::quoll::__private::openapi::Group {
+                    name: #name,
+                    docs: &[],
+                    routes: &[],
+                };
+            }
+        };
+    }
+
     if !cx.openapi {
         return TokenStream::new();
     }
 
-    let group = cx.group;
-    let descriptor = descriptor_name(&group.name);
     let description = group_description(group);
 
     quote! {

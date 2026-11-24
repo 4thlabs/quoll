@@ -49,7 +49,10 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
   server too. `#[server(none)]`, for an API that is only called, leaves out the server side and the OpenAPI document;
   `#[client(none)]`, for one that is only served, such as a webhook receiver, leaves out the client side. The types
   then need only what the other side reads and writes. An api lists only groups that have each side it has, with a
-  message that says which side a group lacks. The guides' contracts of other APIs and the Docker example say `#[server(none)]`
+  message that says which side a group lacks. The api reaches the client and the service of a group it lists through
+  the group's descriptor, `ApiClient::notes` returning `<__QuollGroupNotes as Called>::Client` and `Api::router`
+  taking a type parameter for its service; their docs link `notes::NotesClient` and `notes::NotesServer`. The groups
+  of the api's block are named as before. The guides' contracts of other APIs and the Docker example say `#[server(none)]`
   ([#129](https://github.com/4thlabs/quoll/issues/129)).
 
 ### Changed

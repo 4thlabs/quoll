@@ -51,3 +51,22 @@ mod openapi {}
 #[cfg(doctest)]
 #[doc = include_str!("typescript.md")]
 mod typescript {}
+
+/// A contract whose api lists a group of a private module. The api's docs link the group's items, `NotesClient` on
+/// `ApiClient::notes` and `NotesServer` on `Api::router`, and `cargo doc`, whose warnings are errors in CI, checks that
+/// they resolve and raise no lint.
+pub mod listed {
+    mod notes {
+        quoll::group! {
+            /// Notes, in a module of their own.
+            pub group Notes {
+                GET "/notes/{id}" => get(id: i64) -> String;
+            }
+        }
+    }
+
+    quoll::api! {
+        /// An api that lists the group of a private module.
+        pub api Api = "/api" { notes::Notes };
+    }
+}

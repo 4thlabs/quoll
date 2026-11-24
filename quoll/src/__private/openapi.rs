@@ -64,12 +64,13 @@ pub struct Api {
     pub groups: &'static [&'static Group],
 }
 
-/// The document of a group, which `quoll::group!` writes unless the group says `#[openapi(none)]` or
-/// `#[server(none)]`.
+/// The document of a group, which `quoll::group!` writes unless the group says `#[openapi(none)]`. A group with
+/// `#[server(none)]` has an empty one, which no api that builds reads: an api with a document serves, and refuses such
+/// a group by its check of `Served`, whose message says what it lacks.
 #[diagnostic::on_unimplemented(
     message = "the group has no OpenAPI document, which the document of the api that lists it holds",
-    label = "a group with `#[openapi(none)]` or `#[server(none)]`",
-    note = "remove `#[openapi(none)]` or `#[server(none)]` from the group's `quoll::group!`, or write the same on the api"
+    label = "a group with `#[openapi(none)]`",
+    note = "remove `#[openapi(none)]` from the group's `quoll::group!`, or write it on the api, whose document is then left out"
 )]
 pub trait GroupDocument {
     /// The group, as the document describes it.

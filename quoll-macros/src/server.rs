@@ -275,10 +275,15 @@ fn router_fn(api: &Api) -> TokenStream {
             )
         });
     let traits: Vec<String> = traits.collect();
+    // The links of its docs, to the groups of private modules, stay links of the api's own crate.
     let traits = (!traits.is_empty()).then(|| {
         let lines = std::iter::once(String::new()).chain(traits);
+        let docs = crate::docs::doc_attrs(&lines.collect::<Vec<_>>());
 
-        crate::docs::doc_attrs(&lines.collect::<Vec<_>>())
+        quote! {
+            #docs
+            #[allow(rustdoc::private_intra_doc_links)]
+        }
     });
     let locals: Vec<Ident> = refs
         .iter()

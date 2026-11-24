@@ -36,13 +36,18 @@ pub(crate) use stream::ended_on_stop;
 pub use stream::{Written, byte_stream, events, json_lines};
 
 /// The descriptor of a group served by `S`, a service implementing the group's server trait: how an api's router serves
-/// the group, reaching it by its descriptor alone. Generic over the service, as the group's impl bounds it by the
-/// group's trait, which the api does not name. Not bound on `Served`, which the api checks on its own: the router's
-/// bound on a group with no server side is then no second error.
+/// a group it lists, reaching it by its descriptor alone. Generic over the service, as the group's impl bounds it by
+/// the group's trait, which the api does not name for a group it lists, only for those of its block. Not bound on
+/// `Served`, which the api checks on its own: the router's bound on a group with no server side is then no second
+/// error where the api is written.
+///
+/// Its message shows where the router is called with a group that has no server side, which implements `Serve` for no
+/// service. For a service that lacks the trait of a group that has one, rustc names that trait instead, the impl's
+/// bound.
 #[diagnostic::on_unimplemented(
-    message = "`{S}` does not serve the group: it does not implement the group's server trait, or the group has no server side",
-    label = "not a service of the group",
-    note = "the service of a group implements the group's server trait, `NotesServer` for the group `Notes`"
+    message = "the group has no server side, which no service can serve",
+    label = "a service of a group with `#[server(none)]`",
+    note = "remove `#[server(none)]` from the group's `quoll::group!`, or write it on the api, which then only calls its groups"
 )]
 pub trait Serve<S> {
     /// Adds the group's routes, served by `service`, to `router`, each with its route of `routes`, the table of the

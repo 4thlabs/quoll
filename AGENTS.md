@@ -85,6 +85,8 @@ cargo quoll dev                                                    # the notes s
   - a block that shows a mistake is `rust,compile_fail`.
 
   Its dev-dependency on `notes-api` is a path into the notes example's workspace, which cargo builds from the root.
+  Its module `listed` is a contract whose api lists a group of a private module: `cargo doc` checks the docs that
+  the macro writes for it, so `quoll` is a dependency of the crate, with both features.
 
   GitHub shows the lines that rustdoc hides, so the README's short blocks get their hidden lines from `build.rs`. A
   block after `<!-- doctest NAME: WORD... -->` begins, hidden, with each file of `preludes/` and each earlier block

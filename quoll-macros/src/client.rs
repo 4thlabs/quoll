@@ -459,12 +459,14 @@ fn api_client(api: &Api) -> TokenStream {
         // A group the block writes has the api's sides, and its client is named. One the api lists is reached by its
         // descriptor alone, never by its path, which a group with no client side does not write: the bound is the one
         // error of such a group, quoll's, on the group in the list, and the docs name its client.
-        let (returned, bound) = if group.is_written() {
-            (quote! { #group_client }, None)
+        // The link of its docs, to a group of a private module, stays a link of the api's own crate.
+        let (returned, bound, links) = if group.is_written() {
+            (quote! { #group_client }, None, None)
         } else {
             (
                 quote! { <#descriptor as ::quoll::__private::group::Called>::Client },
                 Some(quote_spanned! {group.span()=> where #descriptor: ::quoll::__private::group::Called }),
+                Some(quote! { #[allow(rustdoc::private_intra_doc_links)] }),
             )
         };
         let call = quote_spanned! {group.span()=>
@@ -478,6 +480,7 @@ fn api_client(api: &Api) -> TokenStream {
 
         quote! {
             #[doc = #docs]
+            #links
             #vis fn #method(&self) -> #returned #bound {
                 #call
             }
