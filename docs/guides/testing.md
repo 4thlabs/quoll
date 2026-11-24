@@ -208,10 +208,10 @@ async fn a_copy_has_the_title_of_its_note() -> Result<()> {
 ```
 
 A fake's methods have the client's signatures: no caller, each argument an `impl Arg<T>` of its type in the contract,
-the `T` of a `Created<T>`, and an `impl Call<T>`. `into_value()` gives the argument's value, and an `async move` block
-is an `impl Call<T>`. A route left out, or a method with the wrong signature, does not compile. Two messages of rustc
-do not name `impl Arg`, and both mean the same signature to write, `fn get(&self, id: impl Arg<i64>)` for
-`get(id: i64)`:
+the `T` of a `Created<T>`, and an `impl Call<T>`. `into_value()` gives the argument's value, before the block or
+inside it, and an `async move` block is an `impl Call<T>`. A route left out, or a method with the wrong signature,
+does not compile. Two messages of rustc do not name `impl Arg`, and both mean the same signature to write,
+`fn get(&self, id: impl Arg<i64>)` for `get(id: i64)`:
 
 - ``method `get` has 0 type parameters but its trait declaration has 1 type parameter`` (E0049): the fake takes
   `id: i64`, the contract's type alone.

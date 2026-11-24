@@ -80,8 +80,9 @@ Each argument is an `impl quoll::Arg<T>`, `T` its type in the contract. For the 
   `Vec<String>` takes `["a", "b"]` rather than `vec!["a", "b"]`, and a `&Vec<&str>` is written `&names[..]`.
 - An `Option` takes `Some(..)` or `None`. An `Option<String>` takes `Some("x".into())`: `Some("x")` would make
   `None` ambiguous, as `vec!["a"]` would `vec![]`.
-- Any other type takes itself or a reference to itself, which is cloned. No number becomes another: an `i32` given
-  for an `i64` is `i64::from(n)`, or `n.try_into()?` when it may not fit.
+- Any other type takes itself, or a reference to itself when it is `Clone`, which is cloned. No number becomes
+  another: a number of another type is converted first, `i64::from(n)` for an `i32` given for an `i64`, or
+  `n.try_into()?` when it may not fit.
 - A value whose type came from the parameter, as `id.parse()?`, `.collect()` or `Default::default()`, has several
   candidates. It says its type: `id.parse::<i64>()?`.
 - A call keeps borrowed what its arguments borrow until it is awaited. A call kept longer than an argument, such as

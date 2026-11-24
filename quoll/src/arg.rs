@@ -7,7 +7,7 @@
 ///
 /// - a `T`, the contract's type: `3` for an `i64`, `Some(5)` or `None` for an `Option<u32>`;
 /// - a `&str` or a `&&str`, what `for name in &names` gives, for a `String`;
-/// - a `&T`, which is cloned: `&owner` for a `String`, `&labels` for a `Vec<String>`;
+/// - a `&T` when `T` is `Clone`, which is cloned: `&owner` for a `String`, `&labels` for a `Vec<String>`;
 /// - an array, a reference to an array or a slice of what an item takes, for a `Vec<T>`: `["C-bug", "T-compiler"]`,
 ///   `&["C-bug"]` or `&labels[..]` for a `Vec<String>`.
 ///
@@ -16,7 +16,7 @@
 /// No other conversion is made. An `Option<T>` takes `Some(..)` or `None`, and an `Option<String>` takes
 /// `Some("x".into())`: taking `Some("x")` too would make `None` ambiguous. A `Vec<String>` takes `["a"]` rather than
 /// `vec!["a"]`, for the same reason with `vec![]`. No number becomes another, so that `5` keeps the type of the
-/// argument: an `i32` given for an `i64` is written `i64::from(n)`, or `n.try_into()?` where it may not fit.
+/// argument: a number of another type is converted first, with `From`, or `try_into()?` where it may not fit.
 ///
 /// A value whose type came from the parameter, `id.parse()?`, `.collect()`, `Default::default()` or
 /// `n.try_into()?`, has several candidates, and says its type: `id.parse::<i64>()?`.
@@ -88,15 +88,15 @@
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an argument of type `{T}`",
     label = "not an argument of type `{T}`",
-    note = "an argument of type `{T}` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes",
-    note = "no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some(\"x\".into())`, and a `Vec<String>` `[\"a\"]` rather than `vec![\"a\"]`"
+    note = "an argument of type `{T}` takes that type, or a reference to it when it is `Clone`, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes",
+    note = "no number becomes another: convert it first, with `From`, or `try_into()?` where it may not fit; an `Option<String>` takes `Some(\"x\".into())`, and a `Vec<String>` `[\"a\"]` rather than `vec![\"a\"]`"
 )]
-pub trait Arg<T>: Sized {
+pub trait Arg<T>: Sized + Send {
     /// The value of the contract's type that the argument gives.
     fn into_value(self) -> T;
 }
 
-impl<T> Arg<T> for T {
+impl<T: Send> Arg<T> for T {
     fn into_value(self) -> T {
         self
     }
@@ -114,7 +114,7 @@ impl Arg<String> for &&str {
     }
 }
 
-impl<T: Clone> Arg<T> for &T {
+impl<T: Clone + Sync> Arg<T> for &T {
     fn into_value(self) -> T {
         self.clone()
     }
@@ -126,13 +126,13 @@ impl<T, A: Arg<T>, const N: usize> Arg<Vec<T>> for [A; N] {
     }
 }
 
-impl<T, A: Arg<T> + Clone, const N: usize> Arg<Vec<T>> for &[A; N] {
+impl<T, A: Arg<T> + Clone + Sync, const N: usize> Arg<Vec<T>> for &[A; N] {
     fn into_value(self) -> Vec<T> {
         self.iter().cloned().map(Arg::into_value).collect()
     }
 }
 
-impl<T, A: Arg<T> + Clone> Arg<Vec<T>> for &[A] {
+impl<T, A: Arg<T> + Clone + Sync> Arg<Vec<T>> for &[A] {
     fn into_value(self) -> Vec<T> {
         self.iter().cloned().map(Arg::into_value).collect()
     }
@@ -175,13 +175,6 @@ mod tests {
         assert_eq!(take::<String>(&owner), "rust-lang");
         assert_eq!(take::<Vec<String>>(&labels), ["C-bug"]);
         assert_eq!(take::<Option<String>>(&Some(owner.clone())), Some(owner));
-    }
-
-    #[test]
-    fn a_reference_to_a_value_that_is_not_sync_is_cloned() {
-        let count = std::cell::Cell::new(3);
-
-        assert_eq!(take::<std::cell::Cell<i32>>(&count).get(), 3);
     }
 
     #[test]
