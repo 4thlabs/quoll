@@ -91,7 +91,13 @@ pub(crate) fn expand(cx: &Cx) -> TokenStream {
         quote! { impl ::quoll::__private::group::Served for #descriptor {} }
     });
     let called = cx.client.then(|| {
-        quote! { impl ::quoll::__private::group::Called for #descriptor {} }
+        let items = crate::client::called_items(cx);
+
+        quote! {
+            impl ::quoll::__private::group::Called for #descriptor {
+                #items
+            }
+        }
     });
 
     quote! {
@@ -331,16 +337,6 @@ impl GroupRef<'_> {
         self.item(&descriptor_name(self.name))
     }
 
-    /// The group's server trait.
-    pub(crate) fn server_trait(&self) -> TokenStream {
-        self.item(&format_ident!("{}Server", self.name.unraw()))
-    }
-
-    /// The group's client.
-    pub(crate) fn client(&self) -> TokenStream {
-        self.item(&format_ident!("{}Client", self.name.unraw()))
-    }
-
     /// The group's field in `ApiServices`, and its method on `ApiClient`.
     pub(crate) fn field(&self) -> Ident {
         let snake = snake_case(self.name);
@@ -527,9 +523,18 @@ fn has_sides(api: &Api, group: &GroupRef) -> TokenStream {
             const _: () = ::quoll::__private::group::is_served::<#descriptor>();
         }
     });
+    // With the feature `client`, the api's client checks it, by the bound that reaches the group's client; without it,
+    // the same bound on a function nothing calls, so that the error is the same whatever the features.
     let called = api.client.then(|| {
-        quote_spanned! {group.span()=>
-            const _: () = ::quoll::__private::group::is_called::<#descriptor>();
+        let bound = quote_spanned! {group.span()=> #descriptor: ::quoll::__private::group::Called };
+
+        quote! {
+            ::quoll::__private::without_client! {
+                const _: () = {
+                    #[allow(dead_code)]
+                    fn called() where #bound {}
+                };
+            }
         }
     });
 

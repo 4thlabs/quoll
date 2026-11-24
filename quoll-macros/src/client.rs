@@ -10,7 +10,7 @@ use quote::{quote, quote_spanned};
 use syn::{Ident, Lifetime, Type, ext::IdentExt, spanned::Spanned};
 
 use crate::borrowed;
-use crate::descriptor::{Cx, descriptor_name, table};
+use crate::descriptor::{Cx, table};
 use crate::docs::{doc_attrs, route_docs};
 use crate::fields::route_fields;
 use crate::headers::{api_headers, route_headers};
@@ -79,77 +79,6 @@ fn error_type(cx: &Cx, route: &Route) -> TokenStream {
     match cx.error(route) {
         Some(error) => quote! { #error },
         None => quote! { ::quoll::Problem },
-    }
-}
-
-/// The stand-ins of a group with no client side, behind the feature `client` of `quoll`: its trait, which no type can
-/// implement, its client, which has no method, and the function of its descriptor that gives it. An api that calls and
-/// lists the group then compiles but for the check of the group's sides, whose message is the one error; and a fake
-/// of the trait is one error, `NoClient`'s.
-pub(crate) fn stand_in(cx: &Cx) -> TokenStream {
-    let group = cx.group;
-    let vis = &group.vis;
-    let name = &group.name;
-    let client = group.client();
-    let descriptor = descriptor_name(&group.name);
-    let count = group.routes.len();
-    let shown = group.name.unraw();
-    let trait_docs = format!(
-        " Not a client: the group `{shown}` has no client side, as its contract says `#[client(none)]`."
-    );
-    let client_docs =
-        format!(" Not a client: the group `{shown}` has no client side, and this no method.");
-
-    quote! {
-        ::quoll::__private::client! {
-            #[doc = #trait_docs]
-            #[doc(hidden)]
-            #vis trait #name: ::quoll::__private::group::NoClient {}
-
-            #[doc = #client_docs]
-            #[doc(hidden)]
-            #[derive(::core::fmt::Debug, ::core::clone::Clone)]
-            #vis struct #client;
-
-            #[allow(dead_code)]
-            impl #descriptor {
-                /// Gives the group's client, which has no method.
-                #[doc(hidden)]
-                pub fn client(
-                    _: ::quoll::__private::client::Client,
-                    _: &'static str,
-                    _: &'static [::quoll::Route; #count],
-                    _: &'static [::quoll::__private::headers::Fixed],
-                ) -> #client {
-                    #client
-                }
-            }
-        }
-    }
-}
-
-/// The stand-ins of `Api::client` and `Api::client_with` for an api with no client side, behind the feature `client`
-/// of `quoll`: each takes what no type is, so that calling it is one error, `NoClient`'s.
-pub(crate) fn api_stand_in(api: &Api) -> TokenStream {
-    let Api { vis, name, .. } = api;
-    let docs = format!(
-        " Not a client: the api `{}` has no client side, as its contract says `#[client(none)]`.",
-        name.unraw()
-    );
-
-    quote! {
-        ::quoll::__private::client! {
-            #[allow(dead_code)]
-            impl #name {
-                #[doc = #docs]
-                #[doc(hidden)]
-                #vis fn client(_: impl ::quoll::__private::group::NoClient) {}
-
-                #[doc = #docs]
-                #[doc(hidden)]
-                #vis fn client_with(_: impl ::quoll::__private::group::NoClient, _: &str) {}
-            }
-        }
     }
 }
 
@@ -240,8 +169,6 @@ fn group_client(cx: &Cx) -> TokenStream {
     let vis = &group.vis;
     let name = &group.name;
     let client = group.client();
-    let descriptor = descriptor_name(&group.name);
-    let count = group.routes.len();
     let docs = format!(
         " The client of the group `{}`, which {} gives: it implements `{}`.",
         group.name.unraw(),
@@ -256,10 +183,6 @@ fn group_client(cx: &Cx) -> TokenStream {
         .enumerate()
         .map(|(index, (route, shape))| method(cx, index, route, &shape_const(shape)));
     let shape_consts = shape_consts(shapes);
-    let http = Ident::new("client", Span::mixed_site());
-    let prefix = Ident::new("prefix", Span::mixed_site());
-    let routes = Ident::new("routes", Span::mixed_site());
-    let headers = Ident::new("headers", Span::mixed_site());
 
     quote! {
         #[doc = #docs]
@@ -267,7 +190,7 @@ fn group_client(cx: &Cx) -> TokenStream {
         #vis struct #client {
             client: ::quoll::__private::client::Client,
             prefix: &'static str,
-            routes: &'static [::quoll::Route; #count],
+            routes: &'static [::quoll::Route],
             headers: &'static [::quoll::__private::headers::Fixed],
         }
 
@@ -278,15 +201,26 @@ fn group_client(cx: &Cx) -> TokenStream {
         impl #name for #client {
             #(#methods)*
         }
+    }
+}
 
-        impl #descriptor {
-            /// The group's client, calling through `client` the routes of `routes`, the table of the api that lists
-            /// the group, each path under `prefix`, the api's, with the fixed headers of the api, `headers`, that
-            /// each route takes.
-            pub fn client(
+/// The items of the descriptor's `quoll::__private::group::Called`, behind the feature `client` of `quoll`: the
+/// group's client, and the function that builds it, which the api's client calls by the descriptor alone.
+pub(crate) fn called_items(cx: &Cx) -> TokenStream {
+    let client = cx.group.client();
+    let http = Ident::new("client", Span::mixed_site());
+    let prefix = Ident::new("prefix", Span::mixed_site());
+    let routes = Ident::new("routes", Span::mixed_site());
+    let headers = Ident::new("headers", Span::mixed_site());
+
+    quote! {
+        ::quoll::__private::client! {
+            type Client = #client;
+
+            fn group_client(
                 #http: ::quoll::__private::client::Client,
                 #prefix: &'static str,
-                #routes: &'static [::quoll::Route; #count],
+                #routes: &'static [::quoll::Route],
                 #headers: &'static [::quoll::__private::headers::Fixed],
             ) -> #client {
                 #client {
@@ -500,20 +434,30 @@ fn api_client(api: &Api) -> TokenStream {
     );
     let groups = api.refs().into_iter().map(|group| {
         let method = group.field();
-        let group_client = group.client();
         let descriptor = group.descriptor();
         let table = table(api, &group);
         let prefix = &api.prefix;
         let headers = api_headers(&api.headers);
         let docs = format!(" The client of the group `{}`.", group.name.unraw());
 
+        // The group's client by its descriptor alone, never by its path, which a group with no client side does not
+        // write: the bound is the one error of such a group, quoll's, on the group in the list.
+        let bound = quote_spanned! {group.span()=> #descriptor: ::quoll::__private::group::Called };
         let call = quote_spanned! {group.span()=>
-            #descriptor::client(::core::clone::Clone::clone(&self.client), #prefix, #table, #headers)
+            <#descriptor as ::quoll::__private::group::Called>::group_client(
+                ::core::clone::Clone::clone(&self.client),
+                #prefix,
+                #table,
+                #headers,
+            )
         };
 
         quote! {
             #[doc = #docs]
-            #vis fn #method(&self) -> #group_client {
+            #vis fn #method(&self) -> <#descriptor as ::quoll::__private::group::Called>::Client
+            where
+                #bound
+            {
                 #call
             }
         }

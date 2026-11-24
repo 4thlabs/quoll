@@ -300,45 +300,43 @@ pub use crate::__table as table;
 /// Checks, at compile time, that `G` is a group: the descriptor of a group an api lists.
 pub const fn is_group<G: Group>() {}
 
-/// The descriptor of a group that has a server side, which an api that serves lists.
+/// The descriptor of a group that has a server side, which an api that serves lists: implemented whatever the features,
+/// so that the api checks it with neither. The api serves the group through `quoll::__private::server::Serve`. Bound on
+/// [`Group`], a descriptor's.
 #[diagnostic::on_unimplemented(
     message = "the group has no server side, which the api that lists it serves",
     label = "a group with `#[server(none)]`",
     note = "remove `#[server(none)]` from the group's `quoll::group!`, or write it on the api, which then only calls its groups"
 )]
-pub trait Served {}
+pub trait Served: Group {}
 
-/// The descriptor of a group that has a client side, which an api that calls lists.
+/// The descriptor of a group that has a client side, which an api that calls lists: implemented whatever the features,
+/// so that the api checks it with neither, and, with the feature `client`, the way the api's client gives the group's.
+/// Bound on [`Group`], a descriptor's.
 #[diagnostic::on_unimplemented(
     message = "the group has no client side, which the api that lists it calls",
     label = "a group with `#[client(none)]`",
     note = "remove `#[client(none)]` from the group's `quoll::group!`, or write it on the api, which then only serves its groups"
 )]
-pub trait Called {}
+pub trait Called: Group {
+    /// The group's client, `NotesClient`.
+    #[cfg(feature = "client")]
+    type Client;
 
-/// What a contract with `#[server(none)]` asks of the types given to the stand-ins of its server's items, which the
-/// feature `server` writes under their names: implemented by none, so that using them is one error, with this message.
-#[diagnostic::on_unimplemented(
-    message = "the contract says `#[server(none)]`: it has no server side",
-    label = "a server of a contract with `#[server(none)]`",
-    note = "remove `#[server(none)]` from the api, or from the group's `quoll::group!`, to serve it"
-)]
-pub trait NoServer {}
-
-/// What a contract with `#[client(none)]` asks of the types given to the stand-ins of its client's items, which the
-/// feature `client` writes under their names: implemented by none, so that using them is one error, with this message.
-#[diagnostic::on_unimplemented(
-    message = "the contract says `#[client(none)]`: it has no client side",
-    label = "a client of a contract with `#[client(none)]`",
-    note = "remove `#[client(none)]` from the api, or from the group's `quoll::group!`, to call it"
-)]
-pub trait NoClient {}
+    /// The group's client, calling through `client` the routes of `routes`, the table of the api that lists the group,
+    /// each path under `prefix`, the api's, with the fixed headers of the api, `headers`, that each route takes. Named
+    /// so that no call of the application's, `Api::client`, takes it for a candidate.
+    #[cfg(feature = "client")]
+    fn group_client(
+        client: crate::__private::client::Client,
+        prefix: &'static str,
+        routes: &'static [crate::Route],
+        headers: &'static [crate::__private::headers::Fixed],
+    ) -> Self::Client;
+}
 
 /// Checks, at compile time, that the group `G` has a server side, which the api that lists it serves.
 pub const fn is_served<G: Served>() {}
-
-/// Checks, at compile time, that the group `G` has a client side, which the api that lists it calls.
-pub const fn is_called<G: Called>() {}
 
 /// The shape `E` of an api's errors, as its checks tell it by its type: [`IS_PROBLEM`](Shape::IS_PROBLEM) is `true`
 /// for quoll's `quoll::Problem` alone, by the impl of that type, and `false` for any other, by [`OtherShape`], whose
@@ -408,12 +406,13 @@ pub struct ApiInfo {
 /// mistake, which says what to write instead, and which the generated code panics with, so that the error points at
 /// the group in the api's list.
 ///
-/// A mistake is when the group is less visible than the api, takes a declared scheme less visible than itself, has a route of a
-/// method and a path that another route has, or, in an api that serves, of a path another route names with other
-/// parameters, or of an operation id another route has; when a route takes two schemes of an api that read one place, or reads the
-/// credential of a scheme it takes in an argument or sends it in a fixed header; or when a route takes the api's
-/// `Content-Type` that its body does not keep. A header the group or a route leaves is not checked: any api may list
-/// the group, and a `none` does nothing where the api does not fix the header.
+/// A mistake is when the group is less visible than the api, takes a declared scheme less visible than itself, or has
+/// a route of a method and a path that another route has, or of an operation id another route has; when, in an api
+/// that has a server side, a route has a path another route names with other parameters, which a router takes for one;
+/// when a route takes two schemes of an api that read one place, or reads the credential of a scheme it takes in an
+/// argument or sends it in a fixed header; or when a route takes the api's `Content-Type` that its body does not keep.
+/// A header the group or a route leaves is not checked: any api may list the group, and a `none` does nothing where
+/// the api does not fix the header.
 pub const fn check(api: &ApiInfo, earlier: &[&GroupInfo], group: &GroupInfo) -> Option<Message> {
     if group.reach < api.reach {
         return Some(

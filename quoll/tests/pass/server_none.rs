@@ -56,4 +56,13 @@ quoll::api! {
     }
 }
 
-fn main() {}
+// The names of the server's items are the application's, whatever the features of quoll: the contract writes none.
+pub trait ReposServer {}
+
+impl GitHub {
+    pub fn router() {}
+}
+
+fn main() {
+    GitHub::router();
+}

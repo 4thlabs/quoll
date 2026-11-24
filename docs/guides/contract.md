@@ -654,8 +654,9 @@ mod hooks {
 - `#[client(none)]` is for an API that is only served, such as a webhook receiver. The contract has no client trait, no
   client and no `Api::client`. It keeps its OpenAPI document, unless it also says `#[openapi(none)]`. It takes no
   `#[error(E)]`, which only a client reads.
-- With the feature of the missing side, hidden stand-ins take the names of its items. Implementing the group's trait,
-  or calling `Api::router` or `Api::client`, does not compile, with a message that says the contract has no such side.
+- The contract writes no item of the missing side, whatever the features: `impl NotesServer for App` on a contract
+  with `#[server(none)]` is rustc's own error, `cannot find trait NotesServer in this scope`, and `Api::client` on one
+  with `#[client(none)]` is `no associated function named client`. Those names stay free for the application.
 - A contract with neither has both sides. The groups of the api's block have the api's sides.
 - A `quoll::group!` says it on its group. An api lists only groups that have each side the api has. A group may have a
   side that the api does not: that api leaves it out, and another api that lists the group may use it.

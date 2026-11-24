@@ -26,16 +26,8 @@ pub(crate) fn api(api: &Api) -> TokenStream {
     let error = api.error.as_ref().map(named);
     let fixed = headers::api_checks(&api.headers);
     let openapi = openapi::expand(api);
-    let server = if api.server {
-        server::expand(api)
-    } else {
-        server::api_stand_in(api)
-    };
-    let client = if api.client {
-        client::expand(api)
-    } else {
-        client::api_stand_in(api)
-    };
+    let server = api.server.then(|| server::expand(api));
+    let client = api.client.then(|| client::expand(api));
 
     quote! {
         #api_type
@@ -81,16 +73,8 @@ fn group(cx: &Cx) -> TokenStream {
     let fixed = headers::group_checks(cx);
     let openapi = openapi::group(cx);
     let named_types = named_types(cx);
-    let server = if cx.server {
-        server::group(cx)
-    } else {
-        server::stand_in(cx)
-    };
-    let client = if cx.client {
-        client::group(cx)
-    } else {
-        client::stand_in(cx)
-    };
+    let server = cx.server.then(|| server::group(cx));
+    let client = cx.client.then(|| client::group(cx));
 
     quote! {
         #descriptor
@@ -291,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn server_none_writes_stand_ins_of_the_server_and_no_document() {
+    fn server_none_writes_no_server_side_and_no_document() {
         let tokens = expansion(quote! {
             #[server(none)]
             pub api Api = "/api";
@@ -305,9 +289,10 @@ mod tests {
         });
 
         for item in [
-            "struct ApiServices",
-            "fn router (services",
-            "Authenticate",
+            ":: quoll :: __private :: server !",
+            "NotesServer",
+            "ApiServices",
+            "fn router",
             "fn openapi () -> :: quoll :: openapi :: Document",
             "GroupDocument",
             "CHALLENGE",
@@ -315,19 +300,12 @@ mod tests {
         ] {
             assert!(!tokens.contains(item), "{item} is written: {tokens}");
         }
-        // Stand-ins under the names of the server's items, which no type can implement or call.
-        for item in [
-            "trait NotesServer : :: quoll :: __private :: group :: NoServer { }",
-            "fn router (_ : impl :: quoll :: __private :: group :: NoServer ,)",
-        ] {
-            assert!(tokens.contains(item), "{item} is not written: {tokens}");
-        }
         assert!(tokens.contains("struct NotesClient {"), "{tokens}");
         assert!(tokens.contains("Called for __QuollGroupNotes"), "{tokens}");
     }
 
     #[test]
-    fn client_none_writes_stand_ins_of_the_client() {
+    fn client_none_writes_no_client_side() {
         let tokens = expansion(quote! {
             #[client(none)]
             pub api Api = "/api";
@@ -338,21 +316,14 @@ mod tests {
         });
 
         for item in [
-            "struct NotesClient {",
-            "struct ApiClient",
-            "fn client (url",
+            ":: quoll :: __private :: client !",
+            "trait Notes :",
+            "NotesClient",
+            "ApiClient",
+            "fn client",
             "Called for",
-            "Pending",
         ] {
             assert!(!tokens.contains(item), "{item} is written: {tokens}");
-        }
-        // Stand-ins under the names of the client's items, which no type can implement or call.
-        for item in [
-            "trait Notes : :: quoll :: __private :: group :: NoClient { }",
-            "struct NotesClient ;",
-            "fn client (_ : impl :: quoll :: __private :: group :: NoClient)",
-        ] {
-            assert!(tokens.contains(item), "{item} is not written: {tokens}");
         }
         assert!(tokens.contains("trait NotesServer : :: core"), "{tokens}");
         assert!(
@@ -379,18 +350,42 @@ mod tests {
 
         assert!(!called.contains("is_served"), "{called}");
         assert!(
-            called.contains("is_called :: < notes :: __QuollGroupNotes >"),
+            called.contains("fn called () where notes :: __QuollGroupNotes"),
             "{called}"
         );
         assert!(
             served.contains("is_served :: < notes :: __QuollGroupNotes >"),
             "{served}"
         );
-        assert!(!served.contains("is_called"), "{served}");
+        assert!(!served.contains("fn called"), "{served}");
         // The document's check covers the server side: a group has a document only when it is served.
         assert!(!documented.contains("is_served"), "{documented}");
         assert!(documented.contains("GroupDocument"), "{documented}");
-        assert!(documented.contains("is_called"), "{documented}");
+        assert!(documented.contains("fn called"), "{documented}");
+    }
+
+    #[test]
+    fn an_api_reaches_the_groups_it_lists_by_their_descriptors_alone() {
+        let tokens = expansion(quote! {
+            pub api Api = "/api" { notes::Notes };
+        });
+
+        // A group with no side writes no item under the side's names, which the api therefore never names.
+        assert!(!tokens.contains("notes :: NotesServer"), "{tokens}");
+        assert!(!tokens.contains("notes :: NotesClient"), "{tokens}");
+        assert!(
+            tokens.contains("notes :: __QuollGroupNotes : :: quoll :: __private :: server :: Serve < __QuollServiceNotes >"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("-> < notes :: __QuollGroupNotes as :: quoll :: __private :: group :: Called > :: Client where notes :: __QuollGroupNotes : :: quoll :: __private :: group :: Called"),
+            "{tokens}"
+        );
+        // With the feature `client`, that bound checks the group's client side; without it, a check of its own.
+        assert!(
+            tokens.contains(":: quoll :: __private :: without_client ! { const _ : () = { # [allow (dead_code)] fn called () where notes :: __QuollGroupNotes : :: quoll :: __private :: group :: Called { } } ; }"),
+            "{tokens}"
+        );
     }
 
     #[test]
@@ -415,9 +410,13 @@ mod tests {
             .find("fn __quoll_names_0")
             .expect("the types are named");
         let gate = tokens
-            .find(":: quoll :: __private :: client !")
+            .find(":: quoll :: __private :: client ! { # [doc = \" The client of the group")
             .expect("the client is written");
         assert!(names < gate, "{tokens}");
+        assert!(
+            tokens.contains("clippy :: nursery)] const _ : () = { fn __quoll_names_0"),
+            "{tokens}"
+        );
         for ty in [
             "(_ : & str)",
             "(_ : IpAddr)",

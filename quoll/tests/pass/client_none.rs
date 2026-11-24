@@ -37,6 +37,17 @@ quoll::api! {
     }
 }
 
+// The names of the client's items are the application's, whatever the features of quoll: the contract writes none.
+#[derive(Debug)]
+pub struct EventsClient;
+
+impl Hooks {
+    pub fn client() -> EventsClient {
+        EventsClient
+    }
+}
+
 fn main() {
     let _ = Hooks::openapi();
+    let _ = Hooks::client();
 }

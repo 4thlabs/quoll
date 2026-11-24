@@ -1,24 +1,11 @@
-error[E0277]: the contract says `#[client(none)]`: it has no client side
-  --> tests/compile_fail_client/client_none_has_no_client.rs:12:27
-   |
-12 |     let _ = Hooks::client("http://localhost:8080");
-   |             ------------- ^^^^^^^^^^^^^^^^^^^^^^^ a client of a contract with `#[client(none)]`
-   |             |
-   |             required by a bound introduced by this call
-   |
-   = help: the trait `quoll::__private::group::NoClient` is not implemented for `&str`
-   = note: remove `#[client(none)]` from the api, or from the group's `quoll::group!`, to call it
-note: required by a bound in `Hooks::client`
-  --> tests/compile_fail_client/client_none_has_no_client.rs:1:1
+error[E0599]: no associated function or constant named `client` found for struct `Hooks` in the current scope
+  --> tests/compile_fail_client/client_none_has_no_client.rs:12:20
    |
  1 | / quoll::api! {
  2 | |     /// A webhook receiver, which the application only serves.
  3 | |     #[client(none)]
  4 | |     pub api Hooks = "/hooks";
- 5 | |
- 6 | |     pub group Events {
- 7 | |         POST "/events" => receive(kind: String);
- 8 | |     }
- 9 | | }
-   | |_^ required by this bound in `Hooks::client`
-   = note: this error originates in the macro `quoll::api` (in Nightly builds, run with -Z macro-backtrace for more info)
+   | |_________________- associated function or constant `client` not found for this struct
+...
+12 |       let _ = Hooks::client("http://localhost:8080");
+   |                      ^^^^^^ associated function or constant not found in `Hooks`
