@@ -794,11 +794,19 @@ impl<T: Send + 'static, E: Send + 'static> crate::Call<T, E> for Pending<'_, T, 
     }
 }
 
-/// The error of a call that got no answer to read, of the kind of `error`, a failure of reqwest or of the chain.
+/// The error of a call that got no answer to read, of the kind of `error`, a failure of reqwest or of the chain. A
+/// reqwest error of a status, an answer a middleware turned into an error with `error_for_status`, is of that status,
+/// and says so.
 fn failed_call<X: StdError + Send + Sync + 'static>(route: &Route, what: &str, error: X) -> Error {
     let kind = kind_of(&error);
 
-    no_answer(route, what, kind, error)
+    let ErrorKind::Status(status) = kind else {
+        return no_answer(route, what, kind, error);
+    };
+
+    let what = format!("got an answer of status {status}, which a middleware turned into an error");
+
+    no_answer(route, &what, kind, error)
 }
 
 /// The error of an answer whose body cannot be read, of `error`, reqwest's: [`ErrorKind::Timeout`] for a deadline

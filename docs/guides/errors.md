@@ -167,19 +167,21 @@ The headers of an error's answer, such as a `Retry-After` or a rate limit, come 
 Every error has a kind, which `error.kind()` gives. A handler's errors have one too: `Error::not_found(..)` is
 `ErrorKind::Status(StatusCode::NOT_FOUND)`, and `Error::internal(..)` is a 500.
 
-| Kind                     | What went wrong                                                                         |
-|--------------------------|-----------------------------------------------------------------------------------------|
-| `Status(status)`         | the answer has an error status; its `detail()` is the body, when it has the api's shape |
-| `Connect`                | no connection: refused, a name that does not resolve, TLS. Nothing was sent.            |
-| `Timeout`                | a deadline passed. The other API may have served the request, or begun to answer it.    |
-| `Closed`                 | the request was sent, and no usable answer came back: closed, reset, or not HTTP        |
-| `Body`                   | the answer began, and its body could not be read to its end                             |
-| `Decode`                 | the answer has a success status, and is not the route's result                          |
-| `Middleware`             | a middleware failed the call, but for a reqwest error it passes on, or the head deadline |
-| `Invalid`                | the call could not be sent as it is written, such as a URL that is not one              |
+| Kind             | What went wrong                                                                          |
+|------------------|------------------------------------------------------------------------------------------|
+| `Status(status)` | the answer has an error status; its `detail()` is the body, when it has the api's shape  |
+| `Connect`        | no connection: refused, a name that does not resolve, TLS. Nothing was sent.             |
+| `Timeout`        | a deadline passed. The other API may have served the request, or begun to answer it.     |
+| `Closed`         | the request was sent, and no usable answer came back: closed, reset, or not HTTP         |
+| `Body`           | the answer began, and its body could not be read to its end                              |
+| `Decode`         | the answer has a success status, and is not the route's result                           |
+| `Middleware`     | a middleware failed the call, but for a reqwest error it passes on, or the head deadline |
+| `Invalid`        | the call could not be sent as it is written, such as a URL that is not one               |
 
-A middleware's error says why among its sources. A middleware that passes on a reqwest error, or an error of the
-rest of the chain, keeps that error's kind, and quoll's deadline on the head of a stream is `Timeout`.
+A middleware's error says why among its sources. A reqwest error, or an error of reqwest-middleware's, that a
+middleware passes on as it is keeps its kind, whichever client it came from: the rest of the call's chain, or a client
+of the middleware's own, which the kind cannot tell apart. A middleware whose own failure must read `Middleware` wraps
+it in an error type of its own. quoll's deadline on the head of a stream is `Timeout`.
 
 `ErrorKind` is `#[non_exhaustive]`: a `match` on it ends with `_`, so that a later version may add a kind. A status is
 matched by its constant, or by a guard:

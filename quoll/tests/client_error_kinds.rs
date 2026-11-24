@@ -743,6 +743,81 @@ async fn an_error_of_the_chain_a_middleware_passes_on_nested_keeps_its_kind() {
     assert_eq!(kind(&error), ErrorKind::Connect);
 }
 
+#[tokio::test]
+async fn an_answer_a_middleware_turns_into_an_error_is_its_status_and_is_not_tried_again() {
+    let (url, answers) = raw(cut(
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close",
+        b"",
+    ))
+    .await;
+    let erroring = middleware(|request, extensions, next| {
+        Box::pin(async move {
+            let response = next.run(request, extensions).await?;
+
+            Ok(response.error_for_status()?)
+        })
+    });
+
+    // `retry` first, then the middleware: each attempt's error is reqwest's error of the status.
+    let error = client::builder()
+        .with(client::retry(2))
+        .with(erroring)
+        .build::<Api>(&url)
+        .expect("a client")
+        .notes()
+        .get(1)
+        .await
+        .expect_err("a 404");
+
+    assert_eq!(kind(&error), ErrorKind::Status(StatusCode::NOT_FOUND));
+    assert!(error.detail().is_none());
+    assert_eq!(
+        answers.load(Ordering::SeqCst),
+        1,
+        "a 404 is not tried again"
+    );
+}
+
+/// A middleware that asks something of a server at `other` with a client of its own before each call, and fails the
+/// call with that client's error as it is, or wrapped in an error type of its own when `wrapped`.
+fn asking(other: String, wrapped: bool) -> impl Middleware {
+    middleware(move |request, extensions, next| {
+        let other = other.clone();
+
+        Box::pin(async move {
+            let own = reqwest_middleware::ClientBuilder::new(reqwest::Client::new()).build();
+            let asked = own.get(format!("{other}/token")).send().await;
+
+            match asked {
+                Ok(_) => next.run(request, extensions).await,
+                Err(error) if wrapped => Err(reqwest_middleware::Error::middleware(GaveUp(error))),
+                Err(error) => Err(error),
+            }
+        })
+    })
+}
+
+#[tokio::test]
+async fn an_error_of_a_middlewares_own_client_keeps_its_kind_unless_the_middleware_wraps_it() {
+    let (url, calls) = raw(ok("application/json", br#"{"id":1}"#)).await;
+    let (other, _socket) = refused();
+    let call = |wrapped: bool| {
+        client::builder()
+            .with(asking(other.clone(), wrapped))
+            .build::<Api>(&url)
+            .expect("a client")
+    };
+
+    let passed_on = call(false).notes().get(1).await.expect_err("refused");
+    let wrapped = call(true).notes().get(1).await.expect_err("refused");
+
+    // The kind cannot tell the middleware's own client from the rest of the call's chain.
+    assert_eq!(kind(&passed_on), ErrorKind::Connect);
+    assert_eq!(kind(&wrapped), ErrorKind::Middleware);
+    assert!(caused_by_connect(&wrapped), "{wrapped:?}");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "the api was not called");
+}
+
 /// An error of the application's that is the `quoll::Error` it holds, its message and its sources, as thiserror's
 /// `#[error(transparent)]` writes it.
 #[derive(Debug)]
