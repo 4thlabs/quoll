@@ -1478,7 +1478,6 @@ dependencies = [
  "futures-util",
  "http",
  "httpdate",
- "hyper",
  "percent-encoding",
  "pin-project-lite",
  "quoll-macros",

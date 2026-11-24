@@ -416,8 +416,8 @@ fn seconds(value: &str) -> Option<Duration> {
 
 /// Whether an attempt that got no answer may pass if tried again, by the kind [`Attempt::kind`] gives it:
 /// [`ErrorKind::Connect`], no connection, [`ErrorKind::Timeout`], a deadline passed, the head of a stream's answer past
-/// the deadline of `timeout` among them, or [`ErrorKind::Closed`], a connection that failed once the request was sent.
-/// A middleware's own failure, a body that cannot be read, an answer that is not HTTP, a redirect, will fail again.
+/// the deadline of `timeout` among them, or [`ErrorKind::Closed`], a request that left with no usable head back. A
+/// middleware's own failure, a body that cannot be read, an answer that does not decode, a redirect, will fail again.
 fn may_pass(error: &reqwest_middleware::Error) -> bool {
     matches!(
         crate::__private::client::kind_of(error),
