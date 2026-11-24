@@ -17,6 +17,12 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.0" }
 
 ## [Unreleased]
 
+### Changed
+
+- `server::builder()`'s `serve` and `serve_on` set `TCP_NODELAY` on every TCP connection they accept, so that a small
+  write, an event of a stream or a chunk of a `ByteStream`, is no longer held for about 40 ms by Nagle's algorithm
+  ([#114](https://github.com/4thlabs/quoll/issues/114)).
+
 ## [0.9.0] - 2026-11-23
 
 The first release. One contract gives an axum server, a reqwest client and an OpenAPI 3.1 document. `cargo quoll`
