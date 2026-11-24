@@ -314,7 +314,8 @@ impl<T> fmt::Debug for JsonLines<T> {
 ///
 /// A server of `server::builder()` that is told to stop does not end the chunks: they run on until its grace has
 /// passed, and are then cut with their connection as its runtime ends, which the client reads as an error. A clean
-/// end would make a finite stream, a file, cut by the stop look complete; what it should say is an open question,
+/// end would make a finite stream with no length, a file sent in chunked encoding, cut by the stop look complete; one
+/// with a length would be read as cut either way. What it should say is an open question,
 /// [#70](https://github.com/4thlabs/quoll/issues/70).
 ///
 /// The client asks for any content type, `Accept: */*`, and reads an answer of any, as it reads
@@ -383,7 +384,8 @@ impl ByteStream {
     }
 
     /// The same chunks, `length` bytes in all, which the server sends as `Content-Length` rather than in chunked
-    /// encoding: the size of a file, which a browser shows with the progress of its download.
+    /// encoding: the size of a file, which a browser shows with the progress of its download. As the chunks are read,
+    /// [`length`](Self::length) gives the bytes still to come.
     ///
     /// A stream that gives another length is never answered as if it were whole. The server sends each chunk as it
     /// comes, but holds the one that brings the bytes to `length` until the stream ends. One that gives more than
@@ -391,7 +393,7 @@ impl ByteStream {
     /// [`try_new`](Self::try_new) is: the client reads fewer bytes than its `Content-Length` says, and an error. So the
     /// stream ends once it has given its bytes: one that waits after them holds its last chunk back.
     ///
-    /// A length of 0 sends the head alone: the stream is dropped unread, as for a `HEAD`.
+    /// A length of 0 sends an empty body, whatever the protocol: the stream is dropped unread, as for a `HEAD`.
     ///
     /// ```
     /// use futures_util::stream;
@@ -418,9 +420,26 @@ impl ByteStream {
         &self.content_type
     }
 
-    /// How many bytes the chunks hold in all, when it is known: the length given by
-    /// [`with_length`](Self::with_length), or on the client the `Content-Length` of the answer. `None` for chunks of
-    /// no known length, an answer in chunked encoding, a compressed one that the client decodes, or a 204 or a 205.
+    /// How many bytes are still to come, when it is known: the length given by [`with_length`](Self::with_length),
+    /// or on the client the `Content-Length` of the answer, less each chunk read since. `None` for chunks of no known
+    /// length, an answer in chunked encoding, a compressed one that the client decodes, or a 204 or a 205.
+    ///
+    /// So a handler that returns a client's stream, partly read, sends the length of what is left.
+    ///
+    /// ```
+    /// use futures_util::{StreamExt, stream};
+    /// use quoll::ByteStream;
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> quoll::Result<()> {
+    /// let mut download = ByteStream::new(stream::iter([b"PK".to_vec(), b"\x03\x04".to_vec()])).with_length(4);
+    ///
+    /// download.next().await.transpose()?;
+    ///
+    /// assert_eq!(download.length(), Some(2));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn length(&self) -> Option<u64> {
         self.length
     }
@@ -447,7 +466,15 @@ impl Stream for ByteStream {
     type Item = Result<Vec<u8>>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Vec<u8>>>> {
-        Pin::new(&mut self.chunks).poll_next(cx)
+        let polled = Pin::new(&mut self.chunks).poll_next(cx);
+
+        if let Poll::Ready(Some(Ok(chunk))) = &polled
+            && let Some(length) = &mut self.length
+        {
+            *length = length.saturating_sub(chunk.len() as u64);
+        }
+
+        polled
     }
 }
 

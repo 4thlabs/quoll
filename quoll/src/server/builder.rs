@@ -259,8 +259,8 @@ impl Builder {
     /// connection cut once the grace has passed. They end with nothing more, no `event: problem`: a stop is no failure.
     /// A `JsonLines` or a `ByteStream` runs on, as any other request, until the grace has passed: then it is left to
     /// the runtime, and cut with its connection as the runtime ends, which the client reads as an error. A clean end
-    /// would make a finite one, an export or a file, look complete; what they should say of a stop is an open
-    /// question, [#70](https://github.com/4thlabs/quoll/issues/70). A router served otherwise, by `axum::serve` or
+    /// would make a finite one with no length, an export or a file in chunked encoding, look complete, and a
+    /// `ByteStream` with a length is read as cut either way; what they should say of a stop is an open question, [#70](https://github.com/4thlabs/quoll/issues/70). A router served otherwise, by `axum::serve` or
     /// [`test::spawn`](crate::test::spawn), leaves its `Events` to run until their connection closes.
     ///
     /// Ctrl-C and `SIGTERM` are tokio's from the first call on, and stay so once it has returned: the process does not

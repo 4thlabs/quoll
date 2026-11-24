@@ -498,9 +498,12 @@ assert_eq!(download.length(), Some(4));
 - A stream that gives another number of bytes is never answered as if it were whole. The server holds the chunk that
   brings the bytes to the length until the stream ends. A stream that gives more bytes, ends too early or fails is
   logged and cut before its last bytes, and the client reads an error.
-- A length of 0 sends the head alone, and the stream is dropped unread.
-- On the client, `length()` is the `Content-Length` of the answer. It is `None` for an answer in chunked encoding, or
-  a compressed one that the client decodes.
+- A length of 0 sends an empty body, and the stream is dropped unread.
+- `length()` gives the bytes still to come: the length, less each chunk read. On the client it starts from the
+  `Content-Length` of the answer. It is `None` for an answer in chunked encoding, or a compressed one that the client
+  decodes.
+- A handler that returns a client's `ByteStream` sends its length, or what is left of it when the handler has read
+  some chunks already.
 - A `HEAD` of the route answers its `Content-Length`, with no body.
 
 ## Groups across modules
