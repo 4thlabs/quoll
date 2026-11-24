@@ -7,6 +7,8 @@
 //! [`bytes`], [`events`], [`json_lines`] and [`byte_stream`] are written whatever the features of `quoll`, so that a contract crate
 //! built with neither feature checks them too.
 //!
+//! [`sized`] checks the type an argument borrows, the `X` of a `&X`, so that the server receives it owned.
+//!
 //! [`Nullable`] and [`MayBeEmpty`] tell a result's type at compile time, by the impls of the types they name: whether
 //! a 204 reads as `null`, and whether a 204 may answer it at all, as the handler's value says, whatever wraps it.
 
@@ -140,6 +142,9 @@ pub trait IsText: Sized {
 
     /// The text it holds.
     fn into_string(self) -> String;
+
+    /// The text it holds, borrowed.
+    fn as_str(&self) -> &str;
 }
 
 impl IsText for Text {
@@ -149,6 +154,10 @@ impl IsText for Text {
 
     fn into_string(self) -> String {
         self.0
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -164,6 +173,9 @@ pub trait IsBytes: Sized {
 
     /// The bytes it holds, and their content type.
     fn into_parts(self) -> (Vec<u8>, Cow<'static, str>);
+
+    /// The bytes it holds, and their content type, borrowed.
+    fn parts(&self) -> (&[u8], &Cow<'static, str>);
 }
 
 impl IsBytes for Bytes {
@@ -176,6 +188,10 @@ impl IsBytes for Bytes {
 
     fn into_parts(self) -> (Vec<u8>, Cow<'static, str>) {
         (self.bytes, self.content_type)
+    }
+
+    fn parts(&self) -> (&[u8], &Cow<'static, str>) {
+        (&self.bytes, &self.content_type)
     }
 }
 
@@ -289,6 +305,9 @@ impl IsByteStream for ByteStream {
 
 /// Checks that `T`, a result named `Created`, is the crate's.
 pub const fn created<T: IsCreated>() {}
+
+/// Checks that a type an argument borrows, the `X` of a `&X`, has a size, so that the server receives it owned.
+pub const fn sized<T>() {}
 
 /// Checks that `T`, a result named `Accepted`, is the crate's.
 pub const fn accepted<T: IsAccepted>() {}

@@ -648,10 +648,15 @@ impl Parse for Arg {
             )
         })?;
 
+        let written: Type = input.parse()?;
+        let owned = crate::borrowed::owned(&written)?;
+
         Ok(Self(ArgDecl {
             source,
             name,
-            ty: input.parse()?,
+            ty: owned.ty,
+            written,
+            refused: owned.refused,
             join,
         }))
     }
@@ -1534,7 +1539,7 @@ mod tests {
 
         for ty in [
             quote! { Option<Filter> },
-            quote! { &Filter },
+            quote! { &[Filter] },
             quote! { (A, B) },
             quote! { Vec<Filter> },
         ] {
@@ -1644,7 +1649,7 @@ mod tests {
         for ty in [
             quote! { Vec<String> },
             quote! { Option<Vec<String>> },
-            quote! { &str },
+            quote! { &[&str] },
             quote! { Text },
         ] {
             let all = messages(quote! {

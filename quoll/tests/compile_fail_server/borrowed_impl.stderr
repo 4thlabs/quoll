@@ -1,0 +1,13 @@
+error: the server receives each argument as a value of its own type, which a trait is not: write the type, as `&NewNote`
+ --> tests/compile_fail_server/borrowed_impl.rs:6:40
+  |
+6 |         POST "/notes" => create(note: &impl serde::Serialize);
+  |                                        ^^^^^^^^^^^^^^^^^^^^^
+
+error[E0562]: `impl Trait` is not allowed in paths
+ --> tests/compile_fail_server/borrowed_impl.rs:6:40
+  |
+6 |         POST "/notes" => create(note: &impl serde::Serialize);
+  |                                        ^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `impl Trait` is only allowed in arguments and return types of functions and methods

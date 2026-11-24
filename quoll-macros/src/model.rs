@@ -227,8 +227,12 @@ impl Route {
 pub(crate) struct Param {
     /// The name of the argument.
     pub(crate) name: Ident,
-    /// Its type, as written.
+    /// Its type, as the server receives it: each `&X` of the contract replaced by its owned type.
     pub(crate) ty: Type,
+    /// Its type as the contract writes it, which the client takes.
+    pub(crate) written: Type,
+    /// Why the server cannot receive it owned, a `&mut X` or a `&dyn Trait`, which the server's code refuses.
+    pub(crate) refused: Option<Error>,
     /// Where its value is read from.
     pub(crate) kind: ParamKind,
     /// The type a body of quoll's wraps: the `T` of a `Form<T>`.
@@ -355,8 +359,12 @@ pub(crate) struct ArgDecl {
     pub(crate) source: Source,
     /// Its name.
     pub(crate) name: Ident,
-    /// Its type.
+    /// Its type, as the server receives it: each `&X` of the contract replaced by its owned type.
     pub(crate) ty: Type,
+    /// Its type as the contract writes it, which the client takes.
+    pub(crate) written: Type,
+    /// Why the server cannot receive it owned, which the server's code refuses.
+    pub(crate) refused: Option<Error>,
     /// Its `#[join(sep)]`, if it has one.
     pub(crate) join: Option<JoinAttr>,
 }
@@ -522,6 +530,8 @@ fn match_args(
         source,
         name,
         ty,
+        written,
+        refused,
         join,
     } in args
     {
@@ -568,6 +578,8 @@ fn match_args(
         params.push(Param {
             name,
             ty,
+            written,
+            refused,
             kind,
             inner,
         });

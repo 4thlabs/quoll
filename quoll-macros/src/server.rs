@@ -9,6 +9,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
+use crate::borrowed;
 use crate::descriptor::{Cx, GroupRef, descriptor_name, table};
 use crate::docs::{doc_attrs, route_docs};
 use crate::fields::route_fields;
@@ -18,14 +19,53 @@ use crate::scheme::{scheme_type, schemes_type};
 /// The server's code of a group, behind the feature `server` of `quoll`: its trait, and the function of its
 /// descriptor that serves its routes.
 pub(crate) fn group(cx: &Cx) -> TokenStream {
+    let refused = refused(cx);
+    let sized = sized_types(cx);
     let group_trait = group_trait(cx);
     let serve = serve_fn(cx);
 
     quote! {
         ::quoll::__private::server! {
+            #(#refused)*
+            #sized
             #group_trait
             #serve
         }
+    }
+}
+
+/// The errors of the arguments the server cannot receive owned, a `&mut X` or a `&dyn Trait`, on the contract's
+/// tokens: written for the server alone, as a contract with a client alone takes them as it did before.
+fn refused(cx: &Cx) -> Vec<TokenStream> {
+    cx.group
+        .routes
+        .iter()
+        .flat_map(|route| &route.params)
+        .filter_map(|param| param.refused.as_ref())
+        .map(syn::Error::to_compile_error)
+        .collect()
+}
+
+/// Checks that each type an argument borrows, the `X` of a `&X`, has a size, as the server receives it owned. For an
+/// `X` of no size, `&Path` or `&OsStr`, rustc reports that the size of `X` cannot be known at compile time on the
+/// contract's type, among the errors of the server's code that names `X`. A refused argument has its own error.
+fn sized_types(cx: &Cx) -> TokenStream {
+    let checks: Vec<TokenStream> = cx
+        .group
+        .routes
+        .iter()
+        .flat_map(|route| &route.params)
+        .filter(|param| param.refused.is_none())
+        .flat_map(|param| borrowed::sized_checks(&param.written))
+        .collect();
+    if checks.is_empty() {
+        return TokenStream::new();
+    }
+
+    quote! {
+        const _: () = {
+            #(#checks)*
+        };
     }
 }
 

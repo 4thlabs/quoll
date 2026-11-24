@@ -102,6 +102,10 @@ impl ResultKind {
 pub(crate) struct BodyKind {
     /// The method of the server's `Request` that reads it, and of the client's `Call` that writes it.
     pub(crate) method: &'static str,
+    /// The method of the client's `Call` that writes it from a borrow, as for `note: &NewNote`: a JSON body is the
+    /// same method, as serde writes a `&T`, a form is serialized from the borrow too, and a text or bytes are copied
+    /// into the request.
+    pub(crate) borrowed: &'static str,
     /// Whether the client's `Call` may fail to write it, and so returns a `Result`.
     pub(crate) fallible: bool,
     /// The variant of `quoll::__private::openapi::Body` that describes it.
@@ -118,11 +122,16 @@ pub(crate) struct BodyKind {
 
 impl BodyKind {
     /// Any type the macro does not recognize: its JSON, `application/json`.
-    pub(crate) const JSON: Self =
-        Self::fallible("json", "Json", true, Some("application/json"), Some("Json"));
+    pub(crate) const JSON: Self = Self::fallible(
+        ["json", "json"],
+        "Json",
+        true,
+        Some("application/json"),
+        Some("Json"),
+    );
     /// `Form<T>`: `application/x-www-form-urlencoded`.
     pub(crate) const FORM: Self = Self::fallible(
-        "form",
+        ["form", "form_ref"],
         "Form",
         true,
         Some("application/x-www-form-urlencoded"),
@@ -131,6 +140,7 @@ impl BodyKind {
     /// `Text`: `text/plain`, UTF-8, which is always written.
     pub(crate) const TEXT: Self = Self {
         method: "text",
+        borrowed: "text_ref",
         fallible: false,
         document: "Text",
         schema: false,
@@ -138,10 +148,13 @@ impl BodyKind {
         format: None,
     };
     /// `Bytes`: any content type but the three a browser sends to another site without asking.
-    pub(crate) const BYTES: Self = Self::fallible("bytes", "Bytes", false, None, None);
+    pub(crate) const BYTES: Self =
+        Self::fallible(["bytes", "bytes_ref"], "Bytes", false, None, None);
 
+    /// A body whose writing may fail, written by the client's methods, from its value then from a borrow, as
+    /// [`method`](Self::method) and [`borrowed`](Self::borrowed) say.
     const fn fallible(
-        method: &'static str,
+        [method, borrowed]: [&'static str; 2],
         document: &'static str,
         schema: bool,
         media_type: Option<&'static str>,
@@ -149,6 +162,7 @@ impl BodyKind {
     ) -> Self {
         Self {
             method,
+            borrowed,
             fallible: true,
             document,
             schema,

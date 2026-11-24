@@ -1,5 +1,6 @@
 //! The proc macros of `quoll`, which re-exports them: users depend on `quoll`, never on this crate.
 
+mod borrowed;
 mod client;
 mod descriptor;
 mod docs;
@@ -58,6 +59,9 @@ use crate::syntax::{Contract, GroupContract};
 /// An argument is a `{name}` of the path or a `key={name}` of the query by its name, a query struct as `query filter:
 /// NoteFilter`, a header as `header("Last-Event-ID") last: Option<String>`, or else the body. The docs of
 /// the crate `quoll` show each form, with what it means.
+///
+/// A `&` on an argument's type, `owner: &str` or `note: &NewNote`, makes the client borrow it: the server and the
+/// document receive the owned type, `String` for a `&str`, `Vec<T>` for a `&[T]` and `X` for any other `&X`.
 ///
 /// A mistake in the contract is a compile error on the token at fault, which says what to write instead.
 ///

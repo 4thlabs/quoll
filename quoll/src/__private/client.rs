@@ -332,7 +332,20 @@ impl<'a> Request<'a> {
     /// # Errors
     ///
     /// When serde_html_form cannot write the form, or, with fields, the `T` is not a struct or a map.
-    pub fn form<F>(mut self, body: F, fields: &'static [Field]) -> Result<Self>
+    pub fn form<F>(self, body: F, fields: &'static [Field]) -> Result<Self>
+    where
+        F: IsForm,
+        F::Value: Serialize,
+    {
+        self.form_ref(&body, fields)
+    }
+
+    /// Sets the body to the `T` of a borrowed `Form<T>`, as [`form`](Self::form) does.
+    ///
+    /// # Errors
+    ///
+    /// As [`form`](Self::form).
+    pub fn form_ref<F>(mut self, body: &F, fields: &'static [Field]) -> Result<Self>
     where
         F: IsForm,
         F::Value: Serialize,
@@ -369,13 +382,40 @@ impl<'a> Request<'a> {
         self
     }
 
+    /// Sets the body to a copy of the borrowed `body`, `text/plain` in UTF-8.
+    #[must_use]
+    pub fn text_ref<T: IsText>(mut self, body: &T) -> Self {
+        self.body = Some(Body {
+            content_type: HeaderValue::from_static(TEXT_UTF8),
+            bytes: body.as_str().as_bytes().to_vec(),
+        });
+        self
+    }
+
+    /// Sets the body to a copy of the borrowed `body`, of its content type.
+    ///
+    /// # Errors
+    ///
+    /// When its content type is not a media type.
+    pub fn bytes_ref<B: IsBytes>(self, body: &B) -> Result<Self> {
+        let (bytes, content_type) = body.parts();
+
+        self.bytes_parts(bytes.to_vec(), content_type.clone())
+    }
+
     /// Sets the body to `body`, of its content type.
     ///
     /// # Errors
     ///
     /// When its content type is not a media type.
-    pub fn bytes<B: IsBytes>(mut self, body: B) -> Result<Self> {
+    pub fn bytes<B: IsBytes>(self, body: B) -> Result<Self> {
         let (bytes, content_type) = body.into_parts();
+
+        self.bytes_parts(bytes, content_type)
+    }
+
+    /// Sets the body to `bytes`, of `content_type`, which is checked to be a media type.
+    fn bytes_parts(mut self, bytes: Vec<u8>, content_type: Cow<'static, str>) -> Result<Self> {
         let content_type = media_type_value(content_type).map_err(|content_type| {
             Error::misuse(
                 format!(
