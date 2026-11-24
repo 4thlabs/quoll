@@ -44,12 +44,11 @@ fn kind_of_middleware(error: &(dyn StdError + 'static)) -> ErrorKind {
     ErrorKind::Middleware
 }
 
-/// The kind of a reqwest error of a request before its answer, by reqwest's predicates alone, in this order:
-/// `is_builder`, `Invalid`; `is_connect`, `Connect`; `is_timeout`, `Timeout`; a `status`, of an answer a middleware
-/// turned into an error, `Status` of it; `is_body`, `Body`; `is_decode`, which reqwest gives only while it follows a
-/// redirect, a `Location` that does not parse, `is_redirect` and `is_upgrade`, `Middleware`; and any other,
-/// `is_request` among them, `Closed`: the request left and no usable head came back. A body's read is not sorted
-/// here: any failure of it but a deadline is `Body`.
+/// The kind of a reqwest error, by reqwest's predicates alone, in this order: `is_builder`, `Invalid`; `is_connect`,
+/// `Connect`; `is_timeout`, `Timeout`; `is_body` and `is_decode`, which reqwest gives any failure to read a body,
+/// `Body`; `is_redirect`, `is_upgrade` and a `status`, an answer a middleware turned into an error with
+/// `error_for_status`, its decision and not the answer reaching the caller, `Middleware`; and any other, `is_request`
+/// among them, `Closed`: the request left and no usable head came back.
 fn of_reqwest(error: &reqwest::Error) -> ErrorKind {
     if error.is_builder() {
         return ErrorKind::Invalid;
@@ -63,15 +62,11 @@ fn of_reqwest(error: &reqwest::Error) -> ErrorKind {
         return ErrorKind::Timeout;
     }
 
-    if let Some(status) = error.status() {
-        return ErrorKind::Status(status);
-    }
-
-    if error.is_body() {
+    if error.is_body() || error.is_decode() {
         return ErrorKind::Body;
     }
 
-    if error.is_decode() || error.is_redirect() || error.is_upgrade() {
+    if error.is_redirect() || error.is_upgrade() || error.status().is_some() {
         return ErrorKind::Middleware;
     }
 

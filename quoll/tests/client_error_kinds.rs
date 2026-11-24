@@ -743,39 +743,81 @@ async fn an_error_of_the_chain_a_middleware_passes_on_nested_keeps_its_kind() {
     assert_eq!(kind(&error), ErrorKind::Connect);
 }
 
-#[tokio::test]
-async fn an_answer_a_middleware_turns_into_an_error_is_its_status_and_is_not_tried_again() {
-    let (url, answers) = raw(cut(
-        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close",
-        b"",
-    ))
-    .await;
-    let erroring = middleware(|request, extensions, next| {
+/// A middleware that turns each answer of an error status into reqwest's error of that status.
+fn erroring() -> impl Middleware {
+    middleware(|request, extensions, next| {
         Box::pin(async move {
             let response = next.run(request, extensions).await?;
 
             Ok(response.error_for_status()?)
         })
-    });
+    })
+}
 
-    // `retry` first, then the middleware: each attempt's error is reqwest's error of the status.
+/// The status of the reqwest error among the sources of `error`.
+fn reqwest_status(error: &(dyn std::error::Error + 'static)) -> Option<StatusCode> {
+    std::iter::successors(error.source(), |&error| error.source()).find_map(|source| {
+        let reqwest = match source.downcast_ref::<reqwest_middleware::Error>() {
+            Some(reqwest_middleware::Error::Reqwest(error)) => Some(error),
+            _ => source.downcast_ref::<reqwest::Error>(),
+        };
+
+        reqwest.and_then(reqwest::Error::status)
+    })
+}
+
+#[tokio::test]
+async fn an_answer_a_middleware_turns_into_an_error_is_middleware_and_is_not_tried_again() {
+    let (url, answers) = raw(cut(
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close",
+        b"",
+    ))
+    .await;
+
+    // `retry` first, then the middleware: each attempt's error is the middleware's, which has no status.
     let error = client::builder()
         .with(client::retry(2))
-        .with(erroring)
+        .with(erroring())
         .build::<Api>(&url)
         .expect("a client")
         .notes()
         .get(1)
         .await
-        .expect_err("a 404");
+        .expect_err("a 503");
 
-    assert_eq!(kind(&error), ErrorKind::Status(StatusCode::NOT_FOUND));
-    assert!(error.detail().is_none());
+    assert_eq!(kind(&error), ErrorKind::Middleware);
+    assert_eq!(
+        reqwest_status(&error),
+        Some(StatusCode::SERVICE_UNAVAILABLE)
+    );
     assert_eq!(
         answers.load(Ordering::SeqCst),
         1,
-        "a 404 is not tried again"
+        "a middleware's error is not tried again"
     );
+}
+
+#[tokio::test]
+async fn a_middleware_that_turns_answers_into_errors_before_retry_lets_retry_see_the_status() {
+    let (url, answers) = raw(cut(
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close",
+        b"",
+    ))
+    .await;
+
+    // The middleware first, then `retry`: `retry` reads the 503 of each attempt.
+    let error = client::builder()
+        .with(erroring())
+        .with(client::retry(2))
+        .build::<Api>(&url)
+        .expect("a client")
+        .notes()
+        .get(1)
+        .await
+        .expect_err("a 503");
+
+    assert_eq!(kind(&error), ErrorKind::Middleware);
+    assert_eq!(answers.load(Ordering::SeqCst), 3, "tried twice more");
 }
 
 /// A middleware that asks something of a server at `other` with a client of its own before each call, and fails the

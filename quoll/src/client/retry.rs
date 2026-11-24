@@ -30,12 +30,16 @@ type Decide = dyn Fn(&Attempt<'_>) -> Retry + Send + Sync;
 
 /// Tries a call again, up to `times` more, after a failure that may pass, the rule of [`Attempt::transient`].
 ///
-/// A failure that may pass is no response, the connection refused, reset or cut, a deadline of
+/// A failure that may pass is a connection refused, a request that left with no usable head back, a deadline of
 /// [`timeout`](super::timeout) passed before the answer began, or an answer 502, 503 or 504, to a `GET`, `HEAD`,
 /// `PUT` or `DELETE`: those may be sent twice with the effect of once, and any other is sent once, as a `POST` may
 /// have been done before its connection was cut. The wait before each attempt is drawn at random between half a bound
 /// and the bound, which doubles after each, from 100 ms to 10 s at most, so that clients do not all come back at
 /// once.
+///
+/// `retry` reads the status of each answer that reaches it: a middleware that turns answers into errors, with
+/// `error_for_status`, goes before `retry`, or `retry` sees no status but the middleware's error, a
+/// [`Middleware`](crate::ErrorKind::Middleware) that it does not try again.
 ///
 /// [`when`](Retrying::when) decides otherwise, with a closure given each [`Attempt`]: a `429` waited out as its
 /// `Retry-After` says, a `POST` that carries an `Idempotency-Key`. Whatever it decides, a request whose body cannot
@@ -282,14 +286,16 @@ impl Attempt<'_> {
     }
 
     /// The error of an attempt that got no answer: no connection, a connection cut, a deadline passed, a middleware
-    /// after `retry` that failed it.
+    /// after `retry` that failed it, one that turned an answer into an error among them, whose status is not an
+    /// answer's here.
     pub fn error(&self) -> Option<&reqwest_middleware::Error> {
         self.result.as_ref().err()
     }
 
     /// The kind of the attempt, as the call's [`quoll::Error`](crate::Error) would say it: `None` for an answer of a
     /// success status, [`ErrorKind::Status`] for an answer of any other, and the kind of its [error](Attempt::error)
-    /// for an attempt that got no answer.
+    /// for an attempt that got no answer, [`ErrorKind::Middleware`] for a middleware's error, one of a status
+    /// included.
     ///
     /// ```no_run
     /// use http::StatusCode;

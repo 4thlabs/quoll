@@ -124,7 +124,8 @@ async fn main() -> Result<()> {
 - `kind()` is what the error is, a `quoll::ErrorKind`: `ErrorKind::Status` of its status, or what went wrong in a
   call that got no answer to read. [The kind of an error](#the-kind-of-an-error) lists them.
 - `status()` is the status of the answer, or `None` for a call that got no answer to read: a connection refused, a
-  deadline passed, an error of a middleware, or an answer that is not the route's result. It is `Some(status)` exactly
+  deadline passed, an error of a middleware, or an answer that is not the route's result. A middleware that turns an
+  answer into an error, with `error_for_status`, fails the call with no status. `status()` is `Some(status)` exactly
   when `kind()` is `ErrorKind::Status(status)`.
 - `detail()` is the RFC 9457 problem, when the body is one (`application/problem+json`).
 - `response()` is the answer, with that detail, its status and its headers.

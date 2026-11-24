@@ -135,8 +135,9 @@ pub trait Call<T, E = Problem>:
     ///
     /// # Errors
     ///
-    /// When the call got no answer it can read: a connection refused, a timeout, a middleware's error, or an answer
-    /// with a success status but a 204 or a 205 whose body is not the route's result.
+    /// When the call got no answer it can read: a connection refused, a timeout, a middleware's error, one that turned
+    /// an answer into an error with `error_for_status` included, or an answer with a success status but a 204 or a 205
+    /// whose body is not the route's result.
     fn response(self) -> impl Future<Output = Result<Response<Result<T, E>>, E>> + Send;
 
     /// A deadline of `duration` for this call alone, in place of the client's [`client::timeout`]: for each attempt
