@@ -167,8 +167,14 @@ pub fn byte_stream<B: IsByteStream>(result: Result<crate::Response<B>>) -> Resul
         );
     };
 
-    // hyper sends a body of unknown size as the `Content-Length` says, in place of chunked encoding.
-    let mut response = (headers, Body::from_stream(measured(chunks, length))).into_response();
+    // Empty whatever the protocol, the stream dropped unread: hyper's HTTP/1 never asks a body of no length for its
+    // bytes, but HTTP/2 does. hyper sends any other body of unknown size as the `Content-Length` says.
+    let body = if length == 0 {
+        Body::empty()
+    } else {
+        Body::from_stream(measured(chunks, length))
+    };
+    let mut response = (headers, body).into_response();
 
     response
         .headers_mut()
@@ -177,7 +183,7 @@ pub fn byte_stream<B: IsByteStream>(result: Result<crate::Response<B>>) -> Resul
     with_headers(unbuffered(response), given)
 }
 
-/// What the server sends of `chunks`, which a `ByteStream` says are `length` bytes in all: each chunk as it comes,
+/// What the server sends of `chunks`, which a `ByteStream` says are `length` bytes in all, not 0: each chunk as it comes,
 /// but the one that brings them to `length`, which waits for the stream to end, so that a stream that gives more is
 /// never answered as if it were whole.
 ///
@@ -200,7 +206,7 @@ where
 
         loop {
             let Some(chunk) = measure.chunks.next().await else {
-                let last = measure.ended()?;
+                let last = measure.ended();
 
                 if last.is_err() {
                     // As for an error of the chunks, a turn may let hyper send what came before.
@@ -253,21 +259,17 @@ struct Measure<S> {
 }
 
 impl<S> Measure<S> {
-    /// What is sent once the chunks have ended: the chunk held, an error when they gave fewer bytes than their length,
-    /// or nothing more.
-    fn ended(self) -> Option<Result<Vec<u8>>> {
-        if let Some(last) = self.last {
-            return Some(Ok(last));
-        }
+    /// What is sent once the chunks have ended: the chunk held, or an error when they gave fewer bytes than their
+    /// length, which is not 0.
+    fn ended(self) -> Result<Vec<u8>> {
+        let given = self.given;
+        let length = self.length;
 
-        if self.given == self.length {
-            return None;
-        }
-
-        Some(Err(cut(format!(
-            "its `ByteStream` ended after {} of its {} bytes",
-            self.given, self.length
-        ))))
+        self.last.ok_or_else(|| {
+            cut(format!(
+                "its `ByteStream` ended after {given} of its {length} bytes"
+            ))
+        })
     }
 }
 
@@ -297,7 +299,8 @@ struct EventsBody;
 /// `response` as the server sends it once `stopping` holds `true`, or once its sender is dropped: when it is the answer
 /// of an `Events` result, its body ends after the event it is sending, so that the client, and any proxy between,
 /// reads a clean end rather than a connection cut by the end of the grace. Any other answer is left as it is, a
-/// `JsonLines` and a `ByteStream` among them: a clean end would make a finite one cut by the stop look complete.
+/// `JsonLines` and a `ByteStream` among them: a clean end would make a finite one with no length cut by the stop look
+/// complete, and one with a length is read as cut either way.
 ///
 /// The events end with nothing more, as a stream that has no more values: a stop is no failure, and is no
 /// `event: problem`. An `Events` stream that opens once the server is told to stop ends at once.

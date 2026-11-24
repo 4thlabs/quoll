@@ -5,12 +5,15 @@
 #![cfg(all(feature = "server", feature = "client"))]
 
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use quoll::{ByteStream, Error, Response, Result};
 use reqwest::StatusCode;
-use reqwest::header::{ACCEPT, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING};
+use reqwest::header::{
+    ACCEPT, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING,
+};
 use tokio::sync::mpsc;
 
 mod support {
@@ -29,6 +32,15 @@ quoll::api! {
         GET "/mistyped"             => mistyped() -> ByteStream;
         GET "/sized?count={count}&length={length}" => sized(count: u32, length: u64) -> ByteStream;
         GET "/sized_failing"        => sized_failing() -> ByteStream;
+        GET "/empty_sized"          => empty_sized() -> ByteStream;
+    }
+}
+
+quoll::api! {
+    api Front = "/front";
+
+    group Proxy {
+        GET "/forwarded" => forwarded() -> ByteStream;
     }
 }
 
@@ -133,6 +145,39 @@ impl OutputServer for App {
         Ok(Response::new(
             ByteStream::try_new(stream::iter(chunks)).with_length(16),
         ))
+    }
+
+    async fn empty_sized(&self) -> Result<Response<ByteStream>> {
+        let signal = DropSignal {
+            dropped: self.dropped.clone(),
+            route: "empty_sized",
+        };
+        let polled = self.dropped.clone();
+        let chunks = stream::poll_fn(move |_| {
+            let _ = &signal;
+            let _ = polled.send("empty_sized polled");
+
+            Poll::Ready(Some(b"one too many".to_vec()))
+        });
+
+        Ok(Response::new(ByteStream::new(chunks).with_length(0)))
+    }
+}
+
+/// A server in front of the api, which forwards its sized stream once it has read the first chunk, and keeps how many
+/// bytes it read: the connection may give the chunks of the api together.
+struct Forward {
+    api: ApiClient,
+    read: Arc<Mutex<Option<usize>>>,
+}
+
+impl ProxyServer for Forward {
+    async fn forwarded(&self) -> Result<Response<ByteStream>> {
+        let mut output = self.api.output().sized(3, 24).await?;
+        let first = output.next().await.transpose()?.expect("a first chunk");
+
+        *self.read.lock().expect("no test panics holding the lock") = Some(first.len());
+        Ok(Response::new(output))
     }
 }
 
@@ -329,13 +374,62 @@ async fn a_stream_with_no_length_has_none_on_the_client() {
 }
 
 #[tokio::test]
-async fn a_length_of_0_sends_the_head_alone() {
-    let (_, api, _) = served().await;
+async fn a_length_of_0_sends_an_empty_body_and_never_polls_the_stream() {
+    let (log, _capture) = support::log::capture(false);
+    let (_, api, mut signals) = served().await;
 
-    let output = api.output().sized(2, 0).await.expect("chunks");
+    let output = api.output().empty_sized().await.expect("chunks");
 
     assert_eq!(output.length(), Some(0));
     assert!(all(output).await.is_empty());
+
+    // The stream is dropped before it says it was polled, if it ever is.
+    assert_eq!(dropped(&mut signals).await, "empty_sized");
+    assert!(signals.try_recv().is_err());
+
+    let log = log.text();
+
+    assert!(!log.contains("cut short"), "{log}");
+}
+
+#[tokio::test]
+async fn a_client_stream_partly_read_is_forwarded_with_the_length_left() {
+    let (_, api, _) = served().await;
+    let read = Arc::default();
+    let front = quoll::test::spawn(Front::router(FrontServices {
+        proxy: Forward {
+            api,
+            read: Arc::clone(&read),
+        },
+    }))
+    .await;
+    let front = Front::client(&front).expect("the url is the api's");
+    let whole: Vec<u8> = (1..=3).flat_map(chunk).collect();
+
+    let output = front.proxy().forwarded().await.expect("chunks");
+    let read = read
+        .lock()
+        .expect("no test panics holding the lock")
+        .expect("the front read a chunk");
+
+    assert_eq!(output.length(), Some((whole.len() - read) as u64));
+    assert_eq!(joined(all(output).await), whole[read..]);
+}
+
+#[tokio::test]
+async fn the_length_counts_down_as_the_chunks_are_read() {
+    let (_, api, _) = served().await;
+
+    let mut output = api.output().sized(3, 24).await.expect("chunks");
+    let mut read = 0;
+
+    while let Some(chunk) = output.next().await {
+        read += chunk.expect("a chunk").len() as u64;
+
+        assert_eq!(output.length(), Some(24 - read));
+    }
+
+    assert_eq!(read, 24);
 }
 
 #[tokio::test]
@@ -485,6 +579,16 @@ fn third_party(
                     ),
                     // A whole body, which axum sends with its `Content-Length`.
                     "count=4" => ([(CONTENT_TYPE, "text/plain")], "whole").into_response(),
+                    // "whole" in gzip, with the `Content-Length` of the gzip, which the client decodes.
+                    "count=5" => {
+                        let gzip: &[u8] = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\x03\x2b\xcf\xc8\xcf\x49\x05\x00\x4f\x29\x59\xc4\x05\x00\x00\x00";
+
+                        (
+                            [(CONTENT_TYPE, "text/plain"), (CONTENT_ENCODING, "gzip")],
+                            gzip,
+                        )
+                            .into_response()
+                    }
                     _ => answer(StatusCode::OK, None, &[b"no ", b"type"]),
                 }
             }),
@@ -563,6 +667,16 @@ async fn the_content_length_of_another_api_is_the_length() {
     let chunked = api.output().chunks(3).await.expect("chunks");
 
     assert_eq!(chunked.length(), None);
+}
+
+#[tokio::test]
+async fn an_answer_the_client_decodes_has_no_length() {
+    let (api, _, _) = third_party_client().await;
+
+    let decoded = api.output().chunks(5).await.expect("a body");
+
+    assert_eq!(decoded.length(), None);
+    assert_eq!(joined(all(decoded).await), b"whole");
 }
 
 #[tokio::test]

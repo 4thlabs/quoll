@@ -873,22 +873,16 @@ impl Answer {
         ))
     }
 
-    /// The answer's `Content-Length`, or `None` when it has none, or when it is a 204 or a 205, whose body is dropped.
-    /// reqwest takes it away from an answer it decodes, whose length is not that of the bytes it gives.
+    /// The length of the body as hyper frames it, its `Content-Length`: `None` for a body in chunked encoding, one
+    /// that reqwest decodes, whose length is not that of the bytes it gives, or a 204 or a 205, whose body is dropped.
     fn content_length(&self) -> Option<u64> {
         if crate::no_content(self.response.status()) {
             return None;
         }
 
-        // hyper has refused an answer whose `Content-Length` does not read, or whose values differ.
-        self.response
-            .headers()
-            .get(header::CONTENT_LENGTH)?
-            .to_str()
-            .ok()?
-            .trim()
-            .parse()
-            .ok()
+        // The exact size of the body, which follows how hyper reads it, rather than the header: hyper ignores a
+        // `Content-Length` beside `Transfer-Encoding: chunked`, and reads `5, 5` as 5.
+        self.response.content_length()
     }
 
     /// The answer's content type, or `application/octet-stream` when it has none, or one that is not a media type, or
