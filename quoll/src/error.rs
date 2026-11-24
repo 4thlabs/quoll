@@ -81,10 +81,9 @@ pub(crate) enum Repr<E> {
         body: Option<Vec<u8>>,
         message: Option<String>,
     },
-    /// A call to another API that got no answer to read, of `kind`: a client given a URL that is not one, a request
-    /// that got no response, or an answer that is not the route's result, which have no status, and an answer a
-    /// middleware turned into a reqwest error, of its `Status`. A handler returning it answers 500 for an
-    /// [`ErrorKind::Invalid`], 502 for any other, and logs it.
+    /// A call to another API that got no answer to read, of `kind`, never a `Status`: a client given a URL that is not
+    /// one, a request that got no response, a middleware's error, or an answer that is not the route's result. It has
+    /// no status; a handler returning it answers 500 for an [`ErrorKind::Invalid`], 502 for any other, and logs it.
     Failed {
         kind: ErrorKind,
         message: String,
@@ -229,14 +228,18 @@ impl<E> Error<E> {
         Self::failed_from(kind, message, None)
     }
 
-    /// A call that got no answer to read, of `kind`, with the error it comes from. Its kind is a `Status` only for an
-    /// answer that a middleware turned into a reqwest error of its status, which the error keeps: an answer the client
-    /// reads is [`Error::upstream`].
+    /// A call that got no answer to read, of `kind`, which is never a `Status`, with the error it comes from: the
+    /// client's classification never gives one, and an answer is [`Error::upstream`].
     pub(crate) fn failed_from(
         kind: ErrorKind,
         message: impl Into<String>,
         source: Option<Box<dyn StdError + Send + Sync>>,
     ) -> Self {
+        debug_assert!(
+            !matches!(kind, ErrorKind::Status(_)),
+            "a call that got no answer has no status"
+        );
+
         Self(Box::new(Repr::Failed {
             kind,
             message: message.into(),
