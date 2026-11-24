@@ -14,7 +14,7 @@
   <p>
     <img src="https://img.shields.io/badge/Rust-2024-B7410E?logo=rust&logoColor=white" alt="Rust 2024" />
     <img src="https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.1" />
-    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.9.1-orange" alt="Version 0.9.1" /></a>
+    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.9.2-orange" alt="Version 0.9.2" /></a>
     <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" /></a>
   </p>
 
@@ -145,7 +145,7 @@ with both features to its `Cargo.toml`:
 
 ```toml
 [dependencies]
-quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.1", features = ["server", "client"] }
+quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2", features = ["server", "client"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
