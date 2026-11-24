@@ -326,11 +326,11 @@ async fn a_response_gives_the_status_and_the_headers_a_handler_gave() -> Result<
     assert_eq!(response.headers()[ETAG], "\"3\"");
     assert_eq!(response.into_value()?.id, 3);
 
-    let created = api.notes().create("Eggs".into()).response().await?;
+    let created = api.notes().create("Eggs").response().await?;
 
     assert_eq!(created.status(), StatusCode::CREATED);
     assert_eq!(created.headers()[LOCATION], "/api/notes/7");
-    assert_eq!(api.notes().create("Eggs".into()).await?.id, 7);
+    assert_eq!(api.notes().create("Eggs").await?.id, 7);
     Ok(())
 }
 
@@ -373,8 +373,8 @@ async fn a_handler_answers_the_status_it_gives_in_place_of_the_contracts() -> Re
     let url = serve(&App::default()).await;
     let api = Api::client(&url)?;
 
-    let created = api.notes().put(4, "Milk".into()).response().await?;
-    let replaced = api.notes().put(4, "Eggs".into()).response().await?;
+    let created = api.notes().put(4, "Milk").response().await?;
+    let replaced = api.notes().put(4, "Eggs").response().await?;
 
     assert_eq!(created.status(), StatusCode::CREATED);
     assert_eq!(replaced.status(), StatusCode::OK);
@@ -472,12 +472,9 @@ async fn a_204_is_given_by_the_handlers_value_whatever_the_result_wraps_it_in() 
 
     assert_eq!(published.status(), StatusCode::NO_CONTENT);
     assert_eq!(published.into_value()?, None);
-    assert_eq!(
-        notes.publish("Milk".into()).await?.map(|note| note.id),
-        Some(8)
-    );
+    assert_eq!(notes.publish("Milk").await?.map(|note| note.id), Some(8));
 
-    let reset = notes.publish("reset".into()).response().await?;
+    let reset = notes.publish("reset").response().await?;
 
     assert_eq!(reset.status(), StatusCode::RESET_CONTENT);
     assert_eq!(reset.into_value()?, None);
@@ -682,7 +679,7 @@ async fn a_header_a_handler_cannot_send_is_answered_500_and_logged_without_its_v
     for what in ["value", "content-type"] {
         let error = api
             .notes()
-            .broken(what.into())
+            .broken(what)
             .await
             .expect_err("a header that cannot be sent");
 

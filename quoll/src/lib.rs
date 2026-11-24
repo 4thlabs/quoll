@@ -659,6 +659,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod accepted;
+#[cfg(feature = "client")]
+mod arg;
 pub(crate) mod auth;
 mod body;
 #[cfg(feature = "client")]
@@ -683,6 +685,8 @@ pub mod test;
 pub mod __private;
 
 pub use accepted::Accepted;
+#[cfg(feature = "client")]
+pub use arg::Arg;
 pub use auth::{Authenticate, Basic, BasicCredential, Bearer, Scheme, Scoped};
 pub use body::{Bytes, Form, Text};
 #[cfg(feature = "client")]

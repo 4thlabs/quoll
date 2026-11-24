@@ -56,7 +56,7 @@ async fn inspect(docker: &DockerClient, container: String) -> anyhow::Result<()>
 }
 
 async fn start(docker: &DockerClient, container: String) -> anyhow::Result<()> {
-    match docker.containers().start(container.clone()).await {
+    match docker.containers().start(&container).await {
         Ok(()) => println!("{container}"),
         // Docker's answer for a container that runs already: no error to the caller, nothing done.
         Err(error) if error.status() == Some(StatusCode::NOT_MODIFIED) => {
@@ -73,7 +73,7 @@ async fn stop(
     container: String,
     timeout: Option<i32>,
 ) -> anyhow::Result<()> {
-    match docker.containers().stop(container.clone(), timeout).await {
+    match docker.containers().stop(&container, timeout).await {
         Ok(()) => println!("{container}"),
         Err(error) if error.status() == Some(StatusCode::NOT_MODIFIED) => {
             println!("{container} is stopped already");

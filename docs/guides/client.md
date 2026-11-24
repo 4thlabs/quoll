@@ -63,6 +63,10 @@ async fn main() -> quoll::Result<()> {
 
 - `api.notes()` is the client of the group `Notes`, which implements the trait `Notes`. It has one method per route,
   with its arguments in the contract's order.
+- Each argument is an `impl quoll::Arg<T>`, `T` its type in the contract. It takes a `T`, a `&str` for a `String`, a
+  reference, which is cloned, or an array or a slice for a `Vec`: `get("rust-lang", &repo, ["C-bug"], Some(5))`.
+- An `Option` takes `Some(..)` or `None`. An `Option<String>` takes `Some("x".into())`, and a `Vec<String>` takes
+  `["a", "b"]` rather than `vec!["a", "b"]`: the other forms would make `None` and `vec![]` ambiguous.
 - A route that returns `Created<T>` or `Accepted<T>` returns the `T` on the client.
 - A query parameter that is `None` is left out, and a header that is `None` is not sent.
 - Rust has no named arguments: a route with many optional keys takes a [query struct](contract.md#query-structs),
@@ -357,7 +361,7 @@ quoll::api! {
 
 async fn export(api: &ApiClient) -> quoll::Result<u64> {
     api.exports()
-        .create("notes".into())
+        .create("notes")
         .timeout(Duration::from_secs(600))
         .await
 }

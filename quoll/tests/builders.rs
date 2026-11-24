@@ -265,7 +265,7 @@ async fn a_middleware_given_after_a_credential_comes_after_it_with_what_the_buil
         .with(saw_signature(Arc::clone(&signed)))
         .build::<Api>(&url)?;
 
-    api.calls().text("milk".to_owned().into()).await?;
+    api.calls().text(quoll::Text::from("milk")).await?;
 
     assert_eq!(
         *signed.lock().expect("no test panics with the lock"),

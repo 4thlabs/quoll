@@ -1,8 +1,8 @@
 error[E0277]: the trait bound `impl Call<Created<String>>: Call<String>` is not satisfied
-  --> tests/compile_fail_client/fake_returns_created.rs:15:40
+  --> tests/compile_fail_client/fake_returns_created.rs:15:50
    |
-15 |     fn create(&self, title: String) -> impl Call<Created<String>> {
-   |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Future` is not implemented for `impl Call<Created<String>>`
+15 |     fn create(&self, title: impl Arg<String>) -> impl Call<Created<String>> {
+   |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Future` is not implemented for `impl Call<Created<String>>`
    |
    = note: required for `impl Call<Created<String>>` to implement `Call<String>`
 note: required by a bound in `Notes::create::{anon_assoc#0}`
