@@ -14,7 +14,7 @@ use reqwest_middleware::{Middleware, Next};
 use super::request::HeadTimedOut;
 use super::{Handled, own_route};
 use crate::__private::client::{redacted, strip_urls};
-use crate::Route;
+use crate::{ErrorKind, Route};
 
 /// The wait before the first attempt again is drawn between it and twice it; it doubles after each, up to
 /// [`LONGEST`].
@@ -288,6 +288,29 @@ impl Attempt<'_> {
         self.result.as_ref().err()
     }
 
+    /// The kind of the attempt, as the call's [`quoll::Error`](crate::Error) would say it: `None` for an answer of a
+    /// success status, [`ErrorKind::Status`] for an answer of any other, and the kind of its [error](Attempt::error)
+    /// for an attempt that got no answer.
+    ///
+    /// ```no_run
+    /// use http::StatusCode;
+    /// use quoll::{ErrorKind, client};
+    ///
+    /// // A read that tries again after a refused connection, as when a daemon restarts, and after a 503.
+    /// let retry = client::retry(3).when(|attempt| match attempt.kind() {
+    ///     Some(ErrorKind::Connect | ErrorKind::Status(StatusCode::SERVICE_UNAVAILABLE)) => client::Retry::Backoff,
+    ///     _ => client::Retry::No,
+    /// });
+    /// # let _ = retry;
+    /// ```
+    pub fn kind(&self) -> Option<ErrorKind> {
+        match self.result {
+            Ok(response) if response.status().is_success() => None,
+            Ok(response) => Some(ErrorKind::Status(response.status())),
+            Err(error) => Some(crate::__private::client::kind_of(error)),
+        }
+    }
+
     /// The rule of [`retry`] alone: [`Retry::Backoff`] after a failure that may pass, to a request that may be sent
     /// twice with the effect of once, and [`Retry::No`] after any other.
     ///
@@ -402,16 +425,10 @@ fn may_pass(error: &reqwest_middleware::Error) -> bool {
         reqwest_middleware::Error::Reqwest(error) => error,
     };
 
-    if error.is_timeout() || error.is_connect() {
-        return true;
-    }
-
-    if error.is_body() || error.is_decode() || error.is_builder() || error.is_redirect() {
-        return false;
-    }
-
-    if !error.is_request() {
-        return false;
+    match crate::__private::client::of_reqwest(error) {
+        ErrorKind::Connect | ErrorKind::Timeout => return true,
+        ErrorKind::Closed if error.is_request() => {}
+        _ => return false,
     }
 
     let Some(hyper) = source::<hyper::Error>(error) else {

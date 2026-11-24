@@ -496,6 +496,8 @@ How a stream behaves:
 - `try_new` builds a stream from results. An error after the 200 ends an `Events` stream with a last event, `event:
   problem`, which the client reads as that error. JSON Lines and bytes have no way to say an error: the server cuts
   the answer short, and the client reads an error.
+- On the client, an item's error of the kind `ErrorKind::Decode`, an item that does not read, lets the stream go on.
+  Any other kind ends it. [Errors in a stream](errors.md#errors-in-a-stream) shows it.
 - A server told to stop ends its `Events` streams cleanly: [Shutdown](server.md#shutdown) says what becomes of each
   stream.
 - A `ByteStream` goes out with no `Content-Length` (chunked encoding on HTTP/1). See [A length](#a-length) for one

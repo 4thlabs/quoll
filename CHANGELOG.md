@@ -17,6 +17,32 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
 
 ## [Unreleased]
 
+### Added
+
+- Every error has a kind, `error.kind()`, a `quoll::ErrorKind`: `Status(StatusCode)` for an error of a status, a
+  handler's or another API's answer, and for a call of the client that got no answer to read, `Connect`, `Timeout`,
+  `Closed`, `Body`, `Decode`, `Middleware` or `Invalid`. One `match` tells a refused connection from a deadline passed,
+  or an item of a stream that does not read from a stream cut short, without reqwest's types. `status()` stays, and is
+  `Some(status)` exactly when the kind is `Status(status)`. `ErrorKind::as_str()` and its `Display` give `404` or
+  `timeout`, and `answered()` says whether the other API answered
+  ([#126](https://github.com/4thlabs/quoll/issues/126)).
+- `Error::failed(kind, message)` builds a failure of the client of any kind, for a fake: a call that got no answer,
+  whose `.response()` is the error, or with `ErrorKind::Status(status)` an answer of that status whose body is not the
+  api's error shape, whose `.response()` is an answer of that status. A handler that returns it answers 502, or 500
+  for `Invalid`.
+- `client::Attempt::kind()` gives the kind of an attempt to a rule of `retry(..).when`: `None` for an answer of a
+  success status, `Status(status)` for any other answer.
+
+### Changed
+
+- `client::trace` records `error.type` on its span, as OpenTelemetry names it: the kind of a call that failed,
+  `connect`, `timeout`..., and the code of an answer of a 4xx or 5xx status, `404`.
+- An `event: problem` whose data is not a problem is an item that does not read, of the kind `Decode`: the stream goes
+  on after it, where it ended before. After an error, a stream of the client goes on when its kind is `Decode`, and
+  has ended after any other.
+- rustc's messages name quoll's `Status` type `quoll::Status`, by its path, since the variant `ErrorKind::Status`
+  shares its name.
+
 ## [0.9.2] - 2026-11-24
 
 ### Added

@@ -692,7 +692,7 @@ pub use body::{Bytes, Form, Text};
 #[cfg(feature = "client")]
 pub use call::Call;
 pub use created::Created;
-pub use error::{Error, Result};
+pub use error::{Error, ErrorKind, Result};
 pub use problem::Problem;
 pub use quoll_macros::{api, group};
 #[cfg(any(feature = "server", feature = "client"))]

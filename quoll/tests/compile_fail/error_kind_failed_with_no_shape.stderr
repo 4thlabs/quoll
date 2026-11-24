@@ -1,0 +1,10 @@
+error[E0282]: type annotations needed for `quoll::Error<_>`
+ --> tests/compile_fail/error_kind_failed_with_no_shape.rs:5:9
+  |
+5 |     let error = Error::failed(ErrorKind::Decode, "not a note");
+  |         ^^^^^   ---------------------------------------------- type must be known at this point
+  |
+help: consider giving `error` an explicit type, where the type for type parameter `E` is specified
+  |
+5 |     let error: quoll::Error<E> = Error::failed(ErrorKind::Decode, "not a note");
+  |              +++++++++++++++++

@@ -28,10 +28,13 @@ use crate::__private::known::{IsByteStream, IsBytes, IsEvents, IsForm, IsJsonLin
 use crate::__private::read::{Deserialized, Read};
 use crate::__private::text;
 use crate::client::{CallTimeout, KeepsDeadline};
-use crate::{Error, Problem, Result, Route};
+use crate::{Error, ErrorKind, Problem, Result, Route};
 
+mod kind;
 mod redact;
 mod stream;
+
+pub(crate) use kind::{kind_of, of_reqwest};
 
 pub(crate) use redact::{redacted, strip_urls};
 
@@ -584,7 +587,7 @@ impl<'a> Request<'a> {
             return request
                 .send()
                 .await
-                .map_err(|error| no_answer(route, "got no response", error));
+                .map_err(|error| failed_call(route, "got no response", error));
         };
 
         let deadline = CallTimeout::new(duration);
@@ -603,7 +606,7 @@ impl<'a> Request<'a> {
             sent.await
         };
 
-        answer.map_err(|error| no_answer(route, "got no response", error))
+        answer.map_err(|error| failed_call(route, "got no response", error))
     }
 }
 
@@ -696,7 +699,7 @@ async fn answered_error<E>(
     let version = response.version();
     let headers = response.headers().clone();
     let body = read_up_to_limit(response).await.map_err(|error| {
-        no_answer(route, "got an error whose body cannot be read", error).cast()
+        failed_call(route, "got an error whose body cannot be read", error).cast()
     })?;
     let detail = (shape.read)(&headers, &body);
     let message = detail.as_ref().and_then(shape.message);
@@ -791,20 +794,29 @@ impl<T: Send + 'static, E: Send + 'static> crate::Call<T, E> for Pending<'_, T, 
     }
 }
 
-/// The error of a call that got no answer to read: a handler that returns it answers 502. The URL of a reqwest error
-/// it comes from keeps its origin and its path alone, so that a log of the error shows no key of a query scheme.
+/// The error of a call that got no answer to read, of the kind of `error`, a failure of reqwest or of the chain.
+fn failed_call<X: StdError + Send + Sync + 'static>(route: &Route, what: &str, error: X) -> Error {
+    let kind = kind_of(&error);
+
+    no_answer(route, what, kind, error)
+}
+
+/// The error of a call that got no answer to read, of `kind`: a handler that returns it answers 502. The URL of a
+/// reqwest error it comes from keeps its origin and its path alone, so that a log of the error shows no key of a query
+/// scheme.
 fn no_answer(
     route: &Route,
     what: &str,
+    kind: ErrorKind,
     error: impl Into<Box<dyn StdError + Send + Sync>>,
 ) -> Error {
     let mut error = error.into();
 
     redact::strip_urls(&mut *error);
-    Error::failed(
+    Error::failed_from(
+        kind,
         format!("the call `{}` {what}", route.operation_id),
         Some(error),
-        StatusCode::BAD_GATEWAY,
     )
 }
 
@@ -846,7 +858,8 @@ impl Answer {
         let body = self.read().await?;
         let body: &[u8] = if empty { b"null" } else { &body };
 
-        serde_json::from_slice(body).map_err(|error| no_answer(route, NOT_ITS_RESULT, error))
+        serde_json::from_slice(body)
+            .map_err(|error| no_answer(route, NOT_ITS_RESULT, ErrorKind::Decode, error))
     }
 
     /// The body, read whole as UTF-8 text: what a route returning `Text` gives.
@@ -864,8 +877,9 @@ impl Answer {
         let route = self.route;
         let body = self.read_as(TEXT, true).await?;
         // The source is the `Utf8Error` alone: a `FromUtf8Error` would keep the whole body in the error.
-        let text = String::from_utf8(body.into())
-            .map_err(|error| no_answer(route, NOT_ITS_RESULT, error.utf8_error()))?;
+        let text = String::from_utf8(body.into()).map_err(|error| {
+            no_answer(route, NOT_ITS_RESULT, ErrorKind::Decode, error.utf8_error())
+        })?;
 
         Ok(T::from_string(text))
     }
@@ -1058,7 +1072,7 @@ impl Answer {
         response
             .bytes()
             .await
-            .map_err(|error| no_answer(route, "got an answer whose body cannot be read", error))
+            .map_err(|error| failed_call(route, "got an answer whose body cannot be read", error))
     }
 
     /// Nothing: what a route with no result gives, whatever the body. A body is read and dropped, up to 64 KiB, so
@@ -1096,6 +1110,7 @@ fn not_of_type(route: &Route, expected: &[&str], utf8: bool) -> Error {
     no_answer(
         route,
         NOT_ITS_RESULT,
+        ErrorKind::Decode,
         format!("its content type is not {names}{charset}"),
     )
 }

@@ -1,11 +1,12 @@
 use docker_api::{Containers, DockerClient, System};
 use futures::StreamExt;
+use quoll::ErrorKind;
 use reqwest::StatusCode;
 use tokio::io::AsyncWriteExt;
 
 use crate::args::Command;
 use crate::frames::{Demux, Output};
-use crate::utils::{error_chain, is_undecoded, short_id};
+use crate::utils::{error_chain, short_id};
 
 /// The content type of the logs of a container with a TTY: its bytes as they are, in no frame.
 const RAW_STREAM: &str = "application/vnd.docker.raw-stream";
@@ -125,7 +126,7 @@ async fn events(docker: &DockerClient, since: Option<i64>) -> anyhow::Result<()>
         let event = match event {
             Ok(event) => event,
             // An event this command line does not read, of a kind newer than it: the stream goes on.
-            Err(error) if is_undecoded(&error) => {
+            Err(error) if error.kind() == ErrorKind::Decode => {
                 eprintln!("warning: an event is skipped: {}", error_chain(&error));
                 continue;
             }

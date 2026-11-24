@@ -85,7 +85,7 @@ For each route, the OpenAPI document lists the errors that quoll answers itself,
 ## What a client sees
 
 On the client, an answer with an error status is a `quoll::Error` with that status. A call that got no answer to read
-has none.
+has none: its kind says what went wrong.
 
 ```rust
 use http::StatusCode;
@@ -121,8 +121,11 @@ async fn main() -> Result<()> {
 }
 ```
 
+- `kind()` is what the error is, a `quoll::ErrorKind`: `ErrorKind::Status` of its status, or what went wrong in a
+  call that got no answer to read. [The kind of an error](#the-kind-of-an-error) lists them.
 - `status()` is the status of the answer, or `None` for a call that got no answer to read: a connection refused, a
-  deadline passed, an error of a middleware, or an answer that is not the route's result.
+  deadline passed, an error of a middleware, or an answer that is not the route's result. It is `Some(status)` exactly
+  when `kind()` is `ErrorKind::Status(status)`.
 - `detail()` is the RFC 9457 problem, when the body is one (`application/problem+json`).
 - `response()` is the answer, with that detail, its status and its headers.
 - `body()` is the body as it came: its first 64 KiB.
@@ -158,6 +161,61 @@ async fn main() -> quoll::Result<()> {
 
 The headers of an error's answer, such as a `Retry-After` or a rate limit, come with the whole answer, which a call's
 `.response()` gives. Its body is then the error. [The whole answer](client.md#the-whole-answer) shows it.
+
+### The kind of an error
+
+Every error has a kind, which `error.kind()` gives. A handler's errors have one too: `Error::not_found(..)` is
+`ErrorKind::Status(StatusCode::NOT_FOUND)`, and `Error::internal(..)` is a 500.
+
+| Kind                     | What went wrong                                                                         |
+|--------------------------|-----------------------------------------------------------------------------------------|
+| `Status(status)`         | the answer has an error status; its `detail()` is the body, when it has the api's shape |
+| `Connect`                | no connection: refused, a name that does not resolve, TLS. Nothing was sent.            |
+| `Timeout`                | a deadline passed before the answer. The other API may have served the request.         |
+| `Closed`                 | the request was sent, then the connection closed before the answer                      |
+| `Body`                   | the answer began, and its body could not be read to its end                             |
+| `Decode`                 | the answer has a success status, and is not the route's result                          |
+| `Middleware`             | a middleware failed the call itself                                                     |
+| `Invalid`                | the call could not be sent as it is written, such as a URL that is not one              |
+
+`ErrorKind` is `#[non_exhaustive]`: a `match` on it ends with `_`, so that a later version may add a kind. A status is
+matched by its constant, or by a guard:
+
+```rust,no_run
+use http::StatusCode;
+use quoll::ErrorKind;
+
+quoll::api! {
+    pub api Api = "/api";
+
+    pub group Notes {
+        GET "/notes/{id}" => get(id: i64) -> String;
+    }
+}
+
+#[tokio::main]
+async fn main() -> quoll::Result<()> {
+    let api = Api::client("http://localhost:8080")?;
+
+    let Err(error) = api.notes().get(999).await else {
+        return Ok(());
+    };
+
+    match error.kind() {
+        ErrorKind::Status(StatusCode::NOT_FOUND) => println!("no note 999"),
+        ErrorKind::Status(status) if status.is_server_error() => println!("the server is in trouble"),
+        ErrorKind::Connect => println!("nothing listens there"),
+        ErrorKind::Timeout => println!("the server is slow: try again later"),
+        _ => return Err(error),
+    }
+
+    Ok(())
+}
+```
+
+`kind.as_str()` gives the code of a status, `404`, or the kind's name in lowercase, `timeout`. `client::trace` records
+it as `error.type` on the span of a call that failed. `kind.answered()` says whether the other API answered: it is
+true for `Status`, `Body` and `Decode`.
 
 ## Another API's errors
 
@@ -344,3 +402,46 @@ attribute is for the contract of another API. The items of a stream keep `quoll:
 
 Once a stream's 200 is sent, an error can no longer be its status. [Streams](contract.md#streams) says how each kind
 of stream ends on an error, and what the client reads.
+
+On the client, the kind of an item's error says whether the stream goes on:
+
+- after `ErrorKind::Decode`, an item that does not read as the route's item, the next item follows;
+- after any other kind, the stream has ended, and the next item is `None`. An `event: problem` is the error of an
+  answer, `ErrorKind::Status` of the problem's status, with the problem as its `detail()`. A body cut short is `Body`.
+
+```rust,no_run
+use futures::StreamExt;
+use quoll::{ErrorKind, JsonLines};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Change {
+    pub id: i64,
+}
+
+quoll::api! {
+    #[openapi(none)]
+    pub api Api = "/api";
+
+    pub group Changes {
+        GET "/changes" => follow() -> JsonLines<Change>;
+    }
+}
+
+#[tokio::main]
+async fn main() -> quoll::Result<()> {
+    let api = Api::client("http://localhost:8080")?;
+    let mut changes = api.changes().follow().await?;
+
+    while let Some(change) = changes.next().await {
+        match change {
+            Ok(change) => println!("{change:?}"),
+            // A change of a kind newer than this code: skip it, the stream goes on.
+            Err(error) if error.kind() == ErrorKind::Decode => eprintln!("skipped: {error}"),
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(())
+}
+```

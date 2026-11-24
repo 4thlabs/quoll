@@ -9,6 +9,9 @@ use crate::{Problem, Response};
 
 #[cfg(feature = "client")]
 mod client;
+mod kind;
+
+pub use kind::ErrorKind;
 
 /// A result whose error is an [`Error`] of the shape `E`: what every route returns, `quoll::Result<Note>` of the
 /// default shape, an RFC 9457 [`Problem`], and `quoll::Result<Repository, GitHubError>` on the client of an api that
@@ -43,10 +46,11 @@ pub type Result<T, E = Problem> = std::result::Result<T, Error<E>>;
 /// `Display` and `Debug`, whose `Display` gives the error's message, `another api answered 401: Bad credentials`. A
 /// body that is not an `E`, a page of HTML from a proxy, gives no detail, and keeps its status and its body.
 ///
-/// A call that got no answer to read, a connection refused or an answer that is not the route's result, has no
-/// status. Its sources show the URL of the call by its origin and its path alone, without its credentials and its
-/// query, where a query scheme sends its key: the errors of reqwest and of reqwest-middleware, as the client and its
-/// middleware give them, are stripped. A reqwest error that a middleware of the application's, or of another crate,
+/// Every error has a [kind](Error::kind), an [`ErrorKind`]: [`ErrorKind::Status`] of its status, or what went wrong
+/// in a call that got no answer to read, which has no status: a connection refused is [`ErrorKind::Connect`], an
+/// answer that is not the route's result [`ErrorKind::Decode`]. Its sources show the URL of the call by its origin and
+/// its path alone, without its credentials and its query, where a query scheme sends its key: the errors of reqwest
+/// and of reqwest-middleware, as the client and its middleware give them, are stripped. A reqwest error that a middleware of the application's, or of another crate,
 /// wraps in an error type of its own, as reqwest-retry's `RetryError`, is out of reach, in the error and in the span
 /// of [`client::trace`]: the middleware strips it, with `reqwest::Error::without_url`, or [`client::retry`] takes the
 /// place of reqwest-retry's.
@@ -76,17 +80,13 @@ pub(crate) enum Repr<E> {
         body: Option<Vec<u8>>,
         message: Option<String>,
     },
-    /// A call to another API that got no answer to read: a client given a URL that is not one, a request that got no
-    /// response, or an answer that is not the route's result. It has no status; a handler returning it answers
-    /// `answered`, and logs it.
-    #[cfg_attr(
-        not(any(test, feature = "client")),
-        expect(dead_code, reason = "only the client builds it")
-    )]
+    /// A call to another API that got no answer to read, of `kind`, never a `Status`: a client given a URL that is not
+    /// one, a request that got no response, or an answer that is not the route's result. It has no status; a handler
+    /// returning it answers 500 for an [`ErrorKind::Invalid`], 502 for any other, and logs it.
     Failed {
+        kind: ErrorKind,
         message: String,
         source: Option<Box<dyn StdError + Send + Sync>>,
-        answered: StatusCode,
     },
 }
 
@@ -175,23 +175,6 @@ impl Error {
         self.cast()
     }
 
-    /// A call that got no answer to read, which a handler returning it answers with `answered`.
-    #[cfg_attr(
-        not(any(test, feature = "client")),
-        expect(dead_code, reason = "only the client builds it")
-    )]
-    pub(crate) fn failed(
-        message: impl Into<String>,
-        source: Option<Box<dyn StdError + Send + Sync>>,
-        answered: StatusCode,
-    ) -> Self {
-        Self(Box::new(Repr::Failed {
-            message: message.into(),
-            source,
-            answered,
-        }))
-    }
-
     /// A client given what it cannot use, a URL that is not one or a value it cannot write: the mistake of the code
     /// that called it, which a handler returning it answers with a 500.
     #[cfg_attr(
@@ -202,11 +185,61 @@ impl Error {
         message: impl Into<String>,
         source: Option<Box<dyn StdError + Send + Sync>>,
     ) -> Self {
-        Self::failed(message, source, StatusCode::INTERNAL_SERVER_ERROR)
+        Self::failed_from(ErrorKind::Invalid, message, source)
     }
 }
 
 impl<E> Error<E> {
+    /// A call of the client that failed with `kind`, and says `message`: what a fake of a group's client returns, as
+    /// the real client fails. Its [`kind`](Error::kind) is `kind`, and its `.response()` is as the real client's.
+    ///
+    /// - Of any kind but [`ErrorKind::Status`], it is a call that got no answer to read: it has no
+    ///   [status](Error::status), its `.response()` is this error, and a handler returning it answers 502, or 500
+    ///   for an [`ErrorKind::Invalid`].
+    /// - Of `ErrorKind::Status(status)`, it is what another API answered with `status`, whose body is not the api's
+    ///   error shape: it has that status and no [detail](Error::detail), its `Display` is
+    ///   `another api answered 404: message`, its `.response()` an answer of that status, and a handler returning it
+    ///   answers 502. An answer with a detail is [`Error::answered`].
+    ///
+    /// ```
+    /// use http::StatusCode;
+    /// use quoll::{Error, ErrorKind};
+    ///
+    /// let error: Error = Error::failed(ErrorKind::Decode, "an item that does not read as a note");
+    ///
+    /// assert_eq!(error.status(), None);
+    /// assert_eq!(error.kind(), ErrorKind::Decode);
+    /// assert_eq!(error.to_string(), "an item that does not read as a note");
+    ///
+    /// let proxy: Error = Error::failed(ErrorKind::Status(StatusCode::BAD_GATEWAY), "a page of nginx");
+    ///
+    /// assert_eq!(proxy.status(), Some(StatusCode::BAD_GATEWAY));
+    /// assert!(proxy.detail().is_none());
+    /// assert_eq!(proxy.to_string(), "another api answered 502: a page of nginx");
+    /// ```
+    pub fn failed(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self::failed_from(kind, message, None)
+    }
+
+    /// A call that got no answer to read, of `kind`, with the error it comes from.
+    pub(crate) fn failed_from(
+        kind: ErrorKind,
+        message: impl Into<String>,
+        source: Option<Box<dyn StdError + Send + Sync>>,
+    ) -> Self {
+        if let ErrorKind::Status(status) = kind {
+            let message = Some(message.into()).filter(|message| !message.is_empty());
+
+            return Self::upstream(status, None, None, message);
+        }
+
+        Self(Box::new(Repr::Failed {
+            kind,
+            message: message.into(),
+            source,
+        }))
+    }
+
     /// What another API answered with an error status, `detail`, as a fake of a group's client gives it: an error with
     /// `status`, whose [`response`](Error::response) has no headers, whose `Display` says the message of `detail`, and
     /// that has no [`body`](Error::body), as nothing came. It is for the shape of an api with `#[error(E)]`: a fake of
@@ -280,26 +313,51 @@ impl<E> Error<E> {
                 message,
             },
             Repr::Failed {
+                kind,
                 message,
                 source,
-                answered,
             } => Repr::Failed {
+                kind,
                 message,
                 source,
-                answered,
             },
         }))
     }
 
-    /// The status of the error: the one given, 500 for an internal error, or the status another API answered.
+    /// The status of the error, `Some(status)` exactly when its [kind](Error::kind) is
+    /// `ErrorKind::Status(status)`: the one given, 500 for an internal error, or the status another API answered.
     ///
-    /// A call of the client that got no answer to read has none: a connection refused, a timeout, a middleware's
-    /// error, an answer that is not the route's result, or a client given a URL that is not one.
+    /// A call of the client that got no answer to read has none: its kind says what went wrong, a connection
+    /// refused, [`ErrorKind::Connect`], a deadline passed, [`ErrorKind::Timeout`], an answer that is not the route's
+    /// result, [`ErrorKind::Decode`]...
     pub fn status(&self) -> Option<StatusCode> {
+        match self.kind() {
+            ErrorKind::Status(status) => Some(status),
+            _ => None,
+        }
+    }
+
+    /// What the error is: [`ErrorKind::Status`] of its status, the one a handler gave, 500 for an internal error, or
+    /// the one another API answered, its [detail](Error::detail) beside; or what went wrong in a call of the client
+    /// that got no answer to read, [`ErrorKind::Connect`], [`ErrorKind::Timeout`], [`ErrorKind::Decode`]...
+    ///
+    /// ```
+    /// use http::StatusCode;
+    /// use quoll::{Error, ErrorKind};
+    ///
+    /// let refused: Error = Error::failed(ErrorKind::Connect, "refused");
+    ///
+    /// assert_eq!(Error::not_found("no such note").kind(), ErrorKind::Status(StatusCode::NOT_FOUND));
+    /// assert_eq!(Error::internal("down").kind(), ErrorKind::Status(StatusCode::INTERNAL_SERVER_ERROR));
+    /// assert_eq!(refused.kind(), ErrorKind::Connect);
+    /// ```
+    pub fn kind(&self) -> ErrorKind {
         match &*self.0 {
-            Repr::Problem { status, .. } | Repr::Upstream { status, .. } => Some(*status),
-            Repr::Internal(_) => Some(StatusCode::INTERNAL_SERVER_ERROR),
-            Repr::Failed { .. } => None,
+            Repr::Problem { status, .. } | Repr::Upstream { status, .. } => {
+                ErrorKind::Status(*status)
+            }
+            Repr::Internal(_) => ErrorKind::Status(StatusCode::INTERNAL_SERVER_ERROR),
+            Repr::Failed { kind, .. } => *kind,
         }
     }
 
@@ -370,9 +428,12 @@ impl<E: fmt::Debug> fmt::Debug for Error<E> {
                 .field("body", &body.as_deref().map(String::from_utf8_lossy))
                 .finish(),
             Repr::Failed {
-                message, source, ..
+                kind,
+                message,
+                source,
             } => f
                 .debug_struct("Failed")
+                .field("kind", kind)
                 .field("message", message)
                 .field("source", source)
                 .finish(),
@@ -440,13 +501,14 @@ mod tests {
 
     #[test]
     fn a_call_that_got_no_answer_has_no_status_and_keeps_its_source() {
-        let error = Error::failed(
+        let error = Error::<Problem>::failed_from(
+            ErrorKind::Connect,
             "the call `notes_get` got no response",
             Some("connection refused".into()),
-            StatusCode::BAD_GATEWAY,
         );
 
         assert_eq!(error.status(), None);
+        assert_eq!(error.kind(), ErrorKind::Connect);
         assert_eq!(error.to_string(), "the call `notes_get` got no response");
         assert_eq!(
             error.source().map(ToString::to_string).as_deref(),
@@ -536,11 +598,10 @@ mod tests {
         assert_eq!(carried.body(), Some(&br#"{"message":"rate limited"}"#[..]));
         assert!(carried.detail().is_none(), "a shape that is not a problem");
 
-        let failed: Error = Error::failed("got no response", None, StatusCode::BAD_GATEWAY)
-            .cast::<Shape>()
-            .into();
+        let failed: Error = Error::<Shape>::failed(ErrorKind::Timeout, "got no response").into();
 
         assert_eq!(failed.status(), None);
+        assert_eq!(failed.kind(), ErrorKind::Timeout);
         assert_eq!(failed.to_string(), "got no response");
     }
 

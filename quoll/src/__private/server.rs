@@ -1094,7 +1094,16 @@ fn answered(error: &Error) -> (StatusCode, Option<&str>) {
         }
         Repr::Problem { .. } | Repr::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, None),
         Repr::Upstream { .. } => (StatusCode::BAD_GATEWAY, None),
-        Repr::Failed { answered, .. } => (*answered, None),
+        Repr::Failed { kind, .. } => (failed_status(*kind), None),
+    }
+}
+
+/// What a handler answers for a call of its client that got no answer to read: 500 for the handler's own mistake, a
+/// URL that is not one, and 502 for the other API's.
+fn failed_status(kind: crate::ErrorKind) -> StatusCode {
+    match kind {
+        crate::ErrorKind::Invalid => StatusCode::INTERNAL_SERVER_ERROR,
+        _ => StatusCode::BAD_GATEWAY,
     }
 }
 
@@ -1141,20 +1150,24 @@ fn answer(error: &Error) -> (StatusCode, Option<&str>) {
             (StatusCode::BAD_GATEWAY, None)
         }
         Repr::Failed {
+            kind,
             message,
             source,
-            answered,
         } => {
+            let answered = failed_status(*kind);
+            let kind = kind.as_str();
+
             match source {
                 Some(source) => tracing::error!(
                     error = &**source as &dyn StdError,
+                    kind,
                     %answered,
                     "{message}"
                 ),
-                None => tracing::error!(%answered, "{message}"),
+                None => tracing::error!(kind, %answered, "{message}"),
             }
 
-            (*answered, None)
+            (answered, None)
         }
     }
 }
@@ -1361,10 +1374,10 @@ mod tests {
 
     #[test]
     fn a_call_that_got_no_answer_is_logged_and_answers_its_status() {
-        let error = Error::failed(
+        let error = Error::failed_from(
+            crate::ErrorKind::Connect,
             "the call `notes_get` got no response",
             Some("connection refused".into()),
-            StatusCode::BAD_GATEWAY,
         );
         let (log, status, detail) = logged(&error);
 
