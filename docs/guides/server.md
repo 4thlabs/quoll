@@ -197,7 +197,7 @@ quoll::api! {
     pub api Api = "/api";
 
     pub group Notes {
-        GET  "/notes/{id}" => get(id: i64, header("If-None-Match") seen: Option<String>) -> String;
+        GET  "/notes/{id}" => get(id: i64, header("If-None-Match") seen: Option<&str>) -> String;
         PUT  "/notes/{id}" => put(id: i64, title: String) -> String;
         POST "/notes"      => create(title: String) -> Created<i64>;
     }
