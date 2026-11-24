@@ -43,6 +43,15 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
 - `client::Attempt::kind()` gives the kind of an attempt to a rule of `retry(..).when`: `None` for an answer of a
   success status, `Status(status)` for any other answer.
 
+- `#[server(none)]` and `#[client(none)]` on an api, or on the group of a `quoll::group!`, say which side a contract
+  does not have, whatever the features of `quoll`. Cargo builds `quoll` once per binary, with every feature its
+  dependents ask for, so an application that serves its own api and calls another compiled the other's contract with a
+  server too. `#[server(none)]`, for an API that is only called, leaves out the server side and the OpenAPI document;
+  `#[client(none)]`, for one that is only served, such as a webhook receiver, leaves out the client side. The types
+  then need only what the other side reads and writes. An api lists only groups that have each side it has. The guides'
+  contracts of other APIs and the Docker example say `#[server(none)]`
+  ([#129](https://github.com/4thlabs/quoll/issues/129)).
+
 ### Changed
 
 - `client::trace` records `error.type` on its span, as OpenTelemetry names it: the kind of a call that failed,
@@ -58,6 +67,12 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
   `Middleware`.
 - rustc's messages name quoll's `Status` type `quoll::Status`, by its path, since the variant `ErrorKind::Status`
   shares its name.
+
+### Fixed
+
+- A contract with no OpenAPI document, built with neither feature of `quoll`, left unused the import of a type that
+  only the contract names, such as `use std::net::IpAddr;` for an argument: the macro names each type of its arguments
+  and results whatever the features ([#129](https://github.com/4thlabs/quoll/issues/129)).
 
 ## [0.9.2] - 2026-11-24
 

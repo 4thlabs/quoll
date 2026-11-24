@@ -1,0 +1,5 @@
+error: a contract has at least one side, and `#[server(none)]` leaves out the server already: remove `#[client(none)]`, or `#[server(none)]`
+ --> tests/compile_fail/group_macro_sides_none.rs:2:5
+  |
+2 |     #[client(none)]
+  |     ^^^^^^^^^^^^^^^

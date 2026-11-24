@@ -18,8 +18,26 @@ pub(crate) struct Cx<'a> {
     pub(crate) group: &'a Group,
     /// The api of the block that writes the group; `None` for a `quoll::group!`, which any api may list.
     pub(crate) api: Option<&'a Api>,
-    /// Whether the group has an OpenAPI document: its api's, or its own `#[openapi(none)]`.
+    /// Whether the group has an OpenAPI document: its api's, or its own `#[openapi(none)]` or `#[server(none)]`.
     pub(crate) openapi: bool,
+    /// Whether the group has a server side: its api's, or its own `#[server(none)]`.
+    pub(crate) server: bool,
+    /// Whether the group has a client side: its api's, or its own `#[client(none)]`.
+    pub(crate) client: bool,
+}
+
+impl<'a> Cx<'a> {
+    /// The group `group` of the block of `api`, which has the api's sides: the api itself, or the stand-in of a
+    /// `quoll::group!`, which has the group's own and whose group any api may list.
+    pub(crate) fn new(group: &'a Group, api: &'a Api, alone: bool) -> Self {
+        Self {
+            group,
+            api: (!alone).then_some(api),
+            openapi: api.openapi,
+            server: api.server,
+            client: api.client,
+        }
+    }
 }
 
 impl Cx<'_> {
@@ -44,7 +62,7 @@ pub(crate) fn descriptor_name(name: &Ident) -> Ident {
     format_ident!("__QuollGroup{}", name.unraw(), span = name.span())
 }
 
-/// The descriptor of a group, with what it says of its routes.
+/// The descriptor of a group, with what it says of its routes and of its sides.
 pub(crate) fn expand(cx: &Cx) -> TokenStream {
     let group = cx.group;
     let vis = &group.vis;
@@ -66,12 +84,22 @@ pub(crate) fn expand(cx: &Cx) -> TokenStream {
         None => quote! { ::core::option::Option::None },
     };
     let routes = group.routes.iter().map(|route| route_info(group, route));
+    // Whatever the features: an api checks the sides of a group it lists with them, before its code names the items.
+    let served = cx.server.then(|| {
+        quote! { impl ::quoll::__private::group::Served for #descriptor {} }
+    });
+    let called = cx.client.then(|| {
+        quote! { impl ::quoll::__private::group::Called for #descriptor {} }
+    });
 
     quote! {
         #[doc = #docs]
         #[doc(hidden)]
         #[derive(::core::fmt::Debug, ::core::clone::Clone, ::core::marker::Copy)]
         #vis struct #descriptor;
+
+        #served
+        #called
 
         impl ::quoll::__private::group::Group for #descriptor {
             const INFO: ::quoll::__private::group::GroupInfo = ::quoll::__private::group::GroupInfo {
@@ -430,12 +458,18 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
         }
     });
     let is_group = api.listed.iter().map(is_group);
+    let sides = refs[..api.listed.len()]
+        .iter()
+        .map(|group| has_sides(api, group));
+    // Only the client reads the shape of a route's errors.
     let errors = refs[..api.listed.len()]
         .iter()
+        .filter(|_| api.client)
         .filter_map(|group| takes_error(api, group));
 
     quote! {
         #(#is_group)*
+        #(#sides)*
         #(#errors)*
 
         const _: () = {
@@ -477,6 +511,28 @@ fn takes_error(api: &Api, group: &GroupRef) -> Option<TokenStream> {
             }
         };
     })
+}
+
+/// For a group of the list, the checks that it has each side the api has, whose code names the group's items: a group
+/// may have a side the api does not, and the api leaves it. The server side of an api with a document is checked by
+/// the document's, which a group has only when it is served.
+fn has_sides(api: &Api, group: &GroupRef) -> TokenStream {
+    let descriptor = group.descriptor();
+    let served = (api.server && !api.openapi).then(|| {
+        quote_spanned! {group.span()=>
+            const _: () = ::quoll::__private::group::is_served::<#descriptor>();
+        }
+    });
+    let called = api.client.then(|| {
+        quote_spanned! {group.span()=>
+            const _: () = ::quoll::__private::group::is_called::<#descriptor>();
+        }
+    });
+
+    quote! {
+        #served
+        #called
+    }
 }
 
 /// For each group of the list, a check that its path names a group: its descriptor, named as its path names it, from

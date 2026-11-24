@@ -60,15 +60,17 @@ impl Parse for GroupContract {
     }
 }
 
-/// Reads the one group of a `quoll::group!`, which may say `#[openapi(none)]`.
+/// Reads the one group of a `quoll::group!`, which may say `#[openapi(none)]`, `#[server(none)]` or `#[client(none)]`.
 fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
-    let mut group: Option<(Group, bool)> = None;
+    let mut group: Option<(Group, Sides)> = None;
 
     while !input.is_empty() {
         let Attrs {
             docs,
             auth,
             openapi,
+            server,
+            client,
             error,
             headers,
             body,
@@ -98,10 +100,7 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             return Err(unexpected_item(&keyword));
         }
 
-        let document = match openapi {
-            Some((_, read)) => keep(errors, read).is_none_or(|document| document),
-            None => true,
-        };
+        let sides = read_sides(errors, openapi, server, client);
         let auth = auth.and_then(|(_, auth)| keep(errors, auth));
         let error = error.and_then(|(_, error)| keep(errors, error));
         let headers = keep(errors, headers).unwrap_or_default();
@@ -115,11 +114,11 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                     first.name, read.name
                 ),
             )),
-            None => group = Some((read, document)),
+            None => group = Some((read, sides)),
         }
     }
 
-    let Some((group, document)) = group else {
+    let Some((group, sides)) = group else {
         return Err(Error::new(
             proc_macro2::Span::call_site(),
             "a `quoll::group!` holds a group: write `pub group Notes { ... }`",
@@ -127,7 +126,7 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     };
 
     let mut api = Api::alone(group).map_err(|error| fold(errors, error))?;
-    api.openapi = document;
+    sides.set(&mut api);
     headers::check(&api.groups, None, errors);
     fields::check_document(&api, "the group", errors);
 
@@ -146,6 +145,8 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
             docs,
             auth,
             openapi,
+            server,
+            client,
             error,
             headers,
             body,
@@ -174,12 +175,9 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 ));
             }
 
-            let openapi = match openapi {
-                Some((_, read)) => keep(errors, read).is_none_or(|document| document),
-                None => true,
-            };
+            let sides = read_sides(errors, openapi, server, client);
             let error = error.and_then(|(_, error)| keep(errors, error));
-            let mut decl = ApiDecl::parse(input, docs, vis, openapi, error, &keyword)?;
+            let mut decl = ApiDecl::parse(input, docs, vis, sides, error, &keyword)?;
             decl.headers = keep(errors, headers).unwrap_or_default();
             match &api {
                 Some(first) => errors.push(Error::new(
@@ -192,7 +190,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 None => api = Some(decl),
             }
         } else if keyword == "scheme" {
-            refuse_openapi(errors, openapi.as_ref(), "a scheme");
+            refuse_sides(errors, api_only(&openapi, &server, &client), "a scheme");
             if let Some((attr, _)) = &auth {
                 errors.push(Error::new_spanned(
                     attr,
@@ -221,7 +219,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
                 Err(error) => errors.push(error),
             }
         } else if keyword == "group" {
-            refuse_openapi(errors, openapi.as_ref(), "a group");
+            refuse_sides(errors, api_only(&openapi, &server, &client), "a group");
             let auth = auth.and_then(|(_, auth)| keep(errors, auth));
             let error = error.and_then(|(_, error)| keep(errors, error));
             let headers = keep(errors, headers).unwrap_or_default();
@@ -246,7 +244,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         ));
     };
 
-    let openapi = api.openapi;
+    let sides = api.sides;
     let error = api.error;
     let api_headers = api.headers;
     let mut api = Api::new(
@@ -259,7 +257,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         groups,
     )
     .map_err(|error| fold(errors, error))?;
-    api.openapi = openapi;
+    sides.set(&mut api);
     api.error = error;
     api.headers = api_headers;
     headers::check(&api.groups, Some((&api, &api.headers)), errors);
@@ -280,19 +278,103 @@ fn refuse_body(errors: &mut ErrorList, body: &[Attribute], what: &str) {
     }
 }
 
-/// Refuses an `#[openapi(...)]` on `what`, which is not the api.
-fn refuse_openapi(errors: &mut ErrorList, openapi: Option<&(Attribute, Result<bool>)>, what: &str) {
-    if let Some((attr, _)) = openapi {
-        errors.push(openapi_elsewhere(attr, what));
+/// What an api, or the group of a `quoll::group!`, has of a contract: its document and its two sides.
+#[derive(Debug, Clone, Copy)]
+struct Sides {
+    openapi: bool,
+    server: bool,
+    client: bool,
+}
+
+impl Sides {
+    /// Gives them to `api`.
+    fn set(self, api: &mut Api) {
+        api.openapi = self.openapi;
+        api.server = self.server;
+        api.client = self.client;
     }
 }
 
-/// The error of an `#[openapi(...)]` on `what`, which is not the api.
-fn openapi_elsewhere(attr: &Attribute, what: &str) -> Error {
+/// The sides an api, or the group of a `quoll::group!`, has, from its `#[openapi(...)]`, `#[server(...)]` and
+/// `#[client(...)]`. A side is left out by its `none` alone, a mistake in the attribute leaving it in. A contract with
+/// neither side is a mistake, and so is an `#[openapi(...)]` beside `#[server(none)]`, which leaves out the document
+/// already: the document describes what is served.
+fn read_sides(
+    errors: &mut ErrorList,
+    openapi: Option<(Attribute, Result<bool>)>,
+    server: Option<(Attribute, Result<()>)>,
+    client: Option<(Attribute, Result<()>)>,
+) -> Sides {
+    let server = !matches!(server.map(|(_, read)| keep(errors, read)), Some(Some(())));
+    let client = match client {
+        Some((attr, read)) => {
+            let none = keep(errors, read).is_some();
+
+            if none && !server {
+                errors.push(Error::new_spanned(
+                    attr,
+                    "a contract has at least one side, and `#[server(none)]` leaves out the server already: remove `#[client(none)]`, or `#[server(none)]`",
+                ));
+            }
+
+            !none
+        }
+        None => true,
+    };
+    let openapi = match openapi {
+        Some((attr, _)) if !server => {
+            errors.push(Error::new_spanned(
+                attr,
+                "`#[server(none)]` leaves out the OpenAPI document too, which describes what is served: remove `#[openapi(...)]`",
+            ));
+
+            false
+        }
+        Some((_, read)) => keep(errors, read).is_none_or(|document| document),
+        None => server,
+    };
+
+    Sides {
+        openapi,
+        server,
+        client,
+    }
+}
+
+/// The attributes among `openapi`, `server` and `client` that only the api, or the group of a `quoll::group!`, takes.
+fn api_only<'a>(
+    openapi: &'a Option<(Attribute, Result<bool>)>,
+    server: &'a Option<(Attribute, Result<()>)>,
+    client: &'a Option<(Attribute, Result<()>)>,
+) -> [Option<&'a Attribute>; 3] {
+    [
+        openapi.as_ref().map(|(attr, _)| attr),
+        server.as_ref().map(|(attr, _)| attr),
+        client.as_ref().map(|(attr, _)| attr),
+    ]
+}
+
+/// Refuses each of `attrs`, from [`api_only`], on `what`, which is not the api.
+fn refuse_sides(errors: &mut ErrorList, attrs: [Option<&Attribute>; 3], what: &str) {
+    for attr in attrs.into_iter().flatten() {
+        errors.push(elsewhere(attr, what));
+    }
+}
+
+/// The error of an `#[openapi(...)]`, a `#[server(...)]` or a `#[client(...)]` on `what`, which is not the api.
+fn elsewhere(attr: &Attribute, what: &str) -> Error {
+    let (name, part) = if attr.path().is_ident("openapi") {
+        ("openapi", "document")
+    } else if attr.path().is_ident("server") {
+        ("server", "server side")
+    } else {
+        ("client", "client side")
+    };
+
     Error::new_spanned(
         attr,
         format!(
-            "{what} takes no `#[openapi(...)]`: `#[openapi(none)]` goes on the api, whose whole document it leaves out"
+            "{what} takes no `#[{name}(...)]`: `#[{name}(none)]` goes on the api, whose whole {part} it leaves out"
         ),
     )
 }
@@ -320,7 +402,7 @@ fn unexpected_item(keyword: &Ident) -> Error {
 struct ApiDecl {
     docs: Docs,
     vis: Visibility,
-    openapi: bool,
+    sides: Sides,
     error: Option<Type>,
     headers: Headers,
     name: Ident,
@@ -335,7 +417,7 @@ impl ApiDecl {
         input: ParseStream,
         docs: Docs,
         vis: Visibility,
-        openapi: bool,
+        sides: Sides,
         error: Option<Type>,
         keyword: &Ident,
     ) -> Result<Self> {
@@ -364,7 +446,7 @@ impl ApiDecl {
         Ok(Self {
             docs,
             vis,
-            openapi,
+            sides,
             error,
             headers: Headers::default(),
             name,
@@ -474,6 +556,8 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
         docs,
         auth,
         openapi,
+        server,
+        client,
         error,
         headers,
         body,
@@ -505,8 +589,8 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
         Ok(auth) => (auth, None),
         Err(error) => (None, Some(error)),
     };
-    if let Some((attr, _)) = &openapi {
-        let refused = openapi_elsewhere(attr, "a route");
+    for attr in api_only(&openapi, &server, &client).into_iter().flatten() {
+        let refused = elsewhere(attr, "a route");
 
         match &mut attr_error {
             Some(error) => error.combine(refused),
@@ -700,25 +784,31 @@ fn parse_join(attr: Attribute) -> Result<JoinAttr> {
 }
 
 /// The attributes before an item: its `///` comments, its `#[auth(...)]` with what it says, or the mistake in it, its
-/// `#[openapi(...)]` with whether the api has a document, or the mistake in it, its `#[error(...)]` with the type it
-/// names, or the mistake in it, and what its `#[header(...)]`s say, or the mistakes in them.
+/// `#[openapi(...)]` with whether the api has a document, or the mistake in it, its `#[server(...)]` and
+/// `#[client(...)]`, each with the mistake in it, if any, its `#[error(...)]` with the type it names, or the mistake in
+/// it, and what its `#[header(...)]`s say, or the mistakes in them.
 struct Attrs {
     docs: Docs,
     auth: Option<(Attribute, Result<Auth>)>,
     openapi: Option<(Attribute, Result<bool>)>,
+    server: Option<(Attribute, Result<()>)>,
+    client: Option<(Attribute, Result<()>)>,
     error: Option<(Attribute, Result<Type>)>,
     headers: Result<Headers>,
     body: Vec<Attribute>,
 }
 
 /// The attributes before an item. Any attribute other than a comment, `#[auth(...)]`, `#[openapi(...)]`,
-/// `#[error(...)]` or `#[header(...)]` is refused, which stops the reading; a second of any of them but
-/// `#[header(...)]`, which an item may have several of, is a mistake of the item's, gathered with the others.
+/// `#[server(...)]`, `#[client(...)]`, `#[error(...)]` or `#[header(...)]` is refused, which stops the reading; a second
+/// of any of them but `#[header(...)]`, which an item may have several of, is a mistake of the item's, gathered with
+/// the others.
 fn parse_attrs(input: ParseStream) -> Result<Attrs> {
     let attrs = input.call(Attribute::parse_outer)?;
     let mut lines = Vec::with_capacity(attrs.len());
     let mut auth: Option<(Attribute, Result<Auth>)> = None;
     let mut openapi: Option<(Attribute, Result<bool>)> = None;
+    let mut server: Option<(Attribute, Result<()>)> = None;
+    let mut client: Option<(Attribute, Result<()>)> = None;
     let mut error: Option<(Attribute, Result<Type>)> = None;
     let mut headers: Vec<HeaderAttr> = Vec::new();
     let mut header_errors = ErrorList::default();
@@ -739,80 +829,52 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
         }
 
         if attr.path().is_ident("error") {
-            error = Some(match error {
-                None => {
-                    let read = parse_error(&attr);
-
-                    (attr, read)
-                }
-                Some((first, read)) => {
-                    let twice = Error::new_spanned(
-                        &attr,
-                        "an item takes one `#[error(...)]`: remove this one",
-                    );
-                    let error = match read {
-                        Ok(_) => twice,
-                        Err(mut error) => {
-                            error.combine(twice);
-                            error
-                        }
-                    };
-
-                    (first, Err(error))
-                }
-            });
+            once(
+                &mut error,
+                attr,
+                parse_error,
+                "an item takes one `#[error(...)]`: remove this one",
+            );
             continue;
         }
 
         if attr.path().is_ident("openapi") {
-            openapi = Some(match openapi {
-                None => {
-                    let read = parse_openapi(&attr);
+            once(
+                &mut openapi,
+                attr,
+                parse_openapi,
+                "an api takes one `#[openapi(...)]`: remove this one",
+            );
+            continue;
+        }
 
-                    (attr, read)
-                }
-                Some((first, read)) => {
-                    let twice = Error::new_spanned(
-                        &attr,
-                        "an api takes one `#[openapi(...)]`: remove this one",
-                    );
-                    let error = match read {
-                        Ok(_) => twice,
-                        Err(mut error) => {
-                            error.combine(twice);
-                            error
-                        }
-                    };
+        if attr.path().is_ident("server") {
+            once(
+                &mut server,
+                attr,
+                parse_server,
+                "an api takes one `#[server(...)]`: remove this one",
+            );
+            continue;
+        }
 
-                    (first, Err(error))
-                }
-            });
+        if attr.path().is_ident("client") {
+            once(
+                &mut client,
+                attr,
+                parse_client,
+                "an api takes one `#[client(...)]`: remove this one",
+            );
             continue;
         }
 
         if attr.path().is_ident("auth") {
-            auth = Some(match auth {
-                None => {
-                    let read = parse_auth(&attr);
-
-                    (attr, read)
-                }
-                Some((first, read)) => {
-                    let twice = Error::new_spanned(
-                        &attr,
-                        "an item takes one `#[auth(...)]`: remove this one",
-                    );
-                    let error = match read {
-                        Ok(_) => twice,
-                        Err(mut error) => {
-                            error.combine(twice);
-                            error
-                        }
-                    };
-
-                    (first, Err(error))
-                }
-            });
+            once(
+                &mut auth,
+                attr,
+                parse_auth,
+                "an item takes one `#[auth(...)]`: remove this one",
+            );
             continue;
         }
 
@@ -829,7 +891,7 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
         let Some(line) = line else {
             return Err(Error::new_spanned(
                 attr,
-                "an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, `#[error(...)]` and `#[header(...)]` on the api, a group or a route, `#[body(...)]` on a route, and `#[openapi(none)]` on the api",
+                "an attribute is not supported here: only `///` comments are kept, `#[auth(...)]` on a group or a route, `#[error(...)]` and `#[header(...)]` on the api, a group or a route, `#[body(...)]` on a route, and `#[openapi(none)]`, `#[server(none)]` and `#[client(none)]` on the api",
             ));
         };
 
@@ -845,10 +907,41 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
         docs: Docs(lines),
         auth,
         openapi,
+        server,
+        client,
         error,
         headers,
         body,
     })
+}
+
+/// Reads `attr` into `slot` with `read`, or, when the item already has one, keeps the first and adds `twice` to its
+/// mistakes, after the second's own.
+fn once<T>(
+    slot: &mut Option<(Attribute, Result<T>)>,
+    attr: Attribute,
+    read: impl FnOnce(&Attribute) -> Result<T>,
+    twice: &str,
+) {
+    *slot = Some(match slot.take() {
+        None => {
+            let read = read(&attr);
+
+            (attr, read)
+        }
+        Some((first, read)) => {
+            let twice = Error::new_spanned(&attr, twice);
+            let error = match read {
+                Ok(_) => twice,
+                Err(mut error) => {
+                    error.combine(twice);
+                    error
+                }
+            };
+
+            (first, Err(error))
+        }
+    });
 }
 
 /// What a `#[body(...)]` says: a field the route fixes in its body, `#[body("stream" = true)]`, its value a bool, a
@@ -1030,29 +1123,50 @@ fn parse_error(attr: &Attribute) -> Result<Type> {
 
 /// What an `#[openapi(...)]` says: `none`, which leaves out the api's document. Whether the api has one.
 fn parse_openapi(attr: &Attribute) -> Result<bool> {
-    const WRITE: &str = "write `#[openapi(none)]`, which leaves out the OpenAPI document of a contract that is only called, whose types need no schema";
+    const WRITE: &str = "write `#[openapi(none)]`, which leaves out the OpenAPI document of a served api, or `#[server(none)]` on a contract that is only called, which has no document either";
 
+    parse_none(attr, "openapi", "says what the api's document is", WRITE)?;
+
+    Ok(false)
+}
+
+/// What a `#[server(...)]` says: `none`, which leaves out the contract's server side, and its document.
+fn parse_server(attr: &Attribute) -> Result<()> {
+    const WRITE: &str = "write `#[server(none)]`, which leaves out the server side and the OpenAPI document of a contract that is only called";
+
+    parse_none(attr, "server", "takes `none`", WRITE)
+}
+
+/// What a `#[client(...)]` says: `none`, which leaves out the contract's client side.
+fn parse_client(attr: &Attribute) -> Result<()> {
+    const WRITE: &str = "write `#[client(none)]`, which leaves out the client side of a contract that is only served";
+
+    parse_none(attr, "client", "takes `none`", WRITE)
+}
+
+/// Checks that `attr`, `#[name(...)]`, says `none`, the one word it takes.
+fn parse_none(attr: &Attribute, name: &str, says: &str, write: &str) -> Result<()> {
     let Meta::List(list) = &attr.meta else {
         return Err(Error::new_spanned(
             attr,
-            format!("`#[openapi]` says what the api's document is: {WRITE}"),
+            format!("`#[{name}]` {says}: {write}"),
         ));
     };
     let word: Ident = syn::parse2(list.tokens.clone()).map_err(|_| {
         Error::new_spanned(
             &list.tokens,
-            format!("`#[openapi(...)]` takes `none`: {WRITE}"),
+            format!("`#[{name}(...)]` takes `none`: {write}"),
         )
     })?;
 
     if word != "none" {
         return Err(Error::new_spanned(
             word,
-            format!("`#[openapi(...)]` takes `none`: {WRITE}"),
+            format!("`#[{name}(...)]` takes `none`: {write}"),
         ));
     }
 
-    Ok(false)
+    Ok(())
 }
 
 /// How an `#[auth(...)]` is written, which its errors say.
@@ -2108,11 +2222,7 @@ mod tests {
         api.groups
             .iter()
             .map(|group| {
-                let cx = crate::descriptor::Cx {
-                    group,
-                    api: block.then_some(api),
-                    openapi: true,
-                };
+                let cx = crate::descriptor::Cx::new(group, api, !block);
 
                 group
                     .routes
@@ -2450,6 +2560,180 @@ mod tests {
         );
         assert!(
             elsewhere[3].contains("no argument named `x`"),
+            "{elsewhere:?}"
+        );
+    }
+
+    #[test]
+    fn server_none_and_client_none_leave_out_a_side() {
+        let called = parse(quote! {
+            #[server(none)]
+            pub api Api = "";
+        })
+        .unwrap();
+        let served = parse(quote! {
+            #[client(none)]
+            pub api Api = "";
+        })
+        .unwrap();
+        let served_alone = parse(quote! {
+            #[client(none)]
+            #[openapi(none)]
+            pub api Api = "";
+        })
+        .unwrap();
+        let both = parse(quote! { pub api Api = ""; }).unwrap();
+
+        // The document describes what is served: `#[server(none)]` leaves it out too.
+        assert_eq!(
+            (called.server, called.client, called.openapi),
+            (false, true, false)
+        );
+        assert_eq!(
+            (served.server, served.client, served.openapi),
+            (true, false, true)
+        );
+        assert_eq!(
+            (
+                served_alone.server,
+                served_alone.client,
+                served_alone.openapi
+            ),
+            (true, false, false)
+        );
+        assert_eq!((both.server, both.client, both.openapi), (true, true, true));
+    }
+
+    #[test]
+    fn the_group_of_a_group_macro_says_its_own_sides() {
+        let GroupContract(alone) = syn::parse2(quote! {
+            #[server(none)]
+            pub group Notes {
+                GET "/notes/{id}" => get(id: i64) -> String;
+            }
+        })
+        .unwrap();
+
+        assert_eq!(
+            (alone.server, alone.client, alone.openapi),
+            (false, true, false)
+        );
+
+        let refused = syn::parse2::<GroupContract>(quote! {
+            #[client(none)]
+            #[server(none)]
+            pub group Notes {
+                GET "/notes/{id}" => get(id: i64) -> String;
+            }
+        })
+        .expect_err("a group with no side");
+
+        assert!(
+            refused.to_string().contains("at least one side"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_side_takes_none_on_the_api_once() {
+        for (attr, write) in [
+            (quote! { #[server] }, "write `#[server(none)]`"),
+            (quote! { #[server(all)] }, "write `#[server(none)]`"),
+            (quote! { #[server(none, none)] }, "write `#[server(none)]`"),
+            (quote! { #[client = "none"] }, "write `#[client(none)]`"),
+            (quote! { #[client()] }, "write `#[client(none)]`"),
+        ] {
+            let errors = messages(quote! {
+                #attr
+                pub api Api = "/api";
+            });
+
+            assert_eq!(errors.len(), 1, "{attr}: {errors:?}");
+            assert!(errors[0].contains(write), "{errors:?}");
+        }
+
+        let twice = messages(quote! {
+            #[client(none)]
+            #[client(none)]
+            pub api Api = "/api";
+        });
+        assert!(twice[0].contains("one `#[client(...)]`"), "{twice:?}");
+
+        let neither = messages(quote! {
+            #[client(none)]
+            #[server(none)]
+            pub api Api = "/api";
+        });
+        assert_eq!(neither.len(), 1, "{neither:?}");
+        assert!(
+            neither[0].contains("remove `#[client(none)]`, or `#[server(none)]`"),
+            "{neither:?}"
+        );
+
+        // A mistake in one leaves its side in: no second error for a contract with no side.
+        let mistaken = messages(quote! {
+            #[client(none)]
+            #[server(all)]
+            pub api Api = "/api";
+        });
+        assert_eq!(mistaken.len(), 1, "{mistaken:?}");
+    }
+
+    #[test]
+    fn server_none_refuses_an_openapi_beside_it() {
+        for attr in [quote! { #[openapi(none)] }, quote! { #[openapi(all)] }] {
+            let errors = messages(quote! {
+                #[server(none)]
+                #attr
+                pub api Api = "/api";
+            });
+
+            // One message, whatever the `#[openapi(...)]` says: the document is left out already.
+            assert_eq!(errors.len(), 1, "{attr}: {errors:?}");
+            assert!(errors[0].contains("remove `#[openapi(...)]`"), "{errors:?}");
+        }
+
+        parse(quote! {
+            #[client(none)]
+            #[openapi(none)]
+            pub api Api = "/api";
+        })
+        .expect("a served api with no document");
+    }
+
+    #[test]
+    fn a_side_goes_on_the_api_alone() {
+        let elsewhere = messages(quote! {
+            pub api Api = "/api";
+            #[server(none)]
+            pub scheme Key = header "X-Api-Key";
+            #[client(none)]
+            pub group G {
+                #[server(none)]
+                #[client(none)]
+                GET "/a/{x}" => a();
+            }
+        });
+
+        assert_eq!(elsewhere.len(), 5, "{elsewhere:?}");
+        assert!(
+            elsewhere[0].contains("a scheme takes no `#[server(...)]`"),
+            "{elsewhere:?}"
+        );
+        assert!(
+            elsewhere[1].contains("a group takes no `#[client(...)]`"),
+            "{elsewhere:?}"
+        );
+        assert!(
+            elsewhere[2].contains("a route takes no `#[server(...)]`"),
+            "{elsewhere:?}"
+        );
+        assert!(
+            elsewhere[3].contains("a route takes no `#[client(...)]`"),
+            "{elsewhere:?}"
+        );
+        assert!(
+            elsewhere[4].contains("no argument named `x`"),
             "{elsewhere:?}"
         );
     }

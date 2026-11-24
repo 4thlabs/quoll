@@ -251,7 +251,7 @@ impl fmt::Display for DockerError {
 }
 
 quoll::api! {
-    #[openapi(none)]
+    #[server(none)]
     #[error(DockerError)]
     pub api Docker = "/v1.47";
 
@@ -324,7 +324,7 @@ impl fmt::Display for OAuthError {
 }
 
 quoll::api! {
-    #[openapi(none)]
+    #[server(none)]
     #[error(GitHubError)]
     pub api GitHub = "";
 
@@ -374,7 +374,7 @@ impl fmt::Display for DockerError {
 }
 
 quoll::api! {
-    #[openapi(none)]
+    #[server(none)]
     #[error(DockerError)]
     pub api Docker = "/v1.47";
 

@@ -64,7 +64,7 @@ use crate::{Problem, Response, Result};
 /// }
 ///
 /// quoll::api! {
-///     #[openapi(none)]
+///     #[server(none)]
 ///     #[error(GitHubError)]
 ///     pub api GitHub = "";
 ///

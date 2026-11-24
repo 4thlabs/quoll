@@ -14,19 +14,19 @@ use quoll::{Bytes, client};
 use serde::{Deserialize, Serialize};
 
 /// A repository, with the fields the application reads.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Repository {
     pub full_name: String,
     pub stargazers_count: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Issue {
     pub number: u64,
     pub title: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
     Open,
@@ -52,7 +52,7 @@ pub const VERSION: &str = "2022-11-28";
 
 quoll::api! {
     /// GitHub's REST API, at `https://api.github.com`.
-    #[openapi(none)]
+    #[server(none)]
     #[header("Accept" = "application/vnd.github+json")]
     #[header("X-GitHub-Api-Version" = VERSION)]
     #[error(GitHubError)]
@@ -107,10 +107,9 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-- `#[openapi(none)]`: the contract has no OpenAPI document, and its types need only serde, not `JsonSchema`. A crate
-  with only the feature `client` needs `Deserialize` on what it reads and `Serialize` on what it sends. The guides also
-  turn on `server`, so their types derive both. A type holds the fields that the application reads: serde skips the
-  others.
+- `#[server(none)]`: the contract has no server side and no OpenAPI document, whatever the features of `quoll`. So its
+  types need only what the client reads and writes: `Deserialize` on what it reads, `Serialize` on what it sends, and
+  no `JsonSchema`. A type holds the fields that the application reads: serde skips the others.
 - The prefix is `""`, and the client's URL is the base of the API: `https://api.github.com`, or
   `https://github.example.com/api/v3` for a GitHub Enterprise server. The client keeps that path before the path of
   each route.
@@ -136,7 +135,7 @@ pub struct Places {
 }
 
 quoll::api! {
-    #[openapi(none)]
+    #[server(none)]
     pub api Geocoding = "/v1";
 
     pub group Places {
@@ -273,7 +272,7 @@ pub struct Identity {
 
 quoll::api! {
     /// Slack's Web API, at `https://slack.com`.
-    #[openapi(none)]
+    #[server(none)]
     #[error(SlackError)]
     pub api SlackApi = "/api";
 
@@ -336,7 +335,7 @@ impl fmt::Display for GitHubError {
 }
 
 quoll::api! {
-    #[openapi(none)]
+    #[server(none)]
     #[header("Accept" = "application/vnd.github+json")]
     #[error(GitHubError)]
     pub api GitHub = "";
@@ -402,7 +401,7 @@ pub struct Customer {
 
 quoll::api! {
     /// Stripe's API, at `https://api.stripe.com`.
-    #[openapi(none)]
+    #[server(none)]
     pub api Stripe = "/v1";
 
     #[auth(Bearer)]
@@ -560,7 +559,7 @@ impl fmt::Display for AnthropicError {
 
 quoll::api! {
     /// Anthropic's API, at `https://api.anthropic.com`.
-    #[openapi(none)]
+    #[server(none)]
     #[header("anthropic-version" = VERSION)]
     #[error(AnthropicError)]
     pub api Anthropic = "/v1";
@@ -623,8 +622,8 @@ async fn main() -> anyhow::Result<()> {
 
 - `create` sends `"stream": false` and `stream` sends `"stream": true`: the caller never sets it, and
   `MessageRequest` has no field for it. If the body had a field of that name, the contract's value would replace it.
-- Two routes of one method and path compile only in an api `#[openapi(none)]`, which a contract of another API
-  usually is: the document does not describe them yet.
+- Two routes of one method and path compile only in an api with no document, which a contract of another API usually
+  is, with `#[server(none)]`: the document does not describe them yet.
 - Anthropic's `event: error`, a failure once the stream has begun, is an item like any other. The enum names it
   `Error`, and the loop turns it into an error. `Other` is for the events that the client skips: `ping`, and the
   events that the API adds later, so that a new event breaks no client. It is never for an error.
@@ -680,7 +679,7 @@ impl fmt::Display for OpenMeteoError {
 quoll::api! {
     /// Open-Meteo's API, its geocoding at `https://geocoding-api.open-meteo.com` and its forecast at
     /// `https://api.open-meteo.com`.
-    #[openapi(none)]
+    #[server(none)]
     #[error(OpenMeteoError)]
     pub api OpenMeteo = "/v1";
 
@@ -755,7 +754,7 @@ impl fmt::Display for GitHubError {
 }
 
 quoll::api! {
-    #[openapi(none)]
+    #[server(none)]
     #[header("Accept" = "application/vnd.github+json")]
     #[error(GitHubError)]
     pub api GitHub = "";

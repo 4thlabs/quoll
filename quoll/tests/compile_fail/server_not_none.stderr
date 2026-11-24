@@ -1,0 +1,5 @@
+error: `#[server(...)]` takes `none`: write `#[server(none)]`, which leaves out the server side and the OpenAPI document of a contract that is only called
+ --> tests/compile_fail/server_not_none.rs:2:14
+  |
+2 |     #[server(all)]
+  |              ^^^

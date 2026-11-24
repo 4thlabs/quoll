@@ -1,0 +1,5 @@
+error: an api takes one `#[server(...)]`: remove this one
+ --> tests/compile_fail/server_twice.rs:3:5
+  |
+3 |     #[server(none)]
+  |     ^^^^^^^^^^^^^^^

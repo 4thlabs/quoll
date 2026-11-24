@@ -44,9 +44,15 @@ pub(crate) struct Api {
     pub(crate) listed: Vec<syn::Path>,
     /// The groups the block writes, in the order they are written.
     pub(crate) groups: Vec<Group>,
-    /// Whether the api has an OpenAPI document, `Api::openapi`: not with `#[openapi(none)]`, for a contract of a
-    /// third-party API that is only called, whose types need no schema.
+    /// Whether the api has an OpenAPI document, `Api::openapi`: not with `#[openapi(none)]`, for a served api with no
+    /// document, nor with `#[server(none)]`, as the document describes what is served.
     pub(crate) openapi: bool,
+    /// Whether the contract has a server side, written when `quoll` has the feature `server`: not with
+    /// `#[server(none)]`, for a third-party API that is only called.
+    pub(crate) server: bool,
+    /// Whether the contract has a client side, written when `quoll` has the feature `client`: not with
+    /// `#[client(none)]`, for an API that is only served.
+    pub(crate) client: bool,
     /// The shape of the errors of its routes, its `#[error(E)]`, which the groups of its block take unless they or
     /// their routes name their own; `None` for an RFC 9457 problem.
     pub(crate) error: Option<Type>,
@@ -1078,6 +1084,8 @@ impl Api {
             listed,
             groups,
             openapi: true,
+            server: true,
+            client: true,
             error: None,
             headers: Headers::default(),
         };
@@ -1104,6 +1112,8 @@ impl Api {
             listed: Vec::new(),
             groups: vec![group],
             openapi: true,
+            server: true,
+            client: true,
             error: None,
             headers: Headers::default(),
         };

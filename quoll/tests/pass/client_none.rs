@@ -1,0 +1,42 @@
+//! A contract only served, a webhook receiver, built with any features of quoll: no client side, and each import the
+//! contract names used.
+
+#![deny(unused_imports)]
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+// The types need what the server and the document read and write alone: a body `Deserialize`, a result `Serialize`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct Event {
+    pub kind: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Receipt {
+    pub seen: String,
+}
+
+mod pings {
+    quoll::group! {
+        /// A group only served, which the api lists.
+        #[client(none)]
+        pub group Pings {
+            GET "/ping" => ping() -> String;
+        }
+    }
+}
+
+quoll::api! {
+    /// Receives the events of another service.
+    #[client(none)]
+    pub api Hooks = "/hooks" { pings::Pings };
+
+    pub group Events {
+        POST "/events" => receive(event: Event) -> Receipt;
+    }
+}
+
+fn main() {
+    let _ = Hooks::openapi();
+}

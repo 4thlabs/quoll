@@ -1,0 +1,5 @@
+error: `#[server(none)]` leaves out the OpenAPI document too, which describes what is served: remove `#[openapi(...)]`
+ --> tests/compile_fail/server_none_with_openapi.rs:3:5
+  |
+3 |     #[openapi(none)]
+  |     ^^^^^^^^^^^^^^^^

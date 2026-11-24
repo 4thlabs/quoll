@@ -9,7 +9,7 @@ help: the trait `schemars::JsonSchema` is not implemented for `Note`
    |
  5 | pub struct Note {
    | ^^^^^^^^^^^^^^^
-   = note: derive `schemars::JsonSchema` for `Note`, or write `#[openapi(none)]` on the api, or on the group of a `quoll::group!`, of a contract that is only called, which has no document
+   = note: derive `schemars::JsonSchema` for `Note`, or write `#[server(none)]` on the api, or on the group of a `quoll::group!`, of a contract that is only called, which has no document, or `#[openapi(none)]` on one that is served with no document
    = help: the following other types implement trait `schemars::JsonSchema`:
              &'a T
              &'a mut T

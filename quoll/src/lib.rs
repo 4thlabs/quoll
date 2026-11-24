@@ -5,8 +5,8 @@
 //! `Api::openapi()` gives the document, which any OpenAPI generator reads to write a frontend's client. A mistake on either side, a
 //! route without its handler, a call with the wrong arguments, does not compile.
 //!
-//! An API that is only called, a third-party one, is a contract too: its api says `#[openapi(none)]`, and it is a
-//! typed client alone, whose types need serde and no schema: see [OpenAPI](#openapi).
+//! An API that is only called, a third-party one, is a contract too: its api says `#[server(none)]`, and it is a
+//! typed client alone, whose types need serde and no schema: see [One side](#one-side).
 //!
 //! From [Routes](#routes) on, this page is a map of what a contract holds, a form at a time. The syntax as a whole,
 //! and the items the macro generates, are in the doc of [`api!`]; a contract split across modules is in [`group!`].
@@ -294,7 +294,7 @@
 //! pub const VERSION: &str = "2023-06-01";
 //!
 //! quoll::api! {
-//!     #[openapi(none)]
+//!     #[server(none)]
 //!     #[header("anthropic-version" = VERSION)]
 //!     #[header("anthropic-beta" = "files-api-2025-04-14")]
 //!     pub api Anthropic = "/v1";
@@ -315,8 +315,8 @@
 //! each field at the top of the body, its JSON or a [`Form`], which serializes as a struct or a map, a field of the
 //! body's own of that name replaced; the server picks the route whose fields the body holds, then reads the handler's
 //! type from the same bytes, which ignores them. Two routes of one method and path compile when a field both fix has
-//! two values of one kind, in an api `#[openapi(none)]`; the OpenAPI document describes the fields of a route alone on
-//! its path as `const` properties of its body.
+//! two values of one kind, in an api with no document, `#[server(none)]` or `#[openapi(none)]`; the OpenAPI document
+//! describes the fields of a route alone on its path as `const` properties of its body.
 //!
 //! ```
 //! use std::collections::BTreeMap;
@@ -324,7 +324,7 @@
 //! use quoll::Events;
 //!
 //! quoll::api! {
-//!     #[openapi(none)]
+//!     #[server(none)]
 //!     pub api Anthropic = "/v1";
 //!
 //!     pub group Messages {
@@ -537,9 +537,10 @@
 //! Whatever the features, `Api::openapi()` gives the contract's OpenAPI 3.1 document, which [`openapi`] describes. So
 //! each type a contract names, as a parameter, a body or a result, implements `schemars::JsonSchema`.
 //!
-//! A contract of a third-party API that is only called says `#[openapi(none)]` on its api. It has no document, and
-//! its types, which may come from crates that do not implement `JsonSchema`, need serde alone. A [`group!`] of such
-//! a contract says it on its group.
+//! A contract of a third-party API that is only called says `#[server(none)]` on its api, as [One side](#one-side)
+//! says: the document describes what is served, so it has none, and its types, which may come from crates that do not
+//! implement `JsonSchema`, need serde alone. An api that is served with no document says `#[openapi(none)]`. A
+//! [`group!`] says either on its group.
 //!
 //! ```
 //! use serde::{Deserialize, Serialize};
@@ -552,11 +553,40 @@
 //!
 //! quoll::api! {
 //!     /// GitHub's API, which the application only calls.
-//!     #[openapi(none)]
+//!     #[server(none)]
 //!     pub api GitHub = "";
 //!
 //!     pub group Repos {
 //!         GET "/repos/{owner}/{repo}" => get(owner: &str, repo: &str) -> Repo;
+//!     }
+//! }
+//! ```
+//!
+//! # One side
+//!
+//! The server side of a contract is written when `quoll` has the feature `server`, its client side when it has
+//! `client`, and cargo builds `quoll` once per binary, with the features of all its dependents. `#[server(none)]` on
+//! the api leaves out the server side whatever the features, and the OpenAPI document with it, for an API that is only
+//! called. `#[client(none)]` leaves out the client side, for one that is only served, such as a webhook receiver. A
+//! contract has at least one side, and its types need only what that side reads and writes. A [`group!`] says it on
+//! its group, and an api lists only groups that have each side it has.
+//!
+//! ```
+//! use serde::Deserialize;
+//!
+//! /// An event another service sends, which the server only reads.
+//! #[derive(Deserialize, schemars::JsonSchema)]
+//! pub struct Event {
+//!     pub kind: String,
+//! }
+//!
+//! quoll::api! {
+//!     /// The webhooks of another service, which the application only serves.
+//!     #[client(none)]
+//!     pub api Hooks = "/hooks";
+//!
+//!     pub group Events {
+//!         POST "/events" => receive(event: Event);
 //!     }
 //! }
 //! ```
@@ -602,7 +632,7 @@
 //! }
 //!
 //! quoll::api! {
-//!     #[openapi(none)]
+//!     #[server(none)]
 //!     #[error(GitHubError)]
 //!     pub api GitHub = "";
 //!

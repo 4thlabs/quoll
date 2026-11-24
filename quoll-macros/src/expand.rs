@@ -18,19 +18,16 @@ use crate::{client, headers, openapi, scheme, server};
 pub(crate) fn api(api: &Api) -> TokenStream {
     let api_type = api_type(api);
     let schemes = scheme::expand(api);
-    let groups = api.groups.iter().map(|written| {
-        group(&Cx {
-            group: written,
-            api: Some(api),
-            openapi: api.openapi,
-        })
-    });
+    let groups = api
+        .groups
+        .iter()
+        .map(|written| group(&Cx::new(written, api, false)));
     let checks = descriptor::api_checks(api);
     let error = api.error.as_ref().map(named);
     let fixed = headers::api_checks(&api.headers);
     let openapi = openapi::expand(api);
-    let server = server::expand(api);
-    let client = client::expand(api);
+    let server = api.server.then(|| server::expand(api));
+    let client = api.client.then(|| client::expand(api));
 
     quote! {
         #api_type
@@ -47,15 +44,11 @@ pub(crate) fn api(api: &Api) -> TokenStream {
 
 /// What a group of `quoll::group!` becomes, alone in its block: the items of [`group`], with no api above it.
 pub(crate) fn alone_group(alone: &Api) -> TokenStream {
-    group(&Cx {
-        group: &alone.groups[0],
-        api: None,
-        openapi: alone.openapi,
-    })
+    group(&Cx::new(&alone.groups[0], alone, true))
 }
 
 /// What a group becomes: its descriptor, the check of the types it names and of the challenges of its schemes, its
-/// OpenAPI document, its server's code and its client's.
+/// OpenAPI document, its server's code and its client's, each side when the group has it.
 fn group(cx: &Cx) -> TokenStream {
     let descriptor = descriptor::expand(cx);
     let known = known_types(cx);
@@ -75,15 +68,18 @@ fn group(cx: &Cx) -> TokenStream {
     } else {
         TokenStream::new()
     };
-    let challenges = scheme::challenge_checks(cx.group);
+    // Only the server answers a scheme's challenge, on a 401.
+    let challenges = cx.server.then(|| scheme::challenge_checks(cx.group));
     let fixed = headers::group_checks(cx);
     let openapi = openapi::group(cx);
-    let server = server::group(cx);
-    let client = client::group(cx);
+    let named_types = named_types(cx);
+    let server = cx.server.then(|| server::group(cx));
+    let client = cx.client.then(|| client::group(cx));
 
     quote! {
         #descriptor
         #known
+        #named_types
         #(#errors)*
         #alone
         #challenges
@@ -124,6 +120,45 @@ fn known_types(cx: &Cx) -> TokenStream {
     quote! {
         const _: () = {
             #(#checks)*
+        };
+    }
+}
+
+/// Names each type of the group's arguments and results, as the contract writes them, in a function nothing calls,
+/// when the group has no document, which names them otherwise: a contract crate built with neither feature of `quoll`,
+/// or with the feature of a side it does not have, still uses the import of each type it names. A parameter of a
+/// function takes any type an argument does, `&impl Trait` and `&dyn Trait` among them, with no bound on it.
+fn named_types(cx: &Cx) -> TokenStream {
+    if cx.openapi {
+        return TokenStream::new();
+    }
+
+    let types: Vec<&syn::Type> = cx
+        .group
+        .routes
+        .iter()
+        .flat_map(|route| {
+            let params = route.params.iter().map(|param| &param.written);
+            let result = route.reply.as_deref().map(|returned| &returned.served);
+
+            params.chain(result)
+        })
+        .collect();
+    if types.is_empty() {
+        return TokenStream::new();
+    }
+
+    let names = types.iter().enumerate().map(|(index, ty)| {
+        let name = Ident::new(&format!("__quoll_names_{index}"), Span::mixed_site());
+
+        quote_spanned! {ty.span()=> fn #name(_: #ty) {} }
+    });
+
+    // Never called: by value, as the type is written, with nothing a lint would read in it.
+    quote! {
+        #[allow(dead_code, clippy::needless_pass_by_value)]
+        const _: () = {
+            #(#names)*
         };
     }
 }
@@ -236,6 +271,135 @@ mod tests {
             let at = tokens.find(item).expect("the item is written");
             assert!(at > gate, "{item} is written outside the gate: {tokens}");
         }
+    }
+
+    #[test]
+    fn server_none_writes_no_server_side_and_no_document() {
+        let tokens = expansion(quote! {
+            #[server(none)]
+            pub api Api = "/api";
+
+            pub scheme Key = header "X-Api-Key";
+
+            #[auth(Key)]
+            pub group Notes {
+                GET "/notes/{id}" => get(id: i64) -> String;
+            }
+        });
+
+        for item in [
+            ":: quoll :: __private :: server !",
+            "trait NotesServer",
+            "fn router",
+            "fn openapi () -> :: quoll :: openapi :: Document",
+            "GroupDocument",
+            "CHALLENGE",
+            "Served for",
+        ] {
+            assert!(!tokens.contains(item), "{item} is written: {tokens}");
+        }
+        assert!(
+            tokens.contains(":: quoll :: __private :: client !"),
+            "{tokens}"
+        );
+        assert!(tokens.contains("Called for __QuollGroupNotes"), "{tokens}");
+    }
+
+    #[test]
+    fn client_none_writes_no_client_side() {
+        let tokens = expansion(quote! {
+            #[client(none)]
+            pub api Api = "/api";
+
+            pub group Notes {
+                GET "/notes/{id}" => get(id: i64) -> String;
+            }
+        });
+
+        for item in [
+            ":: quoll :: __private :: client !",
+            "trait Notes :",
+            "struct NotesClient",
+            "fn client (",
+            "Called for",
+        ] {
+            assert!(!tokens.contains(item), "{item} is written: {tokens}");
+        }
+        assert!(
+            tokens.contains(":: quoll :: __private :: server !"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("fn openapi () -> :: quoll :: openapi :: Document"),
+            "{tokens}"
+        );
+        assert!(tokens.contains("Served for __QuollGroupNotes"), "{tokens}");
+    }
+
+    #[test]
+    fn an_api_checks_only_the_sides_it_has_of_the_groups_it_lists() {
+        let called = expansion(quote! {
+            #[server(none)]
+            pub api Api = "/api" { notes::Notes };
+        });
+        let served = expansion(quote! {
+            #[client(none)]
+            #[openapi(none)]
+            pub api Api = "/api" { notes::Notes };
+        });
+        let documented = expansion(quote! {
+            pub api Api = "/api" { notes::Notes };
+        });
+
+        assert!(!called.contains("is_served"), "{called}");
+        assert!(
+            called.contains("is_called :: < notes :: __QuollGroupNotes >"),
+            "{called}"
+        );
+        assert!(
+            served.contains("is_served :: < notes :: __QuollGroupNotes >"),
+            "{served}"
+        );
+        assert!(!served.contains("is_called"), "{served}");
+        // The document's check covers the server side: a group has a document only when it is served.
+        assert!(!documented.contains("is_served"), "{documented}");
+        assert!(documented.contains("GroupDocument"), "{documented}");
+        assert!(documented.contains("is_called"), "{documented}");
+    }
+
+    #[test]
+    fn a_group_with_no_document_names_its_types_whatever_the_features() {
+        let tokens = expansion(quote! {
+            #[server(none)]
+            pub api Api = "/api";
+
+            pub group Notes {
+                GET "/notes/{id}?at={at}" => get(id: &str, at: IpAddr) -> BTreeMap<String, Note>;
+            }
+        });
+        let documented = expansion(quote! {
+            pub api Api = "/api";
+
+            pub group Notes {
+                GET "/notes/{id}" => get(id: i64) -> Note;
+            }
+        });
+
+        let names = tokens
+            .find("fn __quoll_names_0")
+            .expect("the types are named");
+        let gate = tokens
+            .find(":: quoll :: __private :: client !")
+            .expect("the client is written");
+        assert!(names < gate, "{tokens}");
+        for ty in [
+            "(_ : & str)",
+            "(_ : IpAddr)",
+            "(_ : BTreeMap < String , Note >)",
+        ] {
+            assert!(tokens.contains(ty), "{ty} is not named: {tokens}");
+        }
+        assert!(!documented.contains("__quoll_names"), "{documented}");
     }
 
     #[test]

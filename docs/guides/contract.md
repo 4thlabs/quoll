@@ -272,7 +272,7 @@ pub struct Repository {
 pub const VERSION: &str = "2022-11-28";
 
 quoll::api! {
-    #[openapi(none)]
+    #[server(none)]
     #[header("Accept" = "application/vnd.github+json")]
     #[header("X-GitHub-Api-Version" = VERSION)]
     pub api GitHub = "";
@@ -343,7 +343,7 @@ pub struct StreamEvent {
 }
 
 quoll::api! {
-    #[openapi(none)]
+    #[server(none)]
     pub api Anthropic = "/v1";
 
     pub group Messages {
@@ -369,8 +369,8 @@ quoll::api! {
   to pick one, and then authenticate. So a body that matches no route, or that does not read, gets a 400 that names
   neither a route nor a field.
 - The OpenAPI document describes a route's fields as `const` properties of its body. It does not describe two routes of
-  one method and path yet. They compile only in an api `#[openapi(none)]`, which a contract of another API usually
-  is.
+  one method and path yet. They compile only in an api with no document, which a contract of another API usually
+  is, with `#[server(none)]`.
 
 ## Results
 
@@ -595,6 +595,67 @@ fn main() {
 
 Two routes of one method and path compile when their [fixed fields](#fixed-fields-of-the-body) tell them apart, in an
 api with no document, whatever groups they are in.
+
+## One side
+
+A contract has a server side and a client side, each written when `quoll` has its feature, `server` or `client`.
+Cargo builds `quoll` once per binary, with every feature its dependents ask for. So in an application that serves its
+own api and calls another, every contract gets both sides. `#[server(none)]` or `#[client(none)]` on the api says
+which side a contract does not have, whatever the features:
+
+```rust
+mod github {
+    use serde::Deserialize;
+
+    /// A repository, which the client only reads.
+    #[derive(Debug, Deserialize)]
+    pub struct Repository {
+        pub full_name: String,
+    }
+
+    quoll::api! {
+        /// GitHub's REST API, which the application only calls.
+        #[server(none)]
+        pub api GitHub = "";
+
+        pub group Repos {
+            GET "/repos/{owner}/{repo}" => get(owner: &str, repo: &str) -> Repository;
+        }
+    }
+}
+
+mod hooks {
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// An event another service sends, which the server only reads.
+    #[derive(Debug, Deserialize, JsonSchema)]
+    pub struct Event {
+        pub kind: String,
+    }
+
+    quoll::api! {
+        /// The webhooks of another service, which the application only serves.
+        #[client(none)]
+        pub api Hooks = "/hooks";
+
+        pub group Events {
+            POST "/events" => receive(event: Event);
+        }
+    }
+}
+```
+
+- `#[server(none)]` is for an API that is only called, such as a third-party one. The contract has no server trait, no
+  `ApiServices` and no `Api::router`. It has no OpenAPI document either, since the document describes what is served.
+  Its types need only what the client reads and writes: `Deserialize` on what it reads, `Serialize` on what it sends.
+- `#[client(none)]` is for an API that is only served, such as a webhook receiver. The contract has no client trait, no
+  client and no `Api::client`. It keeps its OpenAPI document, unless it also says `#[openapi(none)]`.
+- A contract with neither has both sides. The groups of the api's block have the api's sides.
+- A `quoll::group!` says it on its group. An api lists only groups that have each side the api has. A group may have a
+  side that the api does not: that api leaves it out, and another api that lists the group may use it.
+- These do not compile: both on one contract, which would have no side, and an `#[openapi(...)]` beside
+  `#[server(none)]`, which already leaves out the document.
 
 ## Mistakes
 
