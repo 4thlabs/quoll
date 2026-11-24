@@ -470,7 +470,8 @@ How a stream behaves:
   the answer short, and the client reads an error.
 - A server told to stop ends its `Events` streams cleanly: [Shutdown](server.md#shutdown) says what becomes of each
   stream.
-- A `ByteStream` goes out in chunked encoding, with no length. See [A length](#a-length) for one that has a length.
+- A `ByteStream` goes out with no `Content-Length` (chunked encoding on HTTP/1). See [A length](#a-length) for one
+  that has a length.
 - `client::timeout` and `client::retry` treat a stream's answer differently:
   [Retries, deadlines and redirects](client.md#retries-deadlines-and-redirects) says how. `server::compression` leaves
   streams out.
@@ -503,7 +504,7 @@ assert_eq!(download.length(), Some(4));
   `Content-Length` of the answer. It is `None` for an answer in chunked encoding, or a compressed one that the client
   decodes.
 - A handler that returns a client's `ByteStream` sends its length, or what is left of it when the handler has read
-  some chunks already.
+  some chunks already. A stream read past its length is answered with a 500, logged.
 - A `HEAD` of the route answers its `Content-Length`, with no body.
 
 ## Groups across modules

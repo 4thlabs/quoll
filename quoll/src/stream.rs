@@ -329,6 +329,8 @@ pub struct ByteStream {
     pub(crate) chunks: Items<Vec<u8>>,
     pub(crate) content_type: Cow<'static, str>,
     pub(crate) length: Option<u64>,
+    /// Whether a chunk read went past the length, which says too few bytes: the server answers it as a lie.
+    pub(crate) read_past: bool,
 }
 
 impl ByteStream {
@@ -342,6 +344,7 @@ impl ByteStream {
             chunks: Items::values(chunks),
             content_type: Cow::Borrowed(OCTET_STREAM),
             length: None,
+            read_past: false,
         }
     }
 
@@ -366,6 +369,7 @@ impl ByteStream {
             chunks: Items::new(results),
             content_type: Cow::Borrowed(OCTET_STREAM),
             length: None,
+            read_past: false,
         }
     }
 
@@ -393,7 +397,8 @@ impl ByteStream {
     /// [`try_new`](Self::try_new) is: the client reads fewer bytes than its `Content-Length` says, and an error. So the
     /// stream ends once it has given its bytes: one that waits after them holds its last chunk back.
     ///
-    /// A length of 0 sends an empty body, whatever the protocol: the stream is dropped unread, as for a `HEAD`.
+    /// A length of 0 sends an empty body, whatever the protocol: the stream is dropped unread, as for a `HEAD`. A
+    /// stream read past its length before it is sent is answered with a 500, logged.
     ///
     /// ```
     /// use futures_util::stream;
@@ -410,6 +415,7 @@ impl ByteStream {
     pub fn with_length(self, length: u64) -> Self {
         Self {
             length: Some(length),
+            read_past: false,
             ..self
         }
     }
@@ -424,7 +430,8 @@ impl ByteStream {
     /// or on the client the `Content-Length` of the answer, less each chunk read since. `None` for chunks of no known
     /// length, an answer in chunked encoding, a compressed one that the client decodes, or a 204 or a 205.
     ///
-    /// So a handler that returns a client's stream, partly read, sends the length of what is left.
+    /// So a handler that returns a client's stream, partly read, sends the length of what is left. A chunk read past
+    /// the length leaves it at 0, and the server answers such a stream with a 500, logged: its length was a lie.
     ///
     /// ```
     /// use futures_util::{StreamExt, stream};
@@ -469,9 +476,12 @@ impl Stream for ByteStream {
         let polled = Pin::new(&mut self.chunks).poll_next(cx);
 
         if let Poll::Ready(Some(Ok(chunk))) = &polled
-            && let Some(length) = &mut self.length
+            && let Some(length) = self.length
         {
-            *length = length.saturating_sub(chunk.len() as u64);
+            let left = length.checked_sub(chunk.len() as u64);
+
+            self.read_past |= left.is_none();
+            self.length = Some(left.unwrap_or(0));
         }
 
         polled

@@ -138,10 +138,11 @@ pub fn json_lines<L: IsJsonLines + Written>(
 ///
 /// # Errors
 ///
-/// The handler's error, or a 500 when the content type is not a media type or a header it gave cannot be sent.
+/// The handler's error, or a 500 when the content type is not a media type, the stream was read past its length, or
+/// a header it gave cannot be sent.
 pub fn byte_stream<B: IsByteStream>(result: Result<crate::Response<B>>) -> Result<Response> {
     let (given, bytes) = parts(result)?;
-    let (chunks, content_type, length) = bytes.into_parts();
+    let (chunks, content_type, length) = bytes.into_parts()?;
     let content_type = media_type_value(content_type).map_err(|content_type| {
         Error::internal(format!(
             "the content type of a `ByteStream`, {content_type:?}, is not a media type"
@@ -183,9 +184,9 @@ pub fn byte_stream<B: IsByteStream>(result: Result<crate::Response<B>>) -> Resul
     with_headers(unbuffered(response), given)
 }
 
-/// What the server sends of `chunks`, which a `ByteStream` says are `length` bytes in all, not 0: each chunk as it comes,
-/// but the one that brings them to `length`, which waits for the stream to end, so that a stream that gives more is
-/// never answered as if it were whole.
+/// What the server sends of `chunks`, which a `ByteStream` says are `length` bytes in all, not 0: each chunk as it
+/// comes, but the one that brings them to `length`, which waits for the stream to end, so that a stream that gives
+/// more is never answered as if it were whole.
 ///
 /// A stream that gives more than `length` bytes, or ends before, is logged, and cuts the answer short before its last
 /// bytes, as an error of its chunks does: the client reads fewer bytes than its `Content-Length` says, which is an
