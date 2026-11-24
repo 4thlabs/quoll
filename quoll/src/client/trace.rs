@@ -6,8 +6,9 @@ use http::Extensions;
 use reqwest::{Request, Response, Url};
 use reqwest_middleware::Middleware;
 use reqwest_tracing::{
-    ERROR_CAUSE_CHAIN, ERROR_MESSAGE, OTEL_STATUS_CODE, ReqwestOtelSpanBackend, TracingMiddleware,
-    default_on_request_success, default_span_name, reqwest_otel_span,
+    ERROR_CAUSE_CHAIN, ERROR_MESSAGE, HTTP_RESPONSE_STATUS_CODE, OTEL_STATUS_CODE,
+    ReqwestOtelSpanBackend, TracingMiddleware, default_on_request_success, default_span_name,
+    reqwest_otel_span,
 };
 use tracing::Span;
 
@@ -23,9 +24,10 @@ use crate::{ErrorKind, Route};
 ///
 /// The span records the status of the answer, or the error of a call that got none, and the
 /// [kind](crate::ErrorKind) of a failure in `error.type`, as OpenTelemetry's conventions name it: the code of an
-/// error status, `404`, or `connect`, `timeout`... It holds no URL with its query,
-/// which may hold a credential: the error's message, which reqwest writes with the URL, shows its origin and its path
-/// alone. Added first, it is one span around the whole call, its attempts and its redirects.
+/// error status, `404`, or `connect`, `timeout`... An answer a middleware turned into an error with
+/// `error_for_status` keeps its status in `http.response.status_code`, and its `error.type` is `middleware`. It holds
+/// no URL with its query, which may hold a credential: the error's message, which reqwest writes with the URL, shows
+/// its origin and its path alone. Added first, it is one span around the whole call, its attempts and its redirects.
 ///
 /// ```no_run
 /// # use quoll::client;
@@ -86,6 +88,13 @@ impl ReqwestOtelSpanBackend for Operation {
                     ERROR_TYPE,
                     crate::__private::client::kind_of(error).as_str(),
                 );
+
+                // An answer a middleware turned into an error keeps its status, as reqwest-tracing records it; its
+                // `error.type` stays the middleware's.
+                if let Some(status) = crate::__private::client::status_of(error) {
+                    span.record(HTTP_RESPONSE_STATUS_CODE, status.as_u16());
+                }
+
                 span.record(ERROR_MESSAGE, message.as_str());
                 span.record(ERROR_CAUSE_CHAIN, chain.as_str());
             }

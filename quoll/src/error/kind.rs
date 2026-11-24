@@ -28,11 +28,12 @@ use http::StatusCode;
 /// assert_eq!(what_to_do(&Error::failed(ErrorKind::Timeout, "slow")), "the other api is slow: try again later");
 /// ```
 ///
-/// A failure of reqwest is sorted by reqwest's own predicates, in this order: `is_builder` is `Invalid`, `is_connect`
-/// `Connect`, `is_timeout` `Timeout`, `is_body` and `is_decode` `Body`, `is_redirect`, `is_upgrade` and an error of a
-/// `status` `Middleware`, and any other, `is_request` among them, `Closed`. A middleware's own error is `Middleware`,
-/// unless it passes on a reqwest error or an error of a chain, which keeps its kind. quoll's own cases are said with
-/// each kind.
+/// A body quoll reads that fails is `Body`, or `Timeout` for a deadline. A failure of reqwest that dispatch or a
+/// middleware returns is sorted by reqwest's own predicates, in this order: `is_builder` is `Invalid`, `is_connect`
+/// `Connect`, `is_timeout` `Timeout`, `is_body` `Body`, `is_decode`, `is_redirect`, `is_upgrade` and an error of a
+/// `status` `Middleware`, and any other, `is_request` among them, `Closed`: a reqwest decode error a middleware passes
+/// on is `Middleware`. A middleware's own error is `Middleware`, unless it passes on a reqwest error or an error of a
+/// chain, which keeps its kind. quoll's own cases are said with each kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ErrorKind {
@@ -69,11 +70,10 @@ pub enum ErrorKind {
     #[cfg_attr(feature = "client", doc = "[`client::retry`]: crate::client::retry")]
     #[cfg_attr(not(feature = "client"), doc = "[`client::retry`]: crate#features")]
     Closed,
-    /// The answer began, and its body could not be read to its end: a connection cut or reset in the middle of it, a
-    /// compression that does not decode. reqwest reports it as `is_body` or `is_decode`, which it gives any failure to
-    /// read a body, a `Location` of a redirect it follows that does not parse among them. Any failure while a body is
-    /// read but a deadline is a `Body`, and so is an item of a stream longer than the 1 MiB the client reads. A stream
-    /// ends after it.
+    /// The answer began, and quoll could not read its body to its end: a connection cut or reset in the middle of it,
+    /// a compression that does not decode. A body quoll reads that fails is a `Body`, but for a deadline, and so is an
+    /// item of a stream longer than the 1 MiB the client reads; a body a middleware reads itself is not. A stream ends
+    /// after it.
     Body,
     /// The answer does not read, which quoll finds itself: it came whole, with a success status, and is not the
     /// route's result, a content type that is not the route's, a text that is not UTF-8, JSON that is not the result.
@@ -82,10 +82,11 @@ pub enum ErrorKind {
     Decode,
     /// A middleware failed the call itself: a credential that cannot be sent, a token that could not be had, a redirect
     /// to a request sent already or past its limit, reqwest's own following of redirects that gave up, what it reports
-    /// as `is_redirect`, an upgrade, `is_upgrade`, an answer a middleware turned into an error with `error_for_status`,
-    /// which has no status, or a middleware of the application's that fails with an error type of its own, whatever
-    /// it holds, a `quoll::Error` of a call of its own or the error of the chain wrapped in it. What caused it stays
-    /// among its sources.
+    /// as `is_redirect`, or as `is_decode` for a `Location` that does not parse, an upgrade, `is_upgrade`, an answer a
+    /// middleware turned into an error with `error_for_status`, which has no status, a body a middleware read itself,
+    /// a `json()` of its own that did not decode, a reqwest decode error a middleware passes on, or a middleware of the
+    /// application's that fails with an error type of its own, whatever it holds, a `quoll::Error` of a call of its
+    /// own or the error of the chain wrapped in it. What caused it stays among its sources.
     ///
     /// A reqwest error, or an error of reqwest-middleware's, that a middleware passes on as it is keeps its kind,
     /// whichever client it came from: the rest of this call's chain, or a client of the middleware's own, which the
