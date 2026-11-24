@@ -12,10 +12,12 @@ quoll is used from git, at a version's tag:
 
 ```toml
 [dependencies]
-quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.0" }
+quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.1" }
 ```
 
 ## [Unreleased]
+
+## [0.9.1] - 2026-11-24
 
 ### Added
 
@@ -72,5 +74,6 @@ keeps a frontend in sync with it. It needs Rust 1.91 or later.
 - **Serving the page**: `server::builder().page(dir)` serves a built page beside the api, on one origin. A page's
   router gets `index.html` for its paths, and the files Vite names by their hash are cached for a year.
 
-[Unreleased]: https://github.com/4thlabs/quoll/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/4thlabs/quoll/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/4thlabs/quoll/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/4thlabs/quoll/releases/tag/v0.9.0
