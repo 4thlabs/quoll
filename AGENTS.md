@@ -23,7 +23,7 @@ The milestones of the spec are done:
 - `cargo quoll gen`, `build` and `dev`;
 - the notes page and the guides.
 
-quoll is used from git, at the tag of a version: `quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.0" }`.
+quoll is used from git, at the tag of a version: `quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.1" }`.
 The versions are in [`CHANGELOG.md`](CHANGELOG.md), with the rule they follow.
 What comes next is in the milestone [Later](https://github.com/4thlabs/quoll/milestone/5), one issue per piece of work.
 The spec is **Validated** by the maintainer. It changes only by their decision, made in the pull request that updates
