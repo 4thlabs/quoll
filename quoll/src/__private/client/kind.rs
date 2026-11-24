@@ -1,21 +1,20 @@
 //! The kind of a failure of reqwest or of a middleware chain, which the client's errors, `retry` and `trace` read.
 
 use std::error::Error as StdError;
-use std::io;
 
+use crate::ErrorKind;
 use crate::client::HeadTimedOut;
-use crate::{Error, ErrorKind};
 
 /// The kind of `error`, a failure of the chain or of a body's read: a reqwest error, a chain's, or a middleware's own,
 /// whose sources are searched for the reqwest error it wraps, as reqwest-retry's `RetryError` keeps it.
 ///
-/// The search stops at a `quoll::Error`, which a middleware fails with when a call of its own failed, as a
-/// `TokenSource` whose server does not answer: that failure is the middleware's, `Middleware`, and not the call's.
+/// The search stops at a `quoll::Error` of any shape, which a middleware fails with when a call of its own failed, as
+/// a `TokenSource` whose server does not answer: that failure is the middleware's, `Middleware`, and not the call's.
 pub(crate) fn kind_of(error: &(dyn StdError + 'static)) -> ErrorKind {
     let mut current = Some(error);
 
     while let Some(error) = current {
-        if error.is::<Error>() {
+        if is_quoll(error) {
             return ErrorKind::Middleware;
         }
 
@@ -39,10 +38,20 @@ pub(crate) fn kind_of(error: &(dyn StdError + 'static)) -> ErrorKind {
     ErrorKind::Middleware
 }
 
+/// Whether `error` is a `quoll::Error`, whatever its `E`, by the mark its `description` gives: a `downcast_ref` names
+/// one shape alone.
+#[expect(
+    deprecated,
+    reason = "`description` is the one method of `std::error::Error` that a type of any shape answers alike"
+)]
+fn is_quoll(error: &(dyn StdError + 'static)) -> bool {
+    error.description() == crate::error::MARK
+}
+
 /// The kind of a reqwest error. A connection that could not be opened in time is `Connect`, as nothing was sent; a
-/// body's read past a deadline is `Timeout`. A request sent on a connection that was then closed, reset or cancelled
-/// before the head of its answer is `Closed`; any other failure to read the answer, a head that is not HTTP's, as a
-/// TLS port called over `http`, is `Decode`, which fails again.
+/// body's read past a deadline is `Timeout`. An answer whose head hyper cannot parse, not HTTP's, as a TLS port called
+/// over `http`, is `Decode`, which fails again. Any other failure once the request was sent, a connection closed,
+/// reset or cancelled before the head of its answer among them, is `Closed`.
 pub(crate) fn of_reqwest(error: &reqwest::Error) -> ErrorKind {
     if error.is_connect() {
         return ErrorKind::Connect;
@@ -65,32 +74,20 @@ pub(crate) fn of_reqwest(error: &reqwest::Error) -> ErrorKind {
         return ErrorKind::Middleware;
     }
 
-    if closed(error) {
-        return ErrorKind::Closed;
+    if not_http(error) {
+        return ErrorKind::Decode;
     }
 
-    ErrorKind::Decode
+    ErrorKind::Closed
 }
 
-/// Whether `error` comes from a connection closed, reset or cancelled: hyper's, or the I/O error under it.
-fn closed(error: &reqwest::Error) -> bool {
+/// Whether hyper could not parse the answer, among the sources of `error`: a head that is not HTTP's.
+fn not_http(error: &reqwest::Error) -> bool {
     let mut current = error.source();
 
     while let Some(error) = current {
-        if let Some(hyper) = error.downcast_ref::<hyper::Error>()
-            && (hyper.is_incomplete_message() || hyper.is_canceled() || hyper.is_closed())
-        {
-            return true;
-        }
-
-        if let Some(io) = error.downcast_ref::<io::Error>() {
-            return matches!(
-                io.kind(),
-                io::ErrorKind::ConnectionReset
-                    | io::ErrorKind::ConnectionAborted
-                    | io::ErrorKind::BrokenPipe
-                    | io::ErrorKind::UnexpectedEof
-            );
+        if let Some(hyper) = error.downcast_ref::<hyper::Error>() {
+            return hyper.is_parse();
         }
 
         current = error.source();

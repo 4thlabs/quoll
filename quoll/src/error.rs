@@ -467,7 +467,16 @@ impl<E> fmt::Display for Error<E> {
     }
 }
 
+/// What every `quoll::Error`'s `description` gives, whatever its shape: the mark by which the client's classification
+/// knows one among the sources of a middleware's error, where `downcast_ref` would need its `E`.
+pub(crate) const MARK: &str = "a quoll::Error";
+
 impl<E: fmt::Debug> StdError for Error<E> {
+    /// A mark that only quoll reads, to know a `quoll::Error` of any shape: `Display` gives the message.
+    fn description(&self) -> &str {
+        MARK
+    }
+
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match &*self.0 {
             Repr::Internal(source)

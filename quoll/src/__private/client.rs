@@ -699,7 +699,7 @@ async fn answered_error<E>(
     let version = response.version();
     let headers = response.headers().clone();
     let body = read_up_to_limit(response).await.map_err(|error| {
-        failed_call(route, "got an error whose body cannot be read", error).cast()
+        unread_body(route, "got an error whose body cannot be read", error).cast()
     })?;
     let detail = (shape.read)(&headers, &body);
     let message = detail.as_ref().and_then(shape.message);
@@ -797,6 +797,19 @@ impl<T: Send + 'static, E: Send + 'static> crate::Call<T, E> for Pending<'_, T, 
 /// The error of a call that got no answer to read, of the kind of `error`, a failure of reqwest or of the chain.
 fn failed_call<X: StdError + Send + Sync + 'static>(route: &Route, what: &str, error: X) -> Error {
     let kind = kind_of(&error);
+
+    no_answer(route, what, kind, error)
+}
+
+/// The error of an answer whose body cannot be read, of `error`, reqwest's: [`ErrorKind::Timeout`] for a deadline
+/// that passed while it was read, and [`ErrorKind::Body`] for any other, never the kind of a call with no answer, so
+/// that a `Decode` in a stream is always an item that does not read.
+fn unread_body(route: &Route, what: &str, error: reqwest::Error) -> Error {
+    let kind = if error.is_timeout() {
+        ErrorKind::Timeout
+    } else {
+        ErrorKind::Body
+    };
 
     no_answer(route, what, kind, error)
 }
@@ -1076,7 +1089,7 @@ impl Answer {
         response
             .bytes()
             .await
-            .map_err(|error| failed_call(route, "got an answer whose body cannot be read", error))
+            .map_err(|error| unread_body(route, "got an answer whose body cannot be read", error))
     }
 
     /// Nothing: what a route with no result gives, whatever the body. A body is read and dropped, up to 64 KiB, so

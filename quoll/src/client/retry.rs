@@ -314,8 +314,9 @@ impl Attempt<'_> {
     /// The rule of [`retry`] alone: [`Retry::Backoff`] after a failure that may pass, to a request that may be sent
     /// twice with the effect of once, and [`Retry::No`] after any other.
     ///
-    /// A failure that may pass is no response, the connection refused, reset or cut, a deadline of
-    /// [`timeout`](super::timeout) passed before the answer began, or an answer 502, 503 or 504. A request that may be
+    /// A failure that may pass is an attempt of the [kind](Attempt::kind) [`ErrorKind::Connect`], the connection
+    /// refused, [`ErrorKind::Timeout`], a deadline of [`timeout`](super::timeout) passed before the answer began, or
+    /// [`ErrorKind::Closed`], the connection closed, reset or cut before the answer; or an answer 502, 503 or 504. A request that may be
     /// sent twice is a `GET`, a `HEAD`, a `PUT` or a `DELETE`.
     pub fn transient(&self) -> Retry {
         let idempotent = [Method::GET, Method::HEAD, Method::PUT, Method::DELETE]
@@ -414,9 +415,10 @@ fn seconds(value: &str) -> Option<Duration> {
     Some(Duration::from_secs(value.parse().unwrap_or(u64::MAX)))
 }
 
-/// Whether an attempt that got no answer may pass if tried again: no connection, a deadline passed, a connection
-/// reset, aborted or closed before its answer was whole, and the head of a stream's answer past the deadline of
-/// `timeout`. A middleware's own failure, a body that cannot be read, a redirect, will fail again.
+/// Whether an attempt that got no answer may pass if tried again: its kind is [`ErrorKind::Connect`], no connection,
+/// [`ErrorKind::Timeout`], a deadline passed, the head of a stream's answer past the deadline of `timeout` among them,
+/// or [`ErrorKind::Closed`], a connection that failed before the answer, closed, reset or cancelled. A middleware's
+/// own failure, a body that cannot be read, an answer that is not HTTP, a redirect, will fail again.
 fn may_pass(error: &reqwest_middleware::Error) -> bool {
     let error = match error {
         reqwest_middleware::Error::Middleware(error) => {
@@ -425,43 +427,10 @@ fn may_pass(error: &reqwest_middleware::Error) -> bool {
         reqwest_middleware::Error::Reqwest(error) => error,
     };
 
-    match crate::__private::client::of_reqwest(error) {
-        ErrorKind::Connect | ErrorKind::Timeout => return true,
-        ErrorKind::Closed if error.is_request() => {}
-        _ => return false,
-    }
-
-    let Some(hyper) = source::<hyper::Error>(error) else {
-        return false;
-    };
-
-    if hyper.is_incomplete_message() || hyper.is_canceled() {
-        return true;
-    }
-
-    source::<std::io::Error>(hyper).is_some_and(|io| {
-        matches!(
-            io.kind(),
-            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
-        )
-    })
-}
-
-/// The first error of type `T` among the sources of `error`.
-fn source<'a, T: std::error::Error + 'static>(
-    error: &'a (dyn std::error::Error + 'static),
-) -> Option<&'a T> {
-    let mut current = error.source();
-
-    while let Some(error) = current {
-        if let Some(found) = error.downcast_ref::<T>() {
-            return Some(found);
-        }
-
-        current = error.source();
-    }
-
-    None
+    matches!(
+        crate::__private::client::of_reqwest(error),
+        ErrorKind::Connect | ErrorKind::Timeout | ErrorKind::Closed
+    )
 }
 
 #[cfg(test)]
