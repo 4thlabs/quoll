@@ -1,5 +1,6 @@
-//! What the server side of a contract becomes: a trait per group, with the function of its descriptor that serves its
-//! routes, and `ApiServices` and `Api::router`, which serve the api's groups by their descriptors.
+//! What the server side of a contract becomes: a trait per group, with the descriptor's impl of `Serve` that serves its
+//! routes, and `ApiServices` and `Api::router`, which serve the api's groups by their descriptors: each service an
+//! `impl NotesServer` for a group the block writes, a type parameter the descriptor serves for one the api lists.
 //!
 //! All of it goes through `::quoll::__private::server!`, which writes it out only when `quoll` has the feature
 //! `server`. The router's code authenticates the request and reads each argument through a helper of `quoll`, and
@@ -16,8 +17,8 @@ use crate::fields::route_fields;
 use crate::model::{Api, Bounds, Param, Route, is_vec};
 use crate::scheme::{scheme_type, schemes_type};
 
-/// The server's code of a group, behind the feature `server` of `quoll`: its trait, and the function of its
-/// descriptor that serves its routes.
+/// The server's code of a group, behind the feature `server` of `quoll`: its trait, and the descriptor's impl of
+/// `Serve`, for any service of the trait, through which an api's router serves the group's routes.
 pub(crate) fn group(cx: &Cx) -> TokenStream {
     let refused = refused(cx);
     let sized = sized_types(cx);
@@ -235,16 +236,49 @@ fn router_fn(api: &Api) -> TokenStream {
     let services = Ident::new("services", Span::mixed_site());
     let router = Ident::new("router", Span::mixed_site());
     let refs = api.refs();
-    // The service of each group, a type parameter the group's descriptor serves: the api names no item of the group's
-    // but its descriptor, which a group with no server side writes too, so that its check is the one error.
-    let params: Vec<Ident> = refs
+    // A group the block writes has the api's sides, and its service is an `impl NotesServer`. One the api lists is
+    // reached by its descriptor alone, which a group with no server side writes too, so that its check is the one
+    // error: its service is a type parameter that the descriptor serves, and the docs name its trait.
+    let params: Vec<Option<Ident>> = refs
         .iter()
-        .map(|group| format_ident!("__QuollService{}", group.name.unraw()))
+        .map(|group| {
+            (!group.is_written()).then(|| format_ident!("__QuollService{}", group.name.unraw()))
+        })
         .collect();
-    let bounds = refs.iter().zip(&params).map(|(group, param)| {
+    let services_args = refs.iter().zip(&params).map(|(group, param)| match param {
+        Some(param) => quote! { #param },
+        None => {
+            let name = group.name;
+            let server_trait = format_ident!("{}Server", name.unraw(), span = name.span());
+
+            quote! { impl #server_trait }
+        }
+    });
+    let bounds = refs.iter().zip(&params).filter_map(|(group, param)| {
+        let param = param.as_ref()?;
         let descriptor = group.descriptor();
 
-        quote_spanned! {group.span()=> #descriptor: ::quoll::__private::server::Serve<#param> }
+        Some(
+            quote_spanned! {group.span()=> #descriptor: ::quoll::__private::server::Serve<#param> },
+        )
+    });
+    let generics = params.iter().flatten();
+    let traits = refs
+        .iter()
+        .filter(|group| !group.is_written())
+        .map(|group| {
+            format!(
+                " The service of the group `{}`, `{}`, implements [`{}`].",
+                group.name.unraw(),
+                group.field().unraw(),
+                group.shown(&format!("{}Server", group.name.unraw())),
+            )
+        });
+    let traits: Vec<String> = traits.collect();
+    let traits = (!traits.is_empty()).then(|| {
+        let lines = std::iter::once(String::new()).chain(traits);
+
+        crate::docs::doc_attrs(&lines.collect::<Vec<_>>())
     });
     let locals: Vec<Ident> = refs
         .iter()
@@ -256,19 +290,20 @@ fn router_fn(api: &Api) -> TokenStream {
         })
         .collect();
     let fields = refs.iter().map(GroupRef::field);
-    let groups = refs.iter().zip(&locals).zip(&params).map(|((group, local), param)| {
+    let groups = refs.iter().zip(&locals).map(|(group, local)| {
         let descriptor = group.descriptor();
         let table = table(api, group);
 
         quote_spanned! {group.span()=>
-            let #router = <#descriptor as ::quoll::__private::server::Serve<#param>>::serve_group(#router, #local, #table);
+            let #router = <#descriptor as ::quoll::__private::server::Serve<_>>::serve_group(#router, #local, #table);
         }
     });
 
     quote! {
         impl #name {
             #[doc = #docs]
-            #vis fn router<#(#params),*>(#services: #services_type<#(#params),*>) -> ::quoll::__private::axum::Router
+            #traits
+            #vis fn router<#(#generics),*>(#services: #services_type<#(#services_args),*>) -> ::quoll::__private::axum::Router
             where
                 #(#bounds),*
             {
@@ -288,6 +323,7 @@ fn serve_fn(cx: &Cx) -> TokenStream {
     let group = cx.group;
     let descriptor = descriptor_name(&group.name);
     let server_trait = group.server_trait();
+    let count = group.routes.len();
     let router = Ident::new("router", Span::mixed_site());
     let service = Ident::new("service", Span::mixed_site());
     let routes_table = Ident::new("routes", Span::mixed_site());
@@ -304,6 +340,10 @@ fn serve_fn(cx: &Cx) -> TokenStream {
                 #service: __QuollService,
                 #routes_table: &'static [::quoll::Route],
             ) -> ::quoll::__private::server::Routes {
+                // The api's table has a route per route of the group, as `table!` builds it from the descriptor: the
+                // slice keeps one signature of `Serve` for every group, whose length the type no longer says.
+                ::core::debug_assert_eq!(#routes_table.len(), #count, "a route of the table per route of the group");
+
                 ::quoll::__private::server::Group::new(#router, #service)
                     #(#routes)*
                     .finish()

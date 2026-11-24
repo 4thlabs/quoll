@@ -4,8 +4,8 @@
 //! - `tests/compile_fail/`, built with each of the four feature sets, so that its messages are the same whatever the
 //!   features: the mistakes the macro finds itself, those of an [`ErrorKind`](quoll::ErrorKind), in the files
 //!   `error_kind_*`: a match with no `_`, a status written as a number, the text of `as_str` kept past its kind, and
-//!   an `Error::failed` with no kind or no shape; those of `#[server(...)]` and `#[client(...)]` among them, a
-//!   contract with no side, a word other than `none`, one twice, one on a scheme, a group of the api's block or a route,
+//!   an `Error::failed` with no kind or no shape; those of `#[server(...)]` and `#[client(...)]`, a contract with no
+//!   side, a word other than `none`, one twice, one on a scheme, a group of the api's block or a route,
 //!   an `#[openapi(...)]` beside `#[server(none)]` and an `#[error(...)]` in a contract with `#[client(none)]`; and a
 //!   `quoll::group!` listed without a side its api has, its server, its client or its document, one error whatever the
 //!   features, as the api reaches its groups by their descriptors alone.

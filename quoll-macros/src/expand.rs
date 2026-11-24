@@ -144,6 +144,7 @@ fn named_types(cx: &Cx) -> TokenStream {
             params.chain(result)
         })
         .collect();
+
     if types.is_empty() {
         return TokenStream::new();
     }
@@ -358,8 +359,8 @@ mod tests {
             "{served}"
         );
         assert!(!served.contains("fn called"), "{served}");
-        // The document's check covers the server side: a group has a document only when it is served.
-        assert!(!documented.contains("is_served"), "{documented}");
+        // The server side is checked beside the document, so that its message comes first.
+        assert!(documented.contains("is_served"), "{documented}");
         assert!(documented.contains("GroupDocument"), "{documented}");
         assert!(documented.contains("fn called"), "{documented}");
     }

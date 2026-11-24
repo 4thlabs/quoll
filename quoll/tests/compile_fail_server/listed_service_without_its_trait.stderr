@@ -1,0 +1,44 @@
+error[E0277]: the trait bound `App: AuthServer` is not satisfied
+  --> tests/compile_fail_server/listed_service_without_its_trait.rs:28:25
+   |
+28 |     let _ = Api::router(ApiServices { auth: App, notes: App });
+   |             ----------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |             |
+   |             required by a bound introduced by this call
+   |
+help: the trait `AuthServer` is not implemented for `App`
+  --> tests/compile_fail_server/listed_service_without_its_trait.rs:19:1
+   |
+19 | struct App;
+   | ^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+  --> tests/compile_fail_server/listed_service_without_its_trait.rs:4:5
+   |
+ 4 | /     quoll::group! {
+ 5 | |         pub group Auth {
+ 6 | |             POST "/token" => token(login: String) -> String;
+ 7 | |         }
+ 8 | |     }
+   | |_____^
+note: required for `__QuollGroupAuth` to implement `quoll::__private::server::Serve<App>`
+  --> tests/compile_fail_server/listed_service_without_its_trait.rs:4:5
+   |
+ 4 | /     quoll::group! {
+ 5 | |         pub group Auth {
+   | |                   ^^^^
+ 6 | |             POST "/token" => token(login: String) -> String;
+ 7 | |         }
+ 8 | |     }
+   | |_____^
+note: required by a bound in `Api::router`
+  --> tests/compile_fail_server/listed_service_without_its_trait.rs:12:34
+   |
+11 | quoll::api! {
+12 |     pub api Api = "/api" { auth::Auth };
+   |                                  ^^^^ required by this bound in `Api::router`
+13 |
+14 |     pub group Notes {
+15 |         GET "/notes/{id}" => get(id: i64) -> String;
+16 |     }
+17 | }
+   = note: this error originates in the macro `quoll::group` (in Nightly builds, run with -Z macro-backtrace for more info)

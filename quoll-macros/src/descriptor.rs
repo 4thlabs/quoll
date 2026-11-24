@@ -337,6 +337,27 @@ impl GroupRef<'_> {
         self.item(&descriptor_name(self.name))
     }
 
+    /// Whether the api's block writes the group, which then has the api's sides: the api names its items, which it
+    /// knows are written. The api reaches a group it lists by its descriptor alone.
+    pub(crate) fn is_written(&self) -> bool {
+        self.path.is_none()
+    }
+
+    /// The path of an item of the group, `notes::NotesClient` for `NotesClient`, as a link of the api's docs writes it.
+    pub(crate) fn shown(&self, item: &str) -> String {
+        let module = self.path.into_iter().flat_map(|path| {
+            path.segments
+                .iter()
+                .take(path.segments.len() - 1)
+                .map(|segment| segment.ident.to_string())
+        });
+
+        module
+            .chain([item.to_owned()])
+            .collect::<Vec<_>>()
+            .join("::")
+    }
+
     /// The group's field in `ApiServices`, and its method on `ApiClient`.
     pub(crate) fn field(&self) -> Ident {
         let snake = snake_case(self.name);
@@ -513,12 +534,12 @@ fn takes_error(api: &Api, group: &GroupRef) -> Option<TokenStream> {
     })
 }
 
-/// For a group of the list, the checks that it has each side the api has, whose code names the group's items: a group
-/// may have a side the api does not, and the api leaves it. The server side of an api with a document is checked by
-/// the document's, which a group has only when it is served.
+/// For a group of the list, the checks that it has each side the api has, whose code reaches the group's items through
+/// its descriptor: a group may have a side the api does not, and the api leaves it.
 fn has_sides(api: &Api, group: &GroupRef) -> TokenStream {
     let descriptor = group.descriptor();
-    let served = (api.server && !api.openapi).then(|| {
+    // Before the document's check, whose message does not say that the server side is missing.
+    let served = api.server.then(|| {
         quote_spanned! {group.span()=>
             const _: () = ::quoll::__private::group::is_served::<#descriptor>();
         }

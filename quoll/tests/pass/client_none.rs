@@ -41,6 +41,10 @@ quoll::api! {
 #[derive(Debug)]
 pub struct EventsClient;
 
+pub trait Events {}
+
+impl Events for EventsClient {}
+
 impl Hooks {
     pub fn client() -> EventsClient {
         EventsClient
