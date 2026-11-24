@@ -12,7 +12,7 @@ help: the following other types implement trait `IntoStatus`
   --> src/response.rs
    |
    | impl IntoStatus for Status {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `Status`
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `quoll::Status`
 ...
    | impl IntoStatus for NoContent {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoContent`
@@ -38,7 +38,7 @@ help: the following other types implement trait `IntoStatus`
   --> src/response.rs
    |
    | impl IntoStatus for Status {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `Status`
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `quoll::Status`
 ...
    | impl IntoStatus for NoContent {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoContent`

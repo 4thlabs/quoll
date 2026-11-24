@@ -8,9 +8,9 @@ use serde::de::DeserializeOwned;
 
 use http::{HeaderMap, StatusCode, Version};
 
-use super::{Shape, no_answer, read_problem};
+use super::{Shape, failed_call, no_answer, read_problem};
 use crate::__private::known::Items;
-use crate::{Error, Response, Route};
+use crate::{Error, ErrorKind, Response, Route};
 
 /// The most one item holds, 1 MiB: the `data` of an event, or a line of either body. A stream runs for long, and a
 /// server that never ends an item would have the client hold all it sends: past it, the stream ends with an error.
@@ -45,9 +45,10 @@ pub(crate) trait Framing: Send + 'static {
 /// The items of `response`'s body, split by `framing` and read as the JSON of a `T`, as its chunks come: a chunk is
 /// read only when the stream is asked for an item that the chunks so far do not hold.
 ///
-/// An item that does not read as a `T` is an error, and the stream goes on. A problem, an item longer than
-/// [`ITEM_LIMIT`], and a body that cannot be read, are an error, and the stream ends after it, dropping the answer and
-/// what it had of an item. Dropping the stream drops the answer too, which closes its connection.
+/// An item that does not read as a `T` is an error of [`ErrorKind::Decode`], and the stream goes on, as it does after
+/// an `event: problem` whose data is not a problem. A problem, an item longer than [`ITEM_LIMIT`], and a body that
+/// cannot be read, are an error of another kind, and the stream ends after it, dropping the answer and what it had of
+/// an item. Dropping the stream drops the answer too, which closes its connection.
 pub(crate) fn items<T, F>(
     response: reqwest::Response,
     route: &'static Route,
@@ -66,8 +67,8 @@ where
         loop {
             let read = |piece, json: &[u8]| match piece {
                 Piece::Item => Ok(serde_json::from_slice::<T>(json)
-                    .map_err(|error| no_answer(route, NOT_AN_ITEM, error))),
-                Piece::Problem => Err(problem(route, json)),
+                    .map_err(|error| no_answer(route, NOT_AN_ITEM, ErrorKind::Decode, error))),
+                Piece::Problem => problem(route, json),
             };
 
             match framing.next_item(read) {
@@ -77,6 +78,7 @@ where
                     let error = no_answer(
                         route,
                         "got an item longer than the client reads",
+                        ErrorKind::Body,
                         "an event or a line holds more than 1 MiB",
                     );
 
@@ -92,7 +94,8 @@ where
                     framing.finish();
                 }
                 Err(error) => {
-                    let error = no_answer(route, "got an answer whose body cannot be read", error);
+                    let error =
+                        failed_call(route, "got an answer whose body cannot be read", error);
 
                     return Some((Err(error), None));
                 }
@@ -121,7 +124,8 @@ pub(crate) fn chunks(response: reqwest::Response, route: &'static Route) -> Item
                 Ok(Some(chunk)) => return Some((Ok(Vec::from(chunk)), Some(response))),
                 Ok(None) => return None,
                 Err(error) => {
-                    let error = no_answer(route, "got an answer whose body cannot be read", error);
+                    let error =
+                        failed_call(route, "got an answer whose body cannot be read", error);
 
                     return Some((Err(error), None));
                 }
@@ -137,14 +141,17 @@ pub(crate) fn chunks(response: reqwest::Response, route: &'static Route) -> Item
 const NOT_AN_ITEM: &str = "got an item that does not read as its type";
 
 /// The error an `event: problem` stands for, whose data is `json`: the problem's status, 500 when it names none that
-/// is an error, and the problem, as an error answer gives them, with no headers, which the event has none of.
-fn problem(route: &Route, json: &[u8]) -> Error {
+/// is an error, and the problem, as an error answer gives them, with no headers, which the event has none of; and
+/// `Ok` of an error of [`ErrorKind::Decode`], an item that does not read, after which the stream goes on, when its
+/// data is not a problem.
+fn problem<T>(route: &Route, json: &[u8]) -> Result<crate::Result<T>, Error> {
     let Some(problem) = read_problem(json) else {
-        return no_answer(
+        return Ok(Err(no_answer(
             route,
             "got an `event: problem` that is not a problem",
+            ErrorKind::Decode,
             "its data is not a JSON object",
-        );
+        )));
     };
     let status = problem
         .status()
@@ -154,7 +161,12 @@ fn problem(route: &Route, json: &[u8]) -> Error {
     let message = problem.message();
     let answer = Response::from_parts(status, Version::HTTP_11, HeaderMap::new(), problem);
 
-    Error::upstream(status, Some(answer), Some(json.to_vec()), message)
+    Err(Error::upstream(
+        status,
+        Some(answer),
+        Some(json.to_vec()),
+        message,
+    ))
 }
 
 /// A body split into lines, as its chunks come.

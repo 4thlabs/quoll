@@ -13,7 +13,7 @@ use tracing::Span;
 
 use super::{Helper, Rank};
 use crate::__private::client::redacted;
-use crate::Route;
+use crate::{ErrorKind, Route};
 
 /// Opens a tracing span around each call, named by its operation.
 ///
@@ -21,7 +21,9 @@ use crate::Route;
 /// `otel.name` is the operation id, `notes_get`, which an OpenTelemetry layer names the span by, and `operation_id` and
 /// `group` say it too. A request that did not come from the client of a contract is named by its method.
 ///
-/// The span records the status of the answer, or the error of a call that got none. It holds no URL with its query,
+/// The span records the status of the answer, or the error of a call that got none, and the
+/// [kind](crate::ErrorKind) of a failure in `error.type`, as OpenTelemetry's conventions name it: the code of an
+/// error status, `404`, or `connect`, `timeout`... It holds no URL with its query,
 /// which may hold a credential: the error's message, which reqwest writes with the URL, shows its origin and its path
 /// alone. Added first, it is one span around the whole call, its attempts and its redirects.
 ///
@@ -36,6 +38,10 @@ pub fn trace() -> impl Middleware {
     Helper::new(Rank::Trace, TracingMiddleware::<Operation>::new())
 }
 
+/// The field of OpenTelemetry's conventions that says the kind of a call's failure, as
+/// [`ErrorKind::as_str`](crate::ErrorKind::as_str) writes it: `connect`, `timeout`...
+const ERROR_TYPE: &str = "error.type";
+
 /// The span of a call, named by its operation.
 struct Operation;
 
@@ -44,7 +50,7 @@ impl ReqwestOtelSpanBackend for Operation {
         let Some(route) = extensions.get::<Route>() else {
             let name = default_span_name(request, extensions);
 
-            return reqwest_otel_span!(name = name, request);
+            return reqwest_otel_span!(name = name, request, "error.type" = tracing::field::Empty);
         };
 
         reqwest_otel_span!(
@@ -52,6 +58,7 @@ impl ReqwestOtelSpanBackend for Operation {
             request,
             operation_id = route.operation_id(),
             group = route.group(),
+            "error.type" = tracing::field::Empty,
         )
     }
 
@@ -61,11 +68,24 @@ impl ReqwestOtelSpanBackend for Operation {
         _: &mut Extensions,
     ) {
         match outcome {
-            Ok(response) => default_on_request_success(span, response),
+            Ok(response) => {
+                default_on_request_success(span, response);
+
+                // OpenTelemetry's conventions: the code of an error status, as a client span counts 4xx and 5xx.
+                let status = response.status();
+
+                if status.is_client_error() || status.is_server_error() {
+                    span.record(ERROR_TYPE, ErrorKind::Status(status).as_str());
+                }
+            }
             Err(error) => {
                 let (message, chain) = without_urls(error);
 
                 span.record(OTEL_STATUS_CODE, "ERROR");
+                span.record(
+                    ERROR_TYPE,
+                    crate::__private::client::kind_of(error).as_str(),
+                );
                 span.record(ERROR_MESSAGE, message.as_str());
                 span.record(ERROR_CAUSE_CHAIN, chain.as_str());
             }

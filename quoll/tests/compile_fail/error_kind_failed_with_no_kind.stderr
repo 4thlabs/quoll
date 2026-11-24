@@ -1,0 +1,15 @@
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+ --> tests/compile_fail/error_kind_failed_with_no_kind.rs:5:20
+  |
+5 |     let _: Error = Error::failed("the daemon is down");
+  |                    ^^^^^^^^^^^^^ -------------------- argument #1 of type `quoll::ErrorKind` is missing
+  |
+note: associated function defined here
+ --> src/error.rs
+  |
+  |     pub fn failed(kind: ErrorKind, message: impl Into<String>) -> Self {
+  |            ^^^^^^
+help: provide the argument
+  |
+5 |     let _: Error = Error::failed(/* ErrorKind */, "the daemon is down");
+  |                                  ++++++++++++++++

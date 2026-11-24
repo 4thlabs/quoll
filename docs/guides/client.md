@@ -384,6 +384,10 @@ returns one of these:
 - `Retry::Backoff`, to try again after the backoff of `retry`;
 - `Retry::After(duration)`, to try again after `duration`.
 
+`attempt.kind()` is the attempt's kind, as the call's error would say it: `None` for an answer of a success status,
+`ErrorKind::Status(status)` for any other answer, and `ErrorKind::Connect`, `Timeout`... for an attempt that got no
+answer. [The kind of an error](errors.md#the-kind-of-an-error) lists them.
+
 `attempt.transient()` is the rule of `retry(times)` alone, for the cases that the closure leaves.
 `attempt.retry_after()` is the wait that the answer's `Retry-After` asks, in seconds or as an HTTP date. It is a minute
 at most, unless `.max_wait(..)` sets another.

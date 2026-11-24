@@ -206,6 +206,12 @@ async fn a_copy_has_the_title_of_its_note() -> Result<()> {
 A fake's methods have the client's signatures: no caller, the `T` of a `Created<T>`, and an `impl Call<T>`. An
 `async move` block is an `impl Call<T>`. A route left out, or a method with the wrong signature, does not compile.
 
+A fake plays a failure of the real client with `quoll::Error::failed(kind, message)`, of any
+[kind](errors.md#the-kind-of-an-error): `Error::failed(ErrorKind::Connect, "the server is down")` is a call that got no
+answer, and `Error::failed(ErrorKind::Status(StatusCode::BAD_GATEWAY), "a page of a proxy")` an answer of that status
+whose body is not the api's error shape. The error has the shape of the call. Its `.response()` is what the real
+client's would be: the error itself for a call with no answer, and an answer of the status for `Status`.
+
 Some apis answer their errors in a shape of their own, with `#[error(E)]`. A fake of such an api returns an
 `impl Call<T, E>`. It builds the error of an answer with `quoll::Error::answered(StatusCode::NOT_FOUND, e)`:
 [Another API's errors](errors.md#another-apis-errors) shows one.

@@ -105,16 +105,25 @@ impl<S: Stream> Stream for Oks<S> {
 /// When an item fails once the 200 is sent, the server logs it and ends the stream with a last event, named
 /// `problem`, whose `data` is the RFC 9457 problem the error would have answered: every value before it is sent.
 ///
-/// The client asks for `text/event-stream` with `Accept`, and an answer of another content type is an error with no
-/// status, as an answer that is not a route's result is. Each event that has data is an item, its `data` read as the
-/// JSON of a `T`, whatever its name, which the stream does not give: an event with no data, a comment, and the fields
-/// `id`, `retry` and any other are skipped, and lines may end with `\r\n`, `\n` or `\r`. An event whose `data` does not
-/// read as a `T` is an error with no status, and the stream goes on.
+/// The client asks for `text/event-stream` with `Accept`, and an answer of another content type is an error of
+/// [`ErrorKind::Decode`](crate::ErrorKind::Decode), as an answer that is not a route's result is. Each event that has
+/// data is an item, its `data` read as the JSON of a `T`, whatever its name, which the stream does not give: an event
+/// with no data, a comment, and the fields `id`, `retry` and any other are skipped, and lines may end with `\r\n`, `\n`
+/// or `\r`.
 ///
-/// The one name with a meaning is `problem`, from quoll's server or another: the client reads it as the error of an
-/// answer, with the problem's status, 500 when it names none, and the problem, and the stream ends after it. An event,
-/// or a line, longer than 1 MiB, and a body that cannot be read, are an error with no status, and the stream ends
-/// after it too.
+/// After an error, the [kind](crate::Error::kind) says whether the stream goes on: after
+/// [`ErrorKind::Decode`](crate::ErrorKind::Decode) it does, after any other kind it ends.
+///
+/// - an event whose `data` does not read as a `T`, or an `event: problem` whose data is not a problem, is of
+///   [`ErrorKind::Decode`](crate::ErrorKind::Decode), and the stream goes on: the next event follows;
+/// - an `event: problem`, from quoll's server or another, is the error of an answer, of
+///   [`ErrorKind::Status`](crate::ErrorKind::Status) of the problem's status, 500 when it names none, with the
+///   problem as its [detail](crate::Error::detail); the stream ends after it;
+/// - an event, or a line, longer than 1 MiB is of [`ErrorKind::Body`](crate::ErrorKind::Body), and a body that cannot
+///   be read is of `Body`, or of [`ErrorKind::Timeout`](crate::ErrorKind::Timeout) when a deadline of reqwest's passed
+///   while it was read; the stream ends after it.
+///
+/// A stream that has ended gives `None`, at once.
 ///
 /// Dropping the stream closes its connection. The client does not reconnect when the stream ends, as an
 /// `EventSource` does: the caller calls the route again. Events carry no `id` and the client keeps none, so a stream
@@ -209,12 +218,14 @@ impl<T> fmt::Debug for Events<T> {
 /// The client reads `application/jsonl`, `application/x-ndjson` and `application/x-jsonlines`, which some APIs send,
 /// and `application/json`, which others send their lines as, the Docker Engine API among them. It asks for them in
 /// that order with `Accept`, `application/json` last. An answer of another content type is an error with no status,
-/// as an answer that is not a route's result is.
+/// as an answer that is not a route's result is, of [`ErrorKind::Decode`](crate::ErrorKind::Decode).
 ///
 /// Each line is an item, read as the JSON of a `T`: a line may end with `\r\n`, an empty line is skipped, and a last
-/// line with no line break is read too. A line that does not read as a `T` is an error with no status, and the stream
-/// goes on. A line longer than 1 MiB, and a body that cannot be read, are an error with no status, and the stream ends
-/// after it.
+/// line with no line break is read too. After an error, the [kind](crate::Error::kind) says whether the stream goes
+/// on: a line that does not read as a `T` is of [`ErrorKind::Decode`](crate::ErrorKind::Decode), and the stream goes
+/// on; a line longer than 1 MiB, and a body that cannot be read, are of [`ErrorKind::Body`](crate::ErrorKind::Body), or
+/// [`ErrorKind::Timeout`](crate::ErrorKind::Timeout) for a deadline of reqwest's, and the stream ends after it, then
+/// gives `None` at once.
 ///
 /// An answer of `application/json` is read so too, line by line: a document written over several lines, as a
 /// pretty-printed array, is read as broken lines, each an item that does not read as a `T`.
@@ -321,8 +332,10 @@ impl<T> fmt::Debug for JsonLines<T> {
 /// The client asks for any content type, `Accept: */*`, and reads an answer of any, as it reads
 /// [`Bytes`](crate::Bytes): its content type, or `application/octet-stream` when it has none, or one that is not
 /// a media type. Each chunk is one the connection gave, of whatever size, never empty: what the bytes mean, their lines
-/// or their frames, is the caller's to read. A body that cannot be read is an error with no status, and the stream ends
-/// after it.
+/// or their frames, is the caller's to read. A body that cannot be read, cut short of its `Content-Length` among
+/// others, is an error of [`ErrorKind::Body`](crate::ErrorKind::Body), or of
+/// [`ErrorKind::Timeout`](crate::ErrorKind::Timeout) for a deadline of reqwest's, and the stream ends after it, then
+/// gives `None` at once. No error of a `ByteStream` lets it go on.
 ///
 /// Dropping the stream closes its connection. The client does not call the route again when the stream ends.
 pub struct ByteStream {

@@ -2,7 +2,9 @@
 //! features of `quoll` it is built with.
 //!
 //! - `tests/compile_fail/`, built with each of the four feature sets, so that its messages are the same whatever the
-//!   features: the mistakes the macro finds itself.
+//!   features: the mistakes the macro finds itself, and those of an [`ErrorKind`](quoll::ErrorKind), in the files
+//!   `error_kind_*`: a match with no `_`, a status written as a number, the text of `as_str` kept past its kind, and
+//!   an `Error::failed` with no kind or no shape.
 //! - `tests/compile_fail_server/`, built with the feature `server`: what only the server's code checks, a route left
 //!   out of a service, a handler of the wrong signature, a status of no content on a route of a value or one that is
 //!   not a status, a body that is not `Deserialize`, a service that does not authenticate, and an argument the server
