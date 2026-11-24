@@ -341,7 +341,10 @@ assert_eq!(request(), "none");
 - `.into_router(router)` gives the router with its layers, for an application that serves it itself, or for
   [a test](testing.md).
 
-Every TCP connection they accept has `TCP_NODELAY`: a small write, such as an event of a stream, is sent at once.
+`serve`, `serve_on` and [`test::spawn`](testing.md) set `TCP_NODELAY` on each connection whose stream is tokio's
+`TcpStream`: a small write, such as an event of a stream, is sent at once. A listener whose stream wraps a TCP
+stream, such as TLS, sets the option itself, on the accepted `TcpStream`. A router served otherwise, with
+`axum::serve`, does not get it.
 
 `serve` and `serve_on` return an `std::io::Result<()>`. It is an error when the address cannot be bound, or when the
 signals cannot be listened to.
