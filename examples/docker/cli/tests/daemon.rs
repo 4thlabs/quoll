@@ -64,7 +64,7 @@ impl Drop for Removed {
                 .build()
                 .expect("a runtime");
 
-            runtime.block_on(docker().containers().remove(name, true).into_future())
+            runtime.block_on(docker().containers().remove(&name, true).into_future())
         })
         .join();
 
@@ -152,7 +152,7 @@ async fn each_command_works_on_a_real_daemon() {
 
     let mut progress = docker
         .images()
-        .pull(IMAGE.into(), TAG.into())
+        .pull(IMAGE, TAG)
         .await
         .expect("the pull starts");
 
@@ -180,7 +180,7 @@ async fn each_command_works_on_a_real_daemon() {
 
     docker
         .containers()
-        .create(Some(name.clone()), container)
+        .create(Some(&name), container)
         .await
         .expect("the container is created");
 

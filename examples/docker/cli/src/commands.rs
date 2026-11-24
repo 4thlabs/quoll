@@ -49,14 +49,14 @@ async fn ps(docker: &DockerClient, all: bool) -> anyhow::Result<()> {
 }
 
 async fn inspect(docker: &DockerClient, container: String) -> anyhow::Result<()> {
-    let inspected = docker.containers().inspect(container).await?;
+    let inspected = docker.containers().inspect(&container).await?;
 
     println!("{}", serde_json::to_string_pretty(&inspected)?);
     Ok(())
 }
 
 async fn start(docker: &DockerClient, container: String) -> anyhow::Result<()> {
-    match docker.containers().start(container.clone()).await {
+    match docker.containers().start(&container).await {
         Ok(()) => println!("{container}"),
         // Docker's answer for a container that runs already: no error to the caller, nothing done.
         Err(error) if error.status() == Some(StatusCode::NOT_MODIFIED) => {
@@ -73,7 +73,7 @@ async fn stop(
     container: String,
     timeout: Option<i32>,
 ) -> anyhow::Result<()> {
-    match docker.containers().stop(container.clone(), timeout).await {
+    match docker.containers().stop(&container, timeout).await {
         Ok(()) => println!("{container}"),
         Err(error) if error.status() == Some(StatusCode::NOT_MODIFIED) => {
             println!("{container} is stopped already");
@@ -87,7 +87,7 @@ async fn stop(
 async fn logs(docker: &DockerClient, container: String, follow: bool) -> anyhow::Result<()> {
     let mut logs = docker
         .containers()
-        .logs(container, follow, true, true)
+        .logs(&container, follow, true, true)
         .await?;
     let framed = !logs.has_type(RAW_STREAM);
     let mut demux = Demux::default();

@@ -69,14 +69,14 @@ use crate::{Problem, Response, Result};
 ///     pub api GitHub = "";
 ///
 ///     pub group Repos {
-///         GET "/repos/{owner}/{repo}/topics" => topics(owner: String, repo: String) -> Vec<String>;
+///         GET "/repos/{owner}/{repo}/topics" => topics(owner: &str, repo: &str) -> Vec<String>;
 ///     }
 /// }
 ///
 /// # async fn run() -> quoll::Result<()> {
 /// let github = GitHub::client("https://api.github.com")?;
 ///
-/// match github.repos().topics("rust-lang".into(), "rust".into()).await {
+/// match github.repos().topics("rust-lang", "rust").await {
 ///     Ok(topics) => println!("{topics:?}"),
 ///     Err(error) => match error.detail() {
 ///         Some(GitHubError { documentation_url: Some(url), .. }) => println!("{error}, see {url}"),

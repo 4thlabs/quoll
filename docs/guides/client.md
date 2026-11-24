@@ -63,6 +63,8 @@ async fn main() -> quoll::Result<()> {
 
 - `api.notes()` is the client of the group `Notes`, which implements the trait `Notes`. It has one method per route,
   with its arguments in the contract's order.
+- An argument the contract writes with a `&`, as `owner: &str`, is borrowed: `get("rust-lang", &repo)`. The call may
+  borrow it until it is awaited. [Borrowed arguments](contract.md#borrowed-arguments) lists the forms.
 - A route that returns `Created<T>` or `Accepted<T>` returns the `T` on the client.
 - A query parameter that is `None` is left out, and a header that is `None` is not sent.
 - Rust has no named arguments: a route with many optional keys takes a [query struct](contract.md#query-structs),
@@ -145,7 +147,7 @@ quoll::api! {
     pub api Notes = "/api";
 
     pub group Search {
-        GET "/search?q={q}" => search(q: String) -> Vec<String>;
+        GET "/search?q={q}" => search(q: &str) -> Vec<String>;
     }
 }
 

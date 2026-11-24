@@ -114,10 +114,38 @@ quoll::api! {
         POST "/token"                    => token(login: Form<Login>) -> String;
         PUT  "/notes/{id}/file"          => upload(id: i64, file: Bytes);
         PUT  "/notes/{id}/text"
-             => write(id: i64, header("If-Match") version: Option<String>, text: Text);
+             => write(id: i64, header("If-Match") version: Option<&str>, text: Text);
     }
 }
 ```
+
+### Borrowed arguments
+
+A `&` on an argument's type makes the client borrow it. The server and the OpenAPI document receive the owned type.
+A contract chooses argument by argument, and an argument with no `&` is taken by value:
+
+| The contract writes                                  | The client takes | The server receives            |
+| ---------------------------------------------------- | ---------------- | ------------------------------ |
+| `owner: &str`                                        | `&str`           | `String`                       |
+| `state: Option<&str>`                                | `Option<&str>`   | `Option<String>`               |
+| `labels: &[&str]`                                    | `&[&str]`        | `Vec<String>`                  |
+| `labels: &[String]`                                  | `&[String]`      | `Vec<String>`                  |
+| `note: &NewNote`                                     | `&NewNote`       | `NewNote`                      |
+| `login: &Form<Login>`, `text: &Text`, `file: &Bytes` | the same         | `Form<Login>`, `Text`, `Bytes` |
+| `owner: String`, with no `&`                         | `String`         | `String`                       |
+
+So a call writes `get("rust-lang", &repo)` with no `.into()`, and `create(&note)` sends a body that stays the
+caller's, with no `Clone`.
+
+- The macro reads the `&` alone: `&str` becomes `String`, `&[T]` becomes `Vec<T>`, and any other `&X` becomes `X`,
+  nested ones included, as `Option<&str>`.
+- `&[&str]` takes `&["a", "b"]`, and a `Vec<String>` as `&names.iter().map(String::as_str).collect::<Vec<_>>()`.
+  `&[String]` takes `&names`, but not `&["a"]`.
+- A call may borrow its arguments until it is awaited. A fake takes them as the client does, `owner: &str`, and reads
+  them in its `async move`.
+- With the server, `&mut X`, `&&X`, `&dyn Trait` and `&impl Trait` do not compile, nor a `&X` whose `X` has no size,
+  as `&OsStr`: write `&str`, or take an `OsString` by value. A contract with a client alone takes them as before. A
+  lifetime other than `'static` or `'_` does not compile.
 
 ### Path parameters
 
@@ -151,9 +179,9 @@ quoll::api! {
 
     pub group Shop {
         GET "/customers/{id}?expand[]={expand}"
-            => customer(id: String, expand: Vec<String>) -> Customer;
+            => customer(id: &str, expand: Vec<String>) -> Customer;
         GET "/articles?filter[name]={name}&page[size]={size}"
-            => articles(name: Option<String>, size: Option<u32>) -> Vec<Article>;
+            => articles(name: Option<&str>, size: Option<u32>) -> Vec<Article>;
     }
 }
 ```
@@ -192,7 +220,7 @@ quoll::api! {
 
     pub group Issues {
         GET "/repos/{owner}/{repo}/issues?labels={labels}&state={state}"
-            => list(owner: String, repo: String, #[join(",")] labels: Vec<String>, state: Option<State>) -> Vec<String>;
+            => list(owner: &str, repo: &str, #[join(",")] labels: Vec<String>, state: Option<State>) -> Vec<String>;
     }
 }
 ```
@@ -250,10 +278,10 @@ quoll::api! {
     pub api GitHub = "";
 
     pub group Repos {
-        GET "/repos/{owner}/{repo}" => get(owner: String, repo: String) -> Repository;
+        GET "/repos/{owner}/{repo}" => get(owner: &str, repo: &str) -> Repository;
 
         #[header("Accept" = "application/vnd.github.raw+json")]
-        GET "/repos/{owner}/{repo}/readme" => readme(owner: String, repo: String) -> Bytes;
+        GET "/repos/{owner}/{repo}/readme" => readme(owner: &str, repo: &str) -> Bytes;
 
         // Leaves two headers of the api: a `Text` is read from `text/plain`.
         #[header("Accept" = none)]

@@ -17,6 +17,17 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.1" }
 
 ## [Unreleased]
 
+### Added
+
+- A `&` on an argument's type makes the client borrow it, so that a call needs no `.into()`, and a body or a list no
+  `.clone()`: `list(owner: &str, #[join(",")] labels: &[&str], state: Option<&str>)` is called as
+  `list("rust-lang", &["C-bug"], Some("open"))`, and `create(note: &NewNote)` as `create(&note)`. The server and the
+  OpenAPI document receive the owned type, `String`, `Vec<String>`, `Option<String>`, `NewNote`. An argument with no
+  `&` is taken by value, as before. `&Form<T>`, `&Text`, `&Bytes`, `&[String]` and `query filter: &NoteFilter` are
+  borrowed too. With the server, `&mut X`, `&&X`, `&dyn Trait`, `&impl Trait` and a `&X` whose `X` has no size, as
+  `&Path`, do not compile; a contract with a client alone takes them as before. The docs and the examples write
+  `&str` for a string of the path, the query or a header ([#119](https://github.com/4thlabs/quoll/issues/119)).
+
 ## [0.9.1] - 2026-11-24
 
 ### Added

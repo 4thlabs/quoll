@@ -158,6 +158,10 @@
 //! }
 //! ```
 //!
+//! An argument the contract writes with a `&` is borrowed by the client, and received owned by the server: `&str` is a
+//! `String` there, `&[T]` a `Vec<T>` and any other `&X` an `X`: `list(owner: &str)` is called as `list("rust-lang")`,
+//! with no `.into()`. An argument with no `&` is taken by value.
+//!
 //! # Routes
 //!
 //! An api is a route table: the method, the path below the api's prefix, then the function the route becomes. The
@@ -552,7 +556,7 @@
 //!     pub api GitHub = "";
 //!
 //!     pub group Repos {
-//!         GET "/repos/{owner}/{repo}" => get(owner: String, repo: String) -> Repo;
+//!         GET "/repos/{owner}/{repo}" => get(owner: &str, repo: &str) -> Repo;
 //!     }
 //! }
 //! ```
@@ -603,7 +607,7 @@
 //!     pub api GitHub = "";
 //!
 //!     pub group Repos {
-//!         GET "/repos/{owner}/{repo}/topics" => topics(owner: String, repo: String) -> Vec<String>;
+//!         GET "/repos/{owner}/{repo}/topics" => topics(owner: &str, repo: &str) -> Vec<String>;
 //!
 //!         #[error(OAuthError)]
 //!         POST "/login/oauth/access_token" => token(code: String) -> String;

@@ -188,7 +188,7 @@ quoll::api! {
     pub api Docker = "/v1.47";
 
     pub group Containers {
-        POST "/containers/{id}/start" => start(id: String);
+        POST "/containers/{id}/start" => start(id: &str);
     }
 }
 
@@ -196,7 +196,7 @@ quoll::api! {
 async fn main() -> quoll::Result<()> {
     let docker = Docker::client("http://localhost:2375")?;
 
-    if let Err(error) = docker.containers().start("web".into()).await {
+    if let Err(error) = docker.containers().start("web").await {
         // another api answered 404: No such container: web
         eprintln!("{error}");
 
@@ -261,7 +261,7 @@ quoll::api! {
     pub api GitHub = "";
 
     pub group Repos {
-        GET "/repos/{owner}/{repo}/topics" => topics(owner: String, repo: String) -> Vec<String>;
+        GET "/repos/{owner}/{repo}/topics" => topics(owner: &str, repo: &str) -> Vec<String>;
 
         #[error(OAuthError)]
         POST "/login/oauth/access_token" => token(code: String) -> String;
@@ -273,7 +273,7 @@ async fn main() -> quoll::Result<()> {
     let github = GitHub::client("https://github.com")?;
 
     let topics: quoll::Result<Vec<String>, GitHubError> =
-        github.repos().topics("rust-lang".into(), "rust".into()).await;
+        github.repos().topics("rust-lang", "rust").await;
     let token: quoll::Result<String, OAuthError> = github.repos().token("code".into()).await;
 
     println!("{:?}", topics?);
@@ -311,14 +311,14 @@ quoll::api! {
     pub api Docker = "/v1.47";
 
     pub group Containers {
-        POST "/containers/{id}/start" => start(id: String);
+        POST "/containers/{id}/start" => start(id: &str);
     }
 }
 
 struct NoContainers;
 
 impl Containers for NoContainers {
-    fn start(&self, id: String) -> impl Call<(), DockerError> {
+    fn start(&self, id: &str) -> impl Call<(), DockerError> {
         async move {
             let missing = DockerError {
                 message: format!("No such container: {id}"),
@@ -331,7 +331,7 @@ impl Containers for NoContainers {
 
 #[tokio::main]
 async fn main() {
-    let error = NoContainers.start("web".into()).await.unwrap_err();
+    let error = NoContainers.start("web").await.unwrap_err();
 
     assert_eq!(error.to_string(), "another api answered 404: No such container: web");
 }

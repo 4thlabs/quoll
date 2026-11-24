@@ -156,7 +156,7 @@ quoll::api! {
     pub api GitHub = "";
 
     pub group Repos {
-        GET "/repos/{owner}/{repo}" => get(owner: String, repo: String) -> Repo;
+        GET "/repos/{owner}/{repo}" => get(owner: &str, repo: &str) -> Repo;
     }
 }
 ```

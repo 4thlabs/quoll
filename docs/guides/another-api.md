@@ -59,17 +59,17 @@ quoll::api! {
     pub api GitHub = "";
 
     pub group Repos {
-        GET "/repos/{owner}/{repo}" => get(owner: String, repo: String) -> Repository;
+        GET "/repos/{owner}/{repo}" => get(owner: &str, repo: &str) -> Repository;
 
         #[header("Accept" = "application/vnd.github.raw+json")]
-        GET "/repos/{owner}/{repo}/readme" => readme(owner: String, repo: String) -> Bytes;
+        GET "/repos/{owner}/{repo}/readme" => readme(owner: &str, repo: &str) -> Bytes;
     }
 
     pub group Issues {
         GET "/repos/{owner}/{repo}/issues?labels={labels}&state={state}&per_page={per_page}&page={page}"
             => list(
-                owner: String,
-                repo: String,
+                owner: &str,
+                repo: &str,
                 #[join(",")] labels: Vec<String>,
                 state: Option<State>,
                 per_page: Option<u8>,
@@ -84,11 +84,11 @@ async fn main() -> anyhow::Result<()> {
         .with(client::user_agent("quoll-guide"))
         .build::<GitHub>("https://api.github.com")?;
 
-    let repo = github.repos().get("rust-lang".into(), "rust".into()).await?;
+    let repo = github.repos().get("rust-lang", "rust").await?;
 
     println!("{} has {} stars", repo.full_name, repo.stargazers_count);
 
-    let readme = github.repos().readme("rust-lang".into(), "rust".into()).await?;
+    let readme = github.repos().readme("rust-lang", "rust").await?;
     let readme = String::from_utf8(readme.into_vec())?;
 
     println!("{readme}");
@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
     let labels = vec!["C-bug".into(), "T-compiler".into()];
     let issues = github
         .issues()
-        .list("rust-lang".into(), "rust".into(), labels, Some(State::Open), Some(5), None)
+        .list("rust-lang", "rust", labels, Some(State::Open), Some(5), None)
         .await?;
 
     for issue in issues {
@@ -140,7 +140,7 @@ quoll::api! {
     pub api Geocoding = "/v1";
 
     pub group Places {
-        GET "/search?name={name}" => search(name: String) -> Places;
+        GET "/search?name={name}" => search(name: &str) -> Places;
     }
 }
 ```
@@ -344,12 +344,12 @@ quoll::api! {
     #[auth(Bearer)]
     pub group Stars {
         /// 204 when the signed-in user starred the repository, 404 otherwise.
-        GET "/user/starred/{owner}/{repo}" => check(owner: String, repo: String);
+        GET "/user/starred/{owner}/{repo}" => check(owner: &str, repo: &str);
     }
 }
 
 async fn starred(github: &GitHubClient, owner: &str, repo: &str) -> quoll::Result<bool, GitHubError> {
-    match github.stars().check(owner.into(), repo.into()).await {
+    match github.stars().check(owner, repo).await {
         Ok(()) => Ok(true),
         Err(error) if error.status() == Some(StatusCode::NOT_FOUND) => Ok(false),
         Err(error) => Err(error),
@@ -408,7 +408,7 @@ quoll::api! {
     #[auth(Bearer)]
     pub group Customers {
         POST "/customers"
-            => create(header("Idempotency-Key") key: Option<String>, customer: Form<NewCustomer>) -> Customer;
+            => create(header("Idempotency-Key") key: Option<&str>, customer: Form<NewCustomer>) -> Customer;
     }
 }
 
@@ -425,7 +425,7 @@ async fn main() -> quoll::Result<()> {
     };
     let created = stripe
         .customers()
-        .create(Some("order-42".into()), Form(customer))
+        .create(Some("order-42"), Form(customer))
         .await?;
 
     println!("{}", created.id);
@@ -685,7 +685,7 @@ quoll::api! {
     pub api OpenMeteo = "/v1";
 
     pub group Search {
-        GET "/search?name={name}&count={count}" => search(name: String, count: Option<u8>) -> Places;
+        GET "/search?name={name}&count={count}" => search(name: &str, count: Option<u8>) -> Places;
     }
 
     pub group Forecasts {
@@ -703,7 +703,7 @@ async fn main() -> quoll::Result<()> {
     let geocoding = OpenMeteo::client_with(http.clone(), "https://geocoding-api.open-meteo.com")?;
     let weather = OpenMeteo::client_with(http, "https://api.open-meteo.com")?;
 
-    let places = geocoding.search().search("Hobart".into(), Some(1)).await?;
+    let places = geocoding.search().search("Hobart", Some(1)).await?;
     let Some(hobart) = places.results.first() else {
         return Ok(());
     };
@@ -762,7 +762,7 @@ quoll::api! {
 
     pub group Issues {
         GET "/repos/{owner}/{repo}/issues?per_page={per_page}&page={page}"
-            => list(owner: String, repo: String, per_page: Option<u8>, page: Option<u32>) -> Vec<Issue>;
+            => list(owner: &str, repo: &str, per_page: Option<u8>, page: Option<u32>) -> Vec<Issue>;
     }
 }
 
@@ -772,7 +772,7 @@ async fn all_issues(github: &GitHubClient, owner: &str, repo: &str) -> quoll::Re
     for page in 1.. {
         let response = github
             .issues()
-            .list(owner.into(), repo.into(), Some(100), Some(page))
+            .list(owner, repo, Some(100), Some(page))
             .response()
             .await?;
         let link = response.headers().get(LINK).and_then(|link| link.to_str().ok());
