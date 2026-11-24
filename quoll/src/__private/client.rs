@@ -34,7 +34,7 @@ mod kind;
 mod redact;
 mod stream;
 
-pub(crate) use kind::{kind_of, status_of};
+pub(crate) use kind::{kind_of, passed_on_status};
 
 pub(crate) use redact::{redacted, strip_urls};
 
@@ -795,15 +795,19 @@ impl<T: Send + 'static, E: Send + 'static> crate::Call<T, E> for Pending<'_, T, 
 }
 
 /// The error of a call that got no answer to read, of the kind of `error`, a failure of reqwest or of the chain. One
-/// that passes on an answer a middleware turned into an error with `error_for_status` says so, with its status.
+/// that passes on a reqwest error of a status says so, as a fact of that error: which client's answer it was, nothing
+/// says.
 fn failed_call<X: StdError + Send + Sync + 'static>(route: &Route, what: &str, error: X) -> Error {
     let kind = kind_of(&error);
 
-    let Some(status) = status_of(&error) else {
+    let Some(status) = passed_on_status(&error) else {
         return no_answer(route, what, kind, error);
     };
 
-    let what = format!("got an answer of status {status}, which a middleware turned into an error");
+    let what = format!(
+        "failed in a middleware with a reqwest error of status {}",
+        status.as_u16()
+    );
 
     no_answer(route, &what, kind, error)
 }

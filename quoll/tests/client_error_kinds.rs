@@ -792,7 +792,7 @@ async fn an_answer_a_middleware_turns_into_an_error_is_middleware_and_is_not_tri
     );
     assert_eq!(
         error.to_string(),
-        "the call `notes_get` got an answer of status 503 Service Unavailable, which a middleware turned into an error"
+        "the call `notes_get` failed in a middleware with a reqwest error of status 503"
     );
     assert_eq!(
         answers.load(Ordering::SeqCst),
@@ -864,7 +864,7 @@ async fn a_middleware_whose_own_json_does_not_decode_is_middleware() {
 }
 
 #[tokio::test]
-async fn trace_records_the_status_of_an_answer_a_middleware_turned_into_an_error() {
+async fn trace_records_no_status_for_a_reqwest_error_of_a_status_a_middleware_fails_with() {
     let (log, _capture) = support::log::capture(true);
     let (url, _) = raw(cut(
         "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close",
@@ -888,8 +888,45 @@ async fn trace_records_the_status_of_an_answer_a_middleware_turned_into_an_error
         .find(|line| line.contains("HTTP request"))
         .expect("a span");
 
-    assert!(span.contains("http.response.status_code=503"), "{span}");
+    // Which client's answer the status was, nothing says: the span claims none for the call.
+    assert!(!span.contains("http.response.status_code"), "{span}");
     assert!(span.contains("error.type=\"middleware\""), "{span}");
+}
+
+#[tokio::test]
+async fn a_middleware_whose_own_read_of_a_body_fails_is_middleware() {
+    let (url, calls) = raw(ok("application/json", br#"{"id":1}"#)).await;
+    let (other, _) = raw(cut(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100",
+        br#"{"token""#,
+    ))
+    .await;
+    let reading = middleware(move |request, extensions, next| {
+        let other = other.clone();
+
+        Box::pin(async move {
+            // reqwest's error of the middleware's own read of a cut body, passed on with `?`.
+            reqwest::get(format!("{other}/token"))
+                .await?
+                .bytes()
+                .await?;
+
+            next.run(request, extensions).await
+        })
+    });
+
+    let error = client::builder()
+        .with(reading)
+        .build::<Api>(&url)
+        .expect("a client")
+        .notes()
+        .get(1)
+        .await
+        .expect_err("cut");
+
+    assert_eq!(kind(&error), ErrorKind::Middleware);
+    assert!(!kind(&error).answered());
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "the api was not called");
 }
 
 /// A middleware that asks something of a server at `other` with a client of its own before each call, and fails the

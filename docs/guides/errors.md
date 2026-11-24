@@ -176,16 +176,15 @@ Every error has a kind, which `error.kind()` gives. A handler's errors have one 
 | `Closed`         | the request was sent, and no usable answer came back: closed, reset, or not HTTP         |
 | `Body`           | the answer began, and its body could not be read to its end                              |
 | `Decode`         | the answer has a success status, and is not the route's result                           |
-| `Middleware`     | a middleware failed the call, a reqwest error of a status included                       |
+| `Middleware`     | a middleware failed the call; a reqwest error it passes on follows the rule below        |
 | `Invalid`        | the call could not be sent as it is written, such as a URL that is not one               |
 
 A middleware's error says why among its sources. A reqwest error, or an error of reqwest-middleware's, that a
 middleware passes on as it is keeps its kind, whichever client it came from: the rest of the call's chain, or a client
 of the middleware's own, which the kind cannot tell apart. A middleware whose own failure must read `Middleware` wraps
-it in an error type of its own. Two reqwest errors passed on are `Middleware` all the same: one of a status, an answer
-that a middleware turned into an error with `error_for_status`, which has no status; and a decode error, of a
-middleware's own `json()`. A body that quoll reads itself and that fails is `Body`. quoll's deadline on the head of a
-stream is `Timeout`.
+it in an error type of its own. A reqwest error passed on is `Middleware` when it is a body, decode, redirect,
+upgrade or status error, and keeps `Connect`, `Timeout`, `Invalid` or `Closed` otherwise. A body that quoll reads
+itself and that fails is `Body`. quoll's deadline on the head of a stream is `Timeout`.
 
 `ErrorKind` is `#[non_exhaustive]`: a `match` on it ends with `_`, so that a later version may add a kind. A status is
 matched by its constant, or by a guard:
