@@ -27,6 +27,11 @@ use http::StatusCode;
 /// assert_eq!(what_to_do(&Error::not_found("no such note")), "no such note: its detail says why");
 /// assert_eq!(what_to_do(&Error::failed(ErrorKind::Timeout, "slow")), "the other api is slow: try again later");
 /// ```
+///
+/// A failure of reqwest is sorted by reqwest's own predicates, in this order: `is_builder` is `Invalid`, `is_connect`
+/// `Connect`, `is_timeout` `Timeout`, `is_body` `Body`, `is_decode` `Decode`, `is_redirect` `Middleware`, and any
+/// other, `is_request` among them, `Closed`. A middleware's own error is `Middleware`, unless it passes on a reqwest
+/// error or an error of the chain, which keeps its kind. quoll's own cases are said with each kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ErrorKind {
@@ -35,13 +40,15 @@ pub enum ErrorKind {
     /// what [`Error::status`](crate::Error::status) gives. An `event: problem` in a stream is of the problem's status,
     /// and ends the stream.
     Status(StatusCode),
-    /// No connection could be opened: refused, a name that does not resolve, a TLS handshake that failed, a proxy
-    /// that refused. Nothing was sent, so that any call may be tried again.
+    /// No connection could be opened, what reqwest reports as `is_connect`: refused, a name that does not resolve, a
+    /// TLS handshake that failed, a proxy that refused, a connect timeout. Nothing was sent, so that any call may be
+    /// tried again.
     Connect,
-    /// A deadline passed: the call's `timeout`, the one of [`client::timeout`], or reqwest's own. On a whole result it
-    /// covers the body too. On a stream, quoll's deadline bounds the head of the answer alone, and a deadline of
-    /// reqwest's that passes while the body is read is a `Timeout` too, after which the stream ends. The other api may
-    /// have served the request, and may have begun to answer it.
+    /// A deadline passed, what reqwest reports as `is_timeout`, or quoll's own on the head of a stream: the call's
+    /// `timeout`, the one of [`client::timeout`], or reqwest's own. On a whole result it covers the body too. On a
+    /// stream, quoll's deadline bounds the head of the answer alone, and a deadline of reqwest's that passes while the
+    /// body is read is a `Timeout` too, after which the stream ends. The other api may have served the request, and
+    /// may have begun to answer it.
     ///
     #[cfg_attr(
         feature = "client",
@@ -49,33 +56,35 @@ pub enum ErrorKind {
     )]
     #[cfg_attr(not(feature = "client"), doc = "[`client::timeout`]: crate#features")]
     Timeout,
-    /// The connection was open and the request sent, then the connection failed before the head of its answer came:
-    /// closed, cancelled, reset or aborted, a broken pipe or an end of the connection before the answer was whole, as
-    /// by a server that restarts or a proxy that drops an idle connection. Any other failure of the transport once the
-    /// request was sent, which no other kind names, is a `Closed` too. It may pass: [`client::retry`] tries an
-    /// idempotent request again after it, up to its number of times.
+    /// The request left and no usable head came back: any failure of reqwest that no other kind names, what it
+    /// reports as `is_request` among them. A connection closed or reset before the answer, as by a server that
+    /// restarts or a proxy that drops an idle connection, a request dropped by its connection, and a peer that answers
+    /// bytes that are not HTTP, as a TLS port called over `http`. It may pass: [`client::retry`] tries an idempotent
+    /// request again after it, up to its number of times.
     ///
     #[cfg_attr(feature = "client", doc = "[`client::retry`]: crate::client::retry")]
     #[cfg_attr(not(feature = "client"), doc = "[`client::retry`]: crate#features")]
     Closed,
-    /// The answer began, and its body could not be read to its end: a connection cut or reset in the middle of it, a
-    /// compression that does not decode, or an item of a stream longer than the 1 MiB the client reads. A stream ends
+    /// The answer began, and its body could not be read to its end, what reqwest reports as `is_body`: a connection
+    /// cut or reset in the middle of it. Any failure to read a body but a deadline is a `Body`, a compression that
+    /// does not decode among them, and so is an item of a stream longer than the 1 MiB the client reads. A stream ends
     /// after it.
     Body,
-    /// The answer does not read: it came whole, with a success status, and is not the route's result, a content type
-    /// that is not the route's, a text that is not UTF-8, JSON that is not the result; or the peer sent bytes that are
-    /// not HTTP, a head that cannot be parsed, as a TLS port called over `http` answers, or a message the connection
-    /// did not wait for. In a stream, an item that does not read as the route's item, after which the stream goes on.
-    /// Something answered: the connection works, and the call fails again.
+    /// The answer does not read, what reqwest reports as `is_decode` outside the read of a body: it came whole, with a
+    /// success status, and is not the route's result, a content type that is not the route's, a text that is not
+    /// UTF-8, JSON that is not the result. In a stream, an item that does not read as the route's item, after which
+    /// the stream goes on. The other api answered: the connection works, and the call fails again.
     Decode,
     /// A middleware failed the call itself: a credential that cannot be sent, a token that could not be had, a redirect
-    /// to a request sent already or past its limit, or a middleware of the application's, whatever its error holds, a
-    /// `quoll::Error` of a call of its own or the error of the chain wrapped in its own. What caused it stays among its
-    /// sources. A reqwest error that a middleware passes through as it is keeps that error's kind.
+    /// to a request sent already or past its limit, reqwest's own policy of redirects that gave up, what it reports as
+    /// `is_redirect`, or a middleware of the application's, whatever its error holds, a `quoll::Error` of a call of its
+    /// own or the error of the chain wrapped in its own. What caused it stays among its sources. A reqwest error, or
+    /// an error of the chain, that a middleware passes on as it is keeps its kind, and quoll's deadline on the head of
+    /// a stream is a [`Timeout`](Self::Timeout).
     Middleware,
-    /// The call could not be sent as it was written: a client given a URL that is not one, a path parameter that is
-    /// `None`, a header with a line break, or a body stream of the caller's that failed while it was sent. It is the
-    /// mistake of the code that called it, and fails again.
+    /// The call could not be sent as it was written, what reqwest reports as `is_builder`, or what quoll finds before
+    /// it sends: a client given a URL that is not one, a path parameter that is `None`, a header with a line break. It
+    /// is the mistake of the code that called it, and fails again.
     Invalid,
 }
 

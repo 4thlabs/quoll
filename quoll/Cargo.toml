@@ -39,7 +39,6 @@ client = [
     "dep:reqwest-middleware",
     "dep:backon",
     "dep:httpdate",
-    "dep:hyper",
     "dep:reqwest-tracing",
     "dep:serde_html_form",
     "dep:tokio",
@@ -64,8 +63,6 @@ futures-util = { version = "0.3", default-features = false, optional = true }
 http = "1"
 # The HTTP date of a `Retry-After`, which `client::Attempt::retry_after` reads.
 httpdate = { version = "1", optional = true }
-# The errors of an answer hyper cannot parse, which the kind of a client's error tells from a connection closed.
-hyper = { version = "1", default-features = false, optional = true }
 # The key of a query scheme, which the server reads with neither feature.
 percent-encoding = "2"
 # The values of a stream result written as results, with no box of their own.

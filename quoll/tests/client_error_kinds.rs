@@ -495,8 +495,8 @@ async fn a_redirect_loop_is_middleware() {
 }
 
 #[tokio::test]
-async fn a_head_that_is_not_http_is_decode_and_is_not_tried_again() {
-    // What a server of another protocol writes first, as SSH does, or a TLS port called over `http`.
+async fn a_head_that_is_not_http_is_closed_and_tried_again() {
+    // What a server of another protocol writes first, as SSH does, or a TLS port called over `http`: no usable head.
     let (url, answers) = raw(Then::Answer(Arc::from(&b"SSH-2.0-OpenSSH_9.6\r\n"[..]))).await;
 
     let error = client::builder()
@@ -508,12 +508,8 @@ async fn a_head_that_is_not_http_is_decode_and_is_not_tried_again() {
         .await
         .expect_err("not HTTP");
 
-    assert_eq!(kind(&error), ErrorKind::Decode);
-    assert_eq!(
-        answers.load(Ordering::SeqCst),
-        1,
-        "it fails again: not tried again"
-    );
+    assert_eq!(kind(&error), ErrorKind::Closed);
+    assert_eq!(answers.load(Ordering::SeqCst), 3, "tried twice more");
 }
 
 /// A source of tokens that asks each of an auth server at its URL, through a quoll client of its own.
@@ -713,6 +709,30 @@ async fn a_reqwest_error_a_middleware_passes_through_as_it_is_keeps_its_kind() {
 
     let error = client::builder()
         .with(passing)
+        .build::<Api>(&url)
+        .expect("a client")
+        .notes()
+        .get(1)
+        .await
+        .expect_err("refused");
+
+    assert_eq!(kind(&error), ErrorKind::Connect);
+}
+
+#[tokio::test]
+async fn an_error_of_the_chain_a_middleware_passes_on_nested_keeps_its_kind() {
+    let (url, _socket) = refused();
+    // The whole error of the rest of the chain, in the middleware's own, as `redact` and `trace` read it too.
+    let nesting = middleware(|request, extensions, next| {
+        Box::pin(async move {
+            next.run(request, extensions)
+                .await
+                .map_err(reqwest_middleware::Error::middleware)
+        })
+    });
+
+    let error = client::builder()
+        .with(nesting)
         .build::<Api>(&url)
         .expect("a client")
         .notes()
