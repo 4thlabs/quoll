@@ -5,21 +5,15 @@ error[E0277]: `Vec<&str>` is not an argument of type `Vec<String>`
    |                  ^^^^ not an argument of type `Vec<String>`
    |
    = help: the trait `Arg<Vec<String>>` is not implemented for `Vec<&str>`
-   = note: an argument takes its type in the contract, a `&str` for a `String`, a reference, which is cloned, or an array or a slice for a `Vec`: write `["a"]` rather than `vec!["a"]`, and `Some("x".into())` for an `Option<String>`
-help: the following other types implement trait `Arg<T>`
-  --> src/arg.rs
-   |
-   | impl Arg<String> for &str {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^ `&str` implements `Arg<String>`
-...
-   | impl<T: Clone + Sync> Arg<T> for &T {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&T` implements `Arg<T>`
-...
-   | impl<T, A: Arg<T>, const N: usize> Arg<Vec<T>> for [A; N] {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `[A; N]` implements `Arg<Vec<T>>`
-...
-   | impl<T, A: Arg<T> + Clone + Sync> Arg<Vec<T>> for &[A] {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&[A]` implements `Arg<Vec<T>>`
+   = note: an argument of type `Vec<String>` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
+   = note: no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
+   = help: the following other types implement trait `Arg<T>`:
+             `&&str` implements `Arg<String>`
+             `&T` implements `Arg<T>`
+             `&[A; N]` implements `Arg<Vec<T>>`
+             `&[A]` implements `Arg<Vec<T>>`
+             `&str` implements `Arg<String>`
+             `[A; N]` implements `Arg<Vec<T>>`
 note: required by a bound in `Issues::list::{anon_assoc#0}`
   --> tests/compile_fail_client/arg_vec_of_str.rs:6:55
    |
@@ -35,21 +29,15 @@ error[E0277]: `Vec<&str>` is not an argument of type `Vec<String>`
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not an argument of type `Vec<String>`
    |
    = help: the trait `Arg<Vec<String>>` is not implemented for `Vec<&str>`
-   = note: an argument takes its type in the contract, a `&str` for a `String`, a reference, which is cloned, or an array or a slice for a `Vec`: write `["a"]` rather than `vec!["a"]`, and `Some("x".into())` for an `Option<String>`
-help: the following other types implement trait `Arg<T>`
-  --> src/arg.rs
-   |
-   | impl Arg<String> for &str {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^ `&str` implements `Arg<String>`
-...
-   | impl<T: Clone + Sync> Arg<T> for &T {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&T` implements `Arg<T>`
-...
-   | impl<T, A: Arg<T>, const N: usize> Arg<Vec<T>> for [A; N] {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `[A; N]` implements `Arg<Vec<T>>`
-...
-   | impl<T, A: Arg<T> + Clone + Sync> Arg<Vec<T>> for &[A] {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&[A]` implements `Arg<Vec<T>>`
+   = note: an argument of type `Vec<String>` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
+   = note: no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
+   = help: the following other types implement trait `Arg<T>`:
+             `&&str` implements `Arg<String>`
+             `&T` implements `Arg<T>`
+             `&[A; N]` implements `Arg<Vec<T>>`
+             `&[A]` implements `Arg<Vec<T>>`
+             `&str` implements `Arg<String>`
+             `[A; N]` implements `Arg<Vec<T>>`
 note: required by a bound in `<IssuesClient as Issues>::list`
   --> tests/compile_fail_client/arg_vec_of_str.rs:6:55
    |
@@ -65,21 +53,15 @@ error[E0277]: `Vec<&str>` is not an argument of type `Vec<String>`
    |                                      ^^^^^ not an argument of type `Vec<String>`
    |
    = help: the trait `Arg<Vec<String>>` is not implemented for `Vec<&str>`
-   = note: an argument takes its type in the contract, a `&str` for a `String`, a reference, which is cloned, or an array or a slice for a `Vec`: write `["a"]` rather than `vec!["a"]`, and `Some("x".into())` for an `Option<String>`
-help: the following other types implement trait `Arg<T>`
-  --> src/arg.rs
-   |
-   | impl Arg<String> for &str {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^ `&str` implements `Arg<String>`
-...
-   | impl<T: Clone + Sync> Arg<T> for &T {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&T` implements `Arg<T>`
-...
-   | impl<T, A: Arg<T>, const N: usize> Arg<Vec<T>> for [A; N] {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `[A; N]` implements `Arg<Vec<T>>`
-...
-   | impl<T, A: Arg<T> + Clone + Sync> Arg<Vec<T>> for &[A] {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&[A]` implements `Arg<Vec<T>>`
+   = note: an argument of type `Vec<String>` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
+   = note: no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
+   = help: the following other types implement trait `Arg<T>`:
+             `&&str` implements `Arg<String>`
+             `&T` implements `Arg<T>`
+             `&[A; N]` implements `Arg<Vec<T>>`
+             `&[A]` implements `Arg<Vec<T>>`
+             `&str` implements `Arg<String>`
+             `[A; N]` implements `Arg<Vec<T>>`
 note: required by a bound in `<IssuesClient as Issues>::list`
   --> tests/compile_fail_client/arg_vec_of_str.rs:6:55
    |

@@ -1,0 +1,71 @@
+error[E0277]: `i32` is not an argument of type `i64`
+  --> tests/compile_fail_client/arg_other_number.rs:12:17
+   |
+12 |     api.notes().get(id).await
+   |                 ^^^ not an argument of type `i64`
+   |
+   = help: the trait `Arg<i64>` is not implemented for `i32`
+   = note: an argument of type `i64` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
+   = note: no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
+   = help: the following other types implement trait `Arg<T>`:
+             `&&str` implements `Arg<String>`
+             `&T` implements `Arg<T>`
+             `&[A; N]` implements `Arg<Vec<T>>`
+             `&[A]` implements `Arg<Vec<T>>`
+             `&str` implements `Arg<String>`
+             `[A; N]` implements `Arg<Vec<T>>`
+note: required by a bound in `Notes::get::{anon_assoc#0}`
+  --> tests/compile_fail_client/arg_other_number.rs:6:38
+   |
+ 1 | quoll::api! {
+...
+ 6 |         GET "/notes/{id}" => get(id: i64) -> String;
+   |                                      ^^^ required by this bound in `Notes::get::{anon_assoc#0}`
+
+error[E0277]: `i32` is not an argument of type `i64`
+  --> tests/compile_fail_client/arg_other_number.rs:12:5
+   |
+12 |     api.notes().get(id).await
+   |     ^^^^^^^^^^^^^^^^^^^ not an argument of type `i64`
+   |
+   = help: the trait `Arg<i64>` is not implemented for `i32`
+   = note: an argument of type `i64` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
+   = note: no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
+   = help: the following other types implement trait `Arg<T>`:
+             `&&str` implements `Arg<String>`
+             `&T` implements `Arg<T>`
+             `&[A; N]` implements `Arg<Vec<T>>`
+             `&[A]` implements `Arg<Vec<T>>`
+             `&str` implements `Arg<String>`
+             `[A; N]` implements `Arg<Vec<T>>`
+note: required by a bound in `<NotesClient as Notes>::get`
+  --> tests/compile_fail_client/arg_other_number.rs:6:38
+   |
+ 1 | quoll::api! {
+...
+ 6 |         GET "/notes/{id}" => get(id: i64) -> String;
+   |                                      ^^^ required by this bound in `<NotesClient as Notes>::get`
+
+error[E0277]: `i32` is not an argument of type `i64`
+  --> tests/compile_fail_client/arg_other_number.rs:12:25
+   |
+12 |     api.notes().get(id).await
+   |                         ^^^^^ not an argument of type `i64`
+   |
+   = help: the trait `Arg<i64>` is not implemented for `i32`
+   = note: an argument of type `i64` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
+   = note: no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
+   = help: the following other types implement trait `Arg<T>`:
+             `&&str` implements `Arg<String>`
+             `&T` implements `Arg<T>`
+             `&[A; N]` implements `Arg<Vec<T>>`
+             `&[A]` implements `Arg<Vec<T>>`
+             `&str` implements `Arg<String>`
+             `[A; N]` implements `Arg<Vec<T>>`
+note: required by a bound in `<NotesClient as Notes>::get`
+  --> tests/compile_fail_client/arg_other_number.rs:6:38
+   |
+ 1 | quoll::api! {
+...
+ 6 |         GET "/notes/{id}" => get(id: i64) -> String;
+   |                                      ^^^ required by this bound in `<NotesClient as Notes>::get`

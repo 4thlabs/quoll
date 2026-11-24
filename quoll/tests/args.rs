@@ -3,6 +3,8 @@
 
 #![cfg(all(feature = "server", feature = "client"))]
 
+use std::cell::Cell;
+
 use quoll::{Response, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,6 +36,13 @@ struct NewNote {
     title: String,
 }
 
+/// A body that is `Send` but not `Sync`, which a reference passes all the same, as it is cloned before the call is
+/// built.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+struct Counter {
+    count: Cell<u32>,
+}
+
 quoll::api! {
     api Api = "/api";
 
@@ -45,6 +54,7 @@ quoll::api! {
             => options(state: Option<State>, page: Option<u32>, key: Option<String>) -> Options;
         GET  "/numbers/{id}?page={page}" => numbers(id: i64, page: u32) -> Numbers;
         POST "/notes/{owner}" => create(owner: String, note: NewNote) -> NewNote;
+        POST "/counters" => count(counter: Counter) -> u32;
     }
 }
 
@@ -76,6 +86,10 @@ impl ArgsServer for App {
         Ok(Response::new(Numbers { id, page }))
     }
 
+    async fn count(&self, counter: Counter) -> Result<Response<u32>> {
+        Ok(Response::new(counter.count.get()))
+    }
+
     async fn create(&self, owner: String, note: NewNote) -> Result<Response<NewNote>> {
         Ok(Response::new(NewNote {
             title: format!("{owner}: {}", note.title),
@@ -95,6 +109,14 @@ async fn a_string_takes_a_str_a_reference_or_a_string() -> Result<()> {
     let api = served().await;
     let owner = String::from("rust-lang");
     let repo: &str = "rust";
+    let repos = ["rust", "cargo"];
+
+    for name in &repos {
+        assert_eq!(
+            api.args().strings("rust-lang", name).await?,
+            ["rust-lang", name]
+        );
+    }
 
     assert_eq!(
         api.args().strings("rust-lang", "rust").await?,
@@ -134,6 +156,10 @@ async fn a_list_takes_an_array_a_slice_a_reference_or_a_vec() -> Result<()> {
     assert_eq!(
         api.args().lists(["C-bug", "T-compiler"], ["a"]).await?,
         lists(&[&names, &["a"]])
+    );
+    assert_eq!(
+        api.args().lists(&["C-bug", "T-compiler"], &names).await?,
+        lists(&[&names, &names])
     );
     assert_eq!(
         api.args().lists(&labels, &labels[..1]).await?,
@@ -201,6 +227,13 @@ async fn a_number_keeps_the_type_of_its_argument() -> Result<()> {
         assert_eq!(api.args().numbers(7, page).await?, Numbers { id: 7, page });
     }
 
+    let parsed = api
+        .args()
+        .numbers("4".parse::<i64>().expect("a number"), 1)
+        .await?;
+
+    assert_eq!(parsed, Numbers { id: 4, page: 1 });
+
     let id: i64 = 9;
 
     assert_eq!(
@@ -219,6 +252,17 @@ async fn a_body_takes_its_value_or_a_reference() -> Result<()> {
 
     assert_eq!(api.args().create("ana", &note).await?.title, "ana: Milk");
     assert_eq!(api.args().create("bo", note).await?.title, "bo: Milk");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_body_that_is_not_sync_takes_a_reference() -> Result<()> {
+    let api = served().await;
+    let counter = Counter {
+        count: Cell::new(3),
+    };
+
+    assert_eq!(api.args().count(&counter).await?, 3);
     Ok(())
 }
 
