@@ -341,6 +341,8 @@ assert_eq!(request(), "none");
 - `.into_router(router)` gives the router with its layers, for an application that serves it itself, or for
   [a test](testing.md).
 
+Every TCP connection they accept has `TCP_NODELAY`: a small write, such as an event of a stream, is sent at once.
+
 `serve` and `serve_on` return an `std::io::Result<()>`. It is an error when the address cannot be bound, or when the
 signals cannot be listened to.
 
