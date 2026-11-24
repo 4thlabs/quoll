@@ -171,7 +171,7 @@ Every error has a kind, which `error.kind()` gives. A handler's errors have one 
 |--------------------------|-----------------------------------------------------------------------------------------|
 | `Status(status)`         | the answer has an error status; its `detail()` is the body, when it has the api's shape |
 | `Connect`                | no connection: refused, a name that does not resolve, TLS. Nothing was sent.            |
-| `Timeout`                | a deadline passed before the answer. The other API may have served the request.         |
+| `Timeout`                | a deadline passed. The other API may have served the request, or begun to answer it.    |
 | `Closed`                 | the request was sent, then the connection closed or reset before the answer             |
 | `Body`                   | the answer began, and its body could not be read to its end                             |
 | `Decode`                 | the answer does not read: it is not the route's result, or not HTTP at all              |

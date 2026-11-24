@@ -49,8 +49,12 @@ pub enum ErrorKind {
     )]
     #[cfg_attr(not(feature = "client"), doc = "[`client::timeout`]: crate#features")]
     Timeout,
-    /// The connection was open and the request sent, then the connection was closed, reset or cancelled before the
-    /// head of its answer came: a server that restarts, a proxy that drops an idle connection.
+    /// The connection was open and the request sent, then the connection failed before the head of its answer came:
+    /// closed, reset or cancelled, as by a server that restarts or a proxy that drops an idle connection, or a broken
+    /// pipe. It may pass: [`client::retry`] tries an idempotent request again after it.
+    ///
+    #[cfg_attr(feature = "client", doc = "[`client::retry`]: crate::client::retry")]
+    #[cfg_attr(not(feature = "client"), doc = "[`client::retry`]: crate#features")]
     Closed,
     /// The answer began, and its body could not be read to its end: a connection cut or reset in the middle of it, a
     /// compression that does not decode, or an item of a stream longer than the 1 MiB the client reads. A stream ends
@@ -58,7 +62,7 @@ pub enum ErrorKind {
     Body,
     /// The answer does not read: it came whole, with a success status, and is not the route's result, a content type
     /// that is not the route's, a text that is not UTF-8, JSON that is not the result; or it is not HTTP at all, a head
-    /// of another protocol, as a TLS port called over `http`. In a stream, an item that does not read as the route's
+    /// that cannot be parsed, as a TLS port called over `http` answers. In a stream, an item that does not read as the route's
     /// item, after which the stream goes on. Something answered: the connection works, and the call fails again.
     Decode,
     /// A middleware failed the call itself: a credential that cannot be sent, a token that could not be had, whatever

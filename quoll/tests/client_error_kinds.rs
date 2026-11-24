@@ -79,6 +79,8 @@ enum Then {
     Close,
     /// Keeps the connection open and answers nothing.
     Hold,
+    /// Resets the connection with no answer.
+    Reset,
 }
 
 /// A server of raw TCP on a free port that does `then` on each connection: its URL, and the count of its connections.
@@ -125,6 +127,12 @@ async fn serve(mut connection: TcpStream, then: Then) -> Option<TcpStream> {
         }
         Then::Close => None,
         Then::Hold => Some(connection),
+        Then::Reset => {
+            // With no linger, closing sends a reset rather than an end.
+            connection.set_zero_linger().expect("no linger");
+
+            None
+        }
     }
 }
 
@@ -254,6 +262,25 @@ async fn a_connection_closed_before_the_answer_is_closed() {
     let error = api(&url).notes().get(1).await.expect_err("no answer");
 
     assert_eq!(kind(&error), ErrorKind::Closed);
+}
+
+#[tokio::test]
+async fn a_connection_reset_before_the_answer_is_closed_and_tried_again() {
+    let (url, resets) = raw(Then::Reset).await;
+
+    let alone = api(&url).notes().get(1).await.expect_err("reset");
+    let retried = client::builder()
+        .with(client::retry(2))
+        .build::<Api>(&url)
+        .expect("a client")
+        .notes()
+        .get(1)
+        .await
+        .expect_err("reset");
+
+    assert_eq!(kind(&alone), ErrorKind::Closed);
+    assert_eq!(kind(&retried), ErrorKind::Closed);
+    assert_eq!(resets.load(Ordering::SeqCst), 4, "once, then three times");
 }
 
 #[tokio::test]
@@ -538,6 +565,39 @@ async fn a_token_that_could_not_be_had_is_middleware_and_keeps_its_own_kind_in_i
     }
 
     assert_eq!(token, Some(ErrorKind::Connect), "{error:?}");
+}
+
+#[tokio::test]
+async fn a_middleware_whose_own_call_to_an_api_of_another_shape_failed_is_middleware() {
+    let (url, calls) = raw(ok("application/json", br#"{"id":1}"#)).await;
+    let (other, _socket) = refused();
+    let looked_up = middleware(move |request, extensions, next| {
+        let other = other.clone();
+
+        Box::pin(async move {
+            // A call of the middleware's own, whose error is a `quoll::Error<GitHubError>`.
+            GitHub::client(&other)
+                .expect("a client")
+                .repos()
+                .get("ana")
+                .await
+                .map_err(reqwest_middleware::Error::middleware)?;
+
+            next.run(request, extensions).await
+        })
+    });
+
+    let error = client::builder()
+        .with(looked_up)
+        .build::<Api>(&url)
+        .expect("a client")
+        .notes()
+        .get(1)
+        .await
+        .expect_err("the middleware fails");
+
+    assert_eq!(kind(&error), ErrorKind::Middleware);
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "the api was not called");
 }
 
 /// What a middleware's call returns.

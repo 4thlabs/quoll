@@ -29,8 +29,10 @@ fn docker() -> DockerClient {
         .expect("a client of the daemon")
 }
 
-/// Whether `error` says that nothing listens where the daemon would: no socket, or a connection refused. Any other
-/// error, an answer with a status among them, is the daemon's, and fails the test.
+/// Whether `error` says that nothing listens where the daemon would: only an I/O error of no socket, `NotFound`, or
+/// of a connection refused, `ConnectionRefused`, means there is no daemon. Not `ErrorKind::Connect` as a whole: a
+/// `DOCKER_HOST` that does not resolve, or a socket the test may not open, is a mistake of the setup, and fails the
+/// test, as any other error does, an answer with a status among them.
 fn nothing_listens(error: &quoll::Error<DockerError>) -> bool {
     let mut source = error.source();
 

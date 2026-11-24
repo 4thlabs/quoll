@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 
 use http::{HeaderMap, StatusCode, Version};
 
-use super::{Shape, failed_call, no_answer, read_problem};
+use super::{Shape, no_answer, read_problem, unread_body};
 use crate::__private::known::Items;
 use crate::{Error, ErrorKind, Response, Route};
 
@@ -96,7 +96,7 @@ where
                 }
                 Err(error) => {
                     let error =
-                        failed_call(route, "got an answer whose body cannot be read", error);
+                        unread_body(route, "got an answer whose body cannot be read", error);
 
                     return Some((Err(error), None));
                 }
@@ -126,7 +126,7 @@ pub(crate) fn chunks(response: reqwest::Response, route: &'static Route) -> Item
                 Ok(None) => return None,
                 Err(error) => {
                     let error =
-                        failed_call(route, "got an answer whose body cannot be read", error);
+                        unread_body(route, "got an answer whose body cannot be read", error);
 
                     return Some((Err(error), None));
                 }

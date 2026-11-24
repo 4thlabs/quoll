@@ -40,6 +40,9 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
 - An `event: problem` whose data is not a problem is an item that does not read, of the kind `Decode`: the stream goes
   on after it, where it ended before. After an error, a stream of the client goes on when its kind is `Decode`, and
   has ended after any other.
+- `client::retry` tries an idempotent request again after every failure of the kind `Closed`, a connection closed,
+  reset or cancelled before the answer: a broken pipe on a pooled connection that a proxy dropped, and an end of the
+  connection hyper reports, are tried again too, where a reset, an aborted or an incomplete connection alone were.
 - rustc's messages name quoll's `Status` type `quoll::Status`, by its path, since the variant `ErrorKind::Status`
   shares its name.
 
