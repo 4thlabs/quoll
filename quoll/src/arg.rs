@@ -6,15 +6,20 @@
 /// An argument of type `T` takes:
 ///
 /// - a `T`, the contract's type: `3` for an `i64`, `Some(5)` or `None` for an `Option<u32>`;
-/// - a `&str` for a `String`;
+/// - a `&str` or a `&&str`, what `for name in &names` gives, for a `String`;
 /// - a `&T`, which is cloned: `&owner` for a `String`, `&labels` for a `Vec<String>`;
-/// - an array or a slice of what an item takes, for a `Vec<T>`: `["C-bug", "T-compiler"]` or `&labels[..]` for a
-///   `Vec<String>`.
+/// - an array, a reference to an array or a slice of what an item takes, for a `Vec<T>`: `["C-bug", "T-compiler"]`,
+///   `&["C-bug"]` or `&labels[..]` for a `Vec<String>`.
+///
+/// A `&Vec<&str>` is no `Vec<String>`, as an impl for it would overlap the one of `&T`: it is written `&names[..]`.
 ///
 /// No other conversion is made. An `Option<T>` takes `Some(..)` or `None`, and an `Option<String>` takes
 /// `Some("x".into())`: taking `Some("x")` too would make `None` ambiguous. A `Vec<String>` takes `["a"]` rather than
 /// `vec!["a"]`, for the same reason with `vec![]`. No number becomes another, so that `5` keeps the type of the
-/// argument.
+/// argument: an `i32` given for an `i64` is written `i64::from(n)`, or `n.try_into()?` where it may not fit.
+///
+/// A value whose type came from the parameter, `id.parse()?`, `.collect()`, `Default::default()` or
+/// `n.try_into()?`, has several candidates, and says its type: `id.parse::<i64>()?`.
 ///
 /// ```no_run
 /// quoll::api! {
@@ -79,17 +84,19 @@
 ///
 /// A call's type names the types of its arguments, so a call keeps borrowed what they borrow until it is awaited: a
 /// call given `&owner`, a `String`, keeps `owner` borrowed, and dropping `owner` before the `.await` does not compile.
+/// A call that outlives its arguments takes them by value, `owner` or `owner.clone()`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an argument of type `{T}`",
     label = "not an argument of type `{T}`",
-    note = "an argument takes its type in the contract, a `&str` for a `String`, a reference, which is cloned, or an array or a slice for a `Vec`: write `[\"a\"]` rather than `vec![\"a\"]`, and `Some(\"x\".into())` for an `Option<String>`"
+    note = "an argument of type `{T}` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes",
+    note = "no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some(\"x\".into())`, and a `Vec<String>` `[\"a\"]` rather than `vec![\"a\"]`"
 )]
-pub trait Arg<T>: Sized + Send {
+pub trait Arg<T>: Sized {
     /// The value of the contract's type that the argument gives.
     fn into_value(self) -> T;
 }
 
-impl<T: Send> Arg<T> for T {
+impl<T> Arg<T> for T {
     fn into_value(self) -> T {
         self
     }
@@ -101,7 +108,13 @@ impl Arg<String> for &str {
     }
 }
 
-impl<T: Clone + Sync> Arg<T> for &T {
+impl Arg<String> for &&str {
+    fn into_value(self) -> String {
+        (*self).to_owned()
+    }
+}
+
+impl<T: Clone> Arg<T> for &T {
     fn into_value(self) -> T {
         self.clone()
     }
@@ -113,7 +126,13 @@ impl<T, A: Arg<T>, const N: usize> Arg<Vec<T>> for [A; N] {
     }
 }
 
-impl<T, A: Arg<T> + Clone + Sync> Arg<Vec<T>> for &[A] {
+impl<T, A: Arg<T> + Clone, const N: usize> Arg<Vec<T>> for &[A; N] {
+    fn into_value(self) -> Vec<T> {
+        self.iter().cloned().map(Arg::into_value).collect()
+    }
+}
+
+impl<T, A: Arg<T> + Clone> Arg<Vec<T>> for &[A] {
     fn into_value(self) -> Vec<T> {
         self.iter().cloned().map(Arg::into_value).collect()
     }
@@ -139,7 +158,13 @@ mod tests {
 
     #[test]
     fn a_str_is_a_string() {
+        let names = ["rust", "cargo"];
+
         assert_eq!(take::<String>("rust"), "rust");
+
+        for name in &names {
+            assert_eq!(take::<String>(name), *name);
+        }
     }
 
     #[test]
@@ -153,11 +178,20 @@ mod tests {
     }
 
     #[test]
+    fn a_reference_to_a_value_that_is_not_sync_is_cloned() {
+        let count = std::cell::Cell::new(3);
+
+        assert_eq!(take::<std::cell::Cell<i32>>(&count).get(), 3);
+    }
+
+    #[test]
     fn an_array_or_a_slice_is_a_vec() {
         let labels = [String::from("C-bug")];
         let names = ["C-bug", "T-compiler"];
 
         assert_eq!(take::<Vec<String>>(["C-bug", "T-compiler"]), names);
+        assert_eq!(take::<Vec<String>>(&["C-bug", "T-compiler"]), names);
+        assert_eq!(take::<Vec<String>>(&names), names);
         assert_eq!(take::<Vec<String>>(&names[..]), names);
         assert_eq!(take::<Vec<String>>(&labels[..]), ["C-bug"]);
         assert_eq!(take::<Vec<i64>>([1, 2]), [1, 2]);

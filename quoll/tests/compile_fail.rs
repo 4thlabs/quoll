@@ -9,7 +9,7 @@
 //! - `tests/compile_fail_client/`, built with the feature `client`: what only the client's checks, a fake of the wrong
 //!   signature, one that takes the contract's type in place of `impl Arg<T>` among them, a result that is not
 //!   `Deserialize`, `build` or `key` on the wrong type, a call not awaited, and an argument that is no `Arg` of its
-//!   type, `vec!["a"]` or `Some("x")`.
+//!   type, `vec!["a"]`, `Some("x")` or a number of another type.
 //! - `tests/compile_fail_neither/`, built with neither feature: what each side would repeat a message of its own for.
 //!   A type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines` or `ByteStream` that is not
 //!   quoll's; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to
