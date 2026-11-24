@@ -73,10 +73,12 @@ pub(crate) fn expand(cx: &Cx) -> TokenStream {
     );
     let group_reach = reach(vis);
     let shown = shown_vis(vis);
-    // A route with no `#[error]` of its own or its group's has problems, which it cannot take from an api.
+    // A route with no `#[error]` of its own or its group's has problems, which it cannot take from an api. A group with
+    // no client side reads no errors.
     let unshaped = group
         .routes
         .iter()
+        .filter(|_| cx.client)
         .find(|route| group.error.is_none() && route.error.is_none())
         .map(|route| route.name.unraw().to_string());
     let unshaped = match unshaped {
@@ -415,6 +417,7 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
     let shown = shown_vis(&api.vis);
     let headers = api_headers(&api.headers);
     let openapi = api.openapi;
+    let server = api.server;
     let refs = api.refs();
     let written: Vec<TokenStream> = refs[api.listed.len()..]
         .iter()
@@ -480,6 +483,7 @@ pub(crate) fn api_checks(api: &Api) -> TokenStream {
                 vis: #shown,
                 headers: #headers,
                 openapi: #openapi,
+                server: #server,
             };
 
             #(#checks)*

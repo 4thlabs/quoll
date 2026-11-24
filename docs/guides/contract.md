@@ -649,8 +649,13 @@ mod hooks {
 - `#[server(none)]` is for an API that is only called, such as a third-party one. The contract has no server trait, no
   `ApiServices` and no `Api::router`. It has no OpenAPI document either, since the document describes what is served.
   Its types need only what the client reads and writes: `Deserialize` on what it reads, `Serialize` on what it sends.
+  Two paths of one shape with their parameters named otherwise, `/repos/{owner}` and `/repos/{user}`, compile in it:
+  only a router takes them for one.
 - `#[client(none)]` is for an API that is only served, such as a webhook receiver. The contract has no client trait, no
-  client and no `Api::client`. It keeps its OpenAPI document, unless it also says `#[openapi(none)]`.
+  client and no `Api::client`. It keeps its OpenAPI document, unless it also says `#[openapi(none)]`. It takes no
+  `#[error(E)]`, which only a client reads.
+- With the feature of the missing side, hidden stand-ins take the names of its items. Implementing the group's trait,
+  or calling `Api::router` or `Api::client`, does not compile, with a message that says the contract has no such side.
 - A contract with neither has both sides. The groups of the api's block have the api's sides.
 - A `quoll::group!` says it on its group. An api lists only groups that have each side the api has. A group may have a
   side that the api does not: that api leaves it out, and another api that lists the group may use it.

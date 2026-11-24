@@ -26,7 +26,7 @@ use syn::{
 use crate::model::{
     Api, ArgDecl, Auth, BodyField, DeclaredScheme, Docs, ErrorList, FieldValue, Fixed, Group,
     HeaderAttr, Headers, Join, JoinAttr, MAX_ALTERNATIVES, Method, Route, RouteAuth, RouteDecl,
-    Scheme, Source, Value, fields, headers,
+    Scheme, Sides, Source, Value, fields, headers,
 };
 
 /// What the macro is given: one api, with its groups.
@@ -125,8 +125,8 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         ));
     };
 
-    let mut api = Api::alone(group).map_err(|error| fold(errors, error))?;
-    sides.set(&mut api);
+    let api = Api::alone(group, sides).map_err(|error| fold(errors, error))?;
+    refuse_unread_errors(&api, errors);
     headers::check(&api.groups, None, errors);
     fields::check_document(&api, "the group", errors);
 
@@ -255,11 +255,12 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
         schemes,
         api.listed,
         groups,
+        sides,
     )
     .map_err(|error| fold(errors, error))?;
-    sides.set(&mut api);
     api.error = error;
     api.headers = api_headers;
+    refuse_unread_errors(&api, errors);
     headers::check(&api.groups, Some((&api, &api.headers)), errors);
     fields::check_document(&api, "the api", errors);
 
@@ -275,23 +276,6 @@ fn refuse_body(errors: &mut ErrorList, body: &[Attribute], what: &str) {
                 "{what} takes no `#[body(...)]`: put it on a route, whose body it adds a fixed field to"
             ),
         ));
-    }
-}
-
-/// What an api, or the group of a `quoll::group!`, has of a contract: its document and its two sides.
-#[derive(Debug, Clone, Copy)]
-struct Sides {
-    openapi: bool,
-    server: bool,
-    client: bool,
-}
-
-impl Sides {
-    /// Gives them to `api`.
-    fn set(self, api: &mut Api) {
-        api.openapi = self.openapi;
-        api.server = self.server;
-        api.client = self.client;
     }
 }
 
@@ -338,6 +322,27 @@ fn read_sides(
         openapi,
         server,
         client,
+    }
+}
+
+/// Refuses each `#[error(E)]` of a contract with no client side, on the api, a group or a route: only the client reads
+/// the shape of an api's errors.
+fn refuse_unread_errors(api: &Api, errors: &mut ErrorList) {
+    if api.client {
+        return;
+    }
+
+    let groups = api.groups.iter().flat_map(|group| {
+        let routes = group.routes.iter().filter_map(|route| route.error.as_ref());
+
+        group.error.iter().chain(routes)
+    });
+
+    for ty in api.error.iter().chain(groups) {
+        errors.push(Error::new_spanned(
+            ty,
+            "a contract with `#[client(none)]` takes no `#[error(...)]`: only its client would read the shape of its errors, so remove it",
+        ));
     }
 }
 
@@ -853,7 +858,7 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
                 &mut server,
                 attr,
                 parse_server,
-                "an api takes one `#[server(...)]`: remove this one",
+                "an item takes one `#[server(...)]`: remove this one",
             );
             continue;
         }
@@ -863,7 +868,7 @@ fn parse_attrs(input: ParseStream) -> Result<Attrs> {
                 &mut client,
                 attr,
                 parse_client,
-                "an api takes one `#[client(...)]`: remove this one",
+                "an item takes one `#[client(...)]`: remove this one",
             );
             continue;
         }
@@ -2699,6 +2704,65 @@ mod tests {
             pub api Api = "/api";
         })
         .expect("a served api with no document");
+    }
+
+    #[test]
+    fn client_none_refuses_the_shape_of_errors_only_a_client_reads() {
+        let refused = messages(quote! {
+            #[client(none)]
+            #[error(ApiError)]
+            pub api Api = "/api";
+
+            #[error(GroupError)]
+            pub group G {
+                #[error(RouteError)]
+                GET "/a" => a();
+            }
+        });
+
+        assert_eq!(refused.len(), 3, "{refused:?}");
+        assert!(
+            refused
+                .iter()
+                .all(|error| error.contains("`#[client(none)]` takes no `#[error(...)]`")),
+            "{refused:?}"
+        );
+
+        let alone = syn::parse2::<GroupContract>(quote! {
+            #[client(none)]
+            #[error(GroupError)]
+            pub group G {
+                GET "/a" => a();
+            }
+        })
+        .expect_err("a group with no client and an error shape");
+
+        assert!(
+            alone.to_string().contains("takes no `#[error(...)]`"),
+            "{alone}"
+        );
+    }
+
+    #[test]
+    fn a_path_renamed_is_a_clash_only_where_a_router_serves_it() {
+        let contract = |server: proc_macro2::TokenStream| {
+            quote! {
+                #server
+                pub api Api = "/api";
+
+                pub group G {
+                    GET "/a/{x}" => a(x: i64);
+                    DELETE "/a/{y}" => b(y: i64);
+                }
+            }
+        };
+
+        let served = messages(contract(quote! {}));
+        assert!(
+            served[0].contains("with `{y}` written for `{x}`"),
+            "{served:?}"
+        );
+        parse(contract(quote! { #[server(none)] })).expect("a router of no one");
     }
 
     #[test]

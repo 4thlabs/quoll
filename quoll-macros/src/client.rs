@@ -82,6 +82,77 @@ fn error_type(cx: &Cx, route: &Route) -> TokenStream {
     }
 }
 
+/// The stand-ins of a group with no client side, behind the feature `client` of `quoll`: its trait, which no type can
+/// implement, its client, which has no method, and the function of its descriptor that gives it. An api that calls and
+/// lists the group then compiles but for the check of the group's sides, whose message is the one error; and a fake
+/// of the trait is one error, `NoClient`'s.
+pub(crate) fn stand_in(cx: &Cx) -> TokenStream {
+    let group = cx.group;
+    let vis = &group.vis;
+    let name = &group.name;
+    let client = group.client();
+    let descriptor = descriptor_name(&group.name);
+    let count = group.routes.len();
+    let shown = group.name.unraw();
+    let trait_docs = format!(
+        " Not a client: the group `{shown}` has no client side, as its contract says `#[client(none)]`."
+    );
+    let client_docs =
+        format!(" Not a client: the group `{shown}` has no client side, and this no method.");
+
+    quote! {
+        ::quoll::__private::client! {
+            #[doc = #trait_docs]
+            #[doc(hidden)]
+            #vis trait #name: ::quoll::__private::group::NoClient {}
+
+            #[doc = #client_docs]
+            #[doc(hidden)]
+            #[derive(::core::fmt::Debug, ::core::clone::Clone)]
+            #vis struct #client;
+
+            #[allow(dead_code)]
+            impl #descriptor {
+                /// Gives the group's client, which has no method.
+                #[doc(hidden)]
+                pub fn client(
+                    _: ::quoll::__private::client::Client,
+                    _: &'static str,
+                    _: &'static [::quoll::Route; #count],
+                    _: &'static [::quoll::__private::headers::Fixed],
+                ) -> #client {
+                    #client
+                }
+            }
+        }
+    }
+}
+
+/// The stand-ins of `Api::client` and `Api::client_with` for an api with no client side, behind the feature `client`
+/// of `quoll`: each takes what no type is, so that calling it is one error, `NoClient`'s.
+pub(crate) fn api_stand_in(api: &Api) -> TokenStream {
+    let Api { vis, name, .. } = api;
+    let docs = format!(
+        " Not a client: the api `{}` has no client side, as its contract says `#[client(none)]`.",
+        name.unraw()
+    );
+
+    quote! {
+        ::quoll::__private::client! {
+            #[allow(dead_code)]
+            impl #name {
+                #[doc = #docs]
+                #[doc(hidden)]
+                #vis fn client(_: impl ::quoll::__private::group::NoClient) {}
+
+                #[doc = #docs]
+                #[doc(hidden)]
+                #vis fn client_with(_: impl ::quoll::__private::group::NoClient, _: &str) {}
+            }
+        }
+    }
+}
+
 /// The client's code of the api, behind the feature `client` of `quoll`.
 pub(crate) fn expand(api: &Api) -> TokenStream {
     let api_client = api_client(api);

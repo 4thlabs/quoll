@@ -48,8 +48,9 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
   dependents ask for, so an application that serves its own api and calls another compiled the other's contract with a
   server too. `#[server(none)]`, for an API that is only called, leaves out the server side and the OpenAPI document;
   `#[client(none)]`, for one that is only served, such as a webhook receiver, leaves out the client side. The types
-  then need only what the other side reads and writes. An api lists only groups that have each side it has. The guides'
-  contracts of other APIs and the Docker example say `#[server(none)]`
+  then need only what the other side reads and writes. Implementing the trait of a side the contract does not have, or
+  calling its `Api::router` or `Api::client`, is an error that says so. An api lists only groups that have each side it
+  has. The guides' contracts of other APIs and the Docker example say `#[server(none)]`
   ([#129](https://github.com/4thlabs/quoll/issues/129)).
 
 ### Changed

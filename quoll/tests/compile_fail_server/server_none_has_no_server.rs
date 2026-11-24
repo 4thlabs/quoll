@@ -8,8 +8,8 @@ quoll::api! {
     }
 }
 
-fn served<T: ReposServer>() {}
+struct App;
 
-fn main() {
-    served::<()>();
-}
+impl ReposServer for App {}
+
+fn main() {}

@@ -2,19 +2,25 @@
 //! features of `quoll` it is built with.
 //!
 //! - `tests/compile_fail/`, built with each of the four feature sets, so that its messages are the same whatever the
-//!   features: the mistakes the macro finds itself, and those of an [`ErrorKind`](quoll::ErrorKind), in the files
+//!   features: the mistakes the macro finds itself, those of an [`ErrorKind`](quoll::ErrorKind), in the files
 //!   `error_kind_*`: a match with no `_`, a status written as a number, the text of `as_str` kept past its kind, and
-//!   an `Error::failed` with no kind or no shape.
+//!   an `Error::failed` with no kind or no shape; those of `#[server(...)]` and `#[client(...)]` among them, a
+//!   contract with no side, a word other than `none`, one twice, one on a scheme, a group of the api's block or a route,
+//!   an `#[openapi(...)]` beside `#[server(none)]` and an `#[error(...)]` in a contract with `#[client(none)]`; and a
+//!   `quoll::group!` listed without a side its api has, its server, its client or its document, which the stand-ins of
+//!   the missing side leave one error whatever the features.
 //! - `tests/compile_fail_server/`, built with the feature `server`: what only the server's code checks, a route left
 //!   out of a service, a handler of the wrong signature, a status of no content on a route of a value or one that is
 //!   not a status, a body that is not `Deserialize`, a service that does not authenticate, and an argument the server
-//!   cannot receive owned, `&mut X`, `&&X` or `&impl Trait`, which a client alone takes.
+//!   cannot receive owned, `&mut X`, `&&X` or `&impl Trait`, which a client alone takes; and the stand-ins of a contract
+//!   with `#[server(none)]`, its server's trait implemented or its router called.
 //! - `tests/compile_fail_server_alone/`, built with the feature `server` and not `client`: what the server reports
 //!   among the errors of rustc's own that the client's code would change, `&dyn Trait` and a `&X` whose `X` has no
 //!   size, `&OsStr`.
 //! - `tests/compile_fail_client/`, built with the feature `client`: what only the client's checks, a fake of the wrong
 //!   signature, a result that is not `Deserialize`, `build` or `key` on the wrong type, a call not awaited, a borrowed
-//!   argument given by value, and a call that outlives what it borrows.
+//!   argument given by value, and a call that outlives what it borrows; and the stand-ins of a contract with
+//!   `#[client(none)]`, a fake of its trait or its client built.
 //! - `tests/compile_fail_neither/`, built with neither feature: what each side would repeat a message of its own for.
 //!   A type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines` or `ByteStream` that is not
 //!   quoll's; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to

@@ -27,6 +27,8 @@ mod issues {
         #[server(none)]
         pub group Issues {
             GET "/repos/{owner}/{repo}/issues" => list(owner: &str, repo: &str) -> Vec<String>;
+            // The path of `Repos::get`, its parameters named otherwise: only a router takes them for one.
+            PUT "/repos/{user}/{name}" => rename(user: &str, name: &str);
         }
     }
 }
@@ -47,6 +49,7 @@ quoll::api! {
 
     pub group Repos {
         GET "/repos/{owner}/{repo}" => get(owner: &str, repo: &str) -> Repo;
+        DELETE "/repos/{org}/{project}" => remove(org: &str, project: &str);
         POST "/user/repos" => create(repo: &NewRepo) -> Repo;
         GET "/repos/{owner}/{repo}/labels" => labels(owner: &str, repo: &str) -> BTreeMap<String, String>;
         GET "/meta/{ip}" => meta(ip: IpAddr) -> ByteStream;

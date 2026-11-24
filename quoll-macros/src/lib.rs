@@ -85,7 +85,8 @@ use crate::syntax::{Contract, GroupContract};
 /// | `impl client::Contract for Api` | `client`           | what `client::builder().build::<Api>(url)` builds                       |
 ///
 /// The items of the feature `server` are not written with `#[server(none)]`, nor those of `client` with
-/// `#[client(none)]`.
+/// `#[client(none)]`: the feature writes hidden stand-ins under the names of the group's trait and of `Api::router`,
+/// `Api::client` and `Api::client_with`, so that using one is an error that says the contract has no such side.
 ///
 /// Each handler of `NotesServer` returns `impl Future<Output = Result<Response<T>>> + Send`, and an implementation
 /// writes `async fn`, which returns `Ok(Response::new(note))`; each method of `Notes` returns `impl Call<T, E>`, `E`
