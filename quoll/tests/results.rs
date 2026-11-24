@@ -163,7 +163,7 @@ async fn text_answers_200_as_utf8_text_and_reads_back() {
     assert_eq!(body, "café".as_bytes());
 
     for value in ["milk, eggs", "café ☕ 東京", "line\nbreak", ""] {
-        let text = api.files().text(value).await.expect("text");
+        let text = api.files().text(value.into()).await.expect("text");
 
         assert_eq!(text, Text::from(value), "{value:?}");
     }
@@ -334,10 +334,10 @@ async fn text_is_read_from_text_plain_in_utf8_with_or_without_a_charset() {
     let url = quoll::test::spawn(third_party()).await;
     let api = Api::client(&url).expect("the url is the api's");
 
-    let plain = api.files().text("plain").await.expect("text/plain");
+    let plain = api.files().text("plain".into()).await.expect("text/plain");
     assert_eq!(plain, Text::from("no charset"));
 
-    let quoted = api.files().text("quoted").await.expect("UTF-8");
+    let quoted = api.files().text("quoted".into()).await.expect("UTF-8");
     assert_eq!(quoted, Text::from("quoted"));
 }
 
@@ -347,7 +347,7 @@ async fn text_of_another_content_type_or_charset_is_an_error_with_no_status() {
     let api = Api::client(&url).expect("the url is the api's");
 
     for value in ["html", "json", "latin1", "none"] {
-        let error = api.files().text(value).await.expect_err(value);
+        let error = api.files().text(value.into()).await.expect_err(value);
 
         not_its_result(
             &error,
@@ -362,7 +362,11 @@ async fn text_that_is_not_utf8_is_an_error_with_no_status() {
     let url = quoll::test::spawn(third_party()).await;
     let api = Api::client(&url).expect("the url is the api's");
 
-    let error = api.files().text("not-utf8").await.expect_err("not UTF-8");
+    let error = api
+        .files()
+        .text("not-utf8".into())
+        .await
+        .expect_err("not UTF-8");
 
     not_its_result(&error, "files_text", "invalid utf-8");
 
@@ -411,7 +415,7 @@ async fn an_answer_of_another_content_type_is_read_so_that_its_connection_serves
     let api = Api::client(&url).expect("the url is the api's");
 
     for _ in 0..3 {
-        let error = api.files().text("page").await.expect_err("not text");
+        let error = api.files().text("page".into()).await.expect_err("not text");
 
         not_its_result(
             &error,
@@ -478,7 +482,7 @@ async fn each_call_asks_for_its_result_and_a_route_s_own_accept_wins() {
         .export(Export { name: "a".into() })
         .await
         .expect("accepted");
-    api.files().text("a").await.expect("text");
+    api.files().text("a".into()).await.expect("text");
     api.files().bytes(1).await.expect("bytes");
     api.accepts().json().await.expect("JSON");
     api.accepts().none().await.expect("nothing");

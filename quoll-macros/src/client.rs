@@ -2,12 +2,11 @@
 //! builds it, and `ApiClient`, `Api::client` and `Api::client_with`, which give each group's client by its descriptor.
 //!
 //! All of it goes through `::quoll::__private::client!`, which writes it out only when `quoll` has the feature
-//! `client`. Each method takes its arguments as `impl quoll::Arg<T>` and gives their values to a hidden method of the
-//! client, `__quoll_get`, compiled once: it writes the route's path, query and body through a helper of `quoll`, and
-//! returns the call, which sends the request and reads its answer once it is awaited.
+//! `client`. Each method writes the route's path, query and body through a helper of `quoll`, and returns the call,
+//! which sends the request and reads its answer once it is awaited.
 
-use proc_macro2::{Group, Span, TokenStream, TokenTree};
-use quote::{format_ident, quote, quote_spanned};
+use proc_macro2::{Span, TokenStream};
+use quote::{quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::descriptor::{Cx, descriptor_name, table};
@@ -119,14 +118,10 @@ fn group_trait(cx: &Cx) -> TokenStream {
     lines.extend([String::new(), usage]);
     let docs = doc_attrs(&lines);
     let methods = group.routes.iter().map(|route| {
-        // Spanned on its route, so that rustc's `definition of `get` from trait` points at the route rather than at
-        // the whole contract; resolved at the call site, so that the item stays the macro's, which rustc's lints of
-        // the user's code, `dead_code` among them, leave alone.
-        let span = route.span.resolved_at(Span::call_site());
-        let docs = respanned(route_docs(cx.prefix(), route), span);
+        let docs = route_docs(cx.prefix(), route);
         let signature = signature(cx, route);
 
-        quote_spanned! {span=>
+        quote! {
             #docs
             #signature;
         }
@@ -140,50 +135,23 @@ fn group_trait(cx: &Cx) -> TokenStream {
     }
 }
 
-/// `tokens` with every span, inside their groups too, set to `span`.
-fn respanned(tokens: TokenStream, span: Span) -> TokenStream {
-    tokens
-        .into_iter()
-        .map(|token| match token {
-            TokenTree::Group(group) => {
-                let mut respanned = Group::new(group.delimiter(), respanned(group.stream(), span));
-                respanned.set_span(span);
-
-                TokenTree::Group(respanned)
-            }
-            mut token => {
-                token.set_span(span);
-
-                token
-            }
-        })
-        .collect()
-}
-
-/// What a call of `route` gives on the client: `()` for no result, and the `T` of a `Created<T>` or an `Accepted<T>`,
-/// as the 201 or the 202 is only the server's answer.
-fn output_type(route: &Route) -> TokenStream {
-    match route.reply.as_deref() {
+/// `fn get(&self, id: i64) -> impl quoll::Call<Note, Problem>`, of the shape of the route's errors: a `Created<T>` or
+/// an `Accepted<T>` gives its `T`, as the 201 or the 202 is only the server's answer.
+fn signature(cx: &Cx, route: &Route) -> TokenStream {
+    let name = &route.name;
+    let args = route
+        .params
+        .iter()
+        .map(|Param { name, ty, .. }| quote! { #name: #ty });
+    let output = match route.reply.as_deref() {
         None => quote! { () },
         Some(returned) => {
             let ty = &returned.value;
 
             quote! { #ty }
         }
-    }
-}
+    };
 
-/// `fn get(&self, id: impl quoll::Arg<i64>) -> impl quoll::Call<Note, Problem>`, of the shape of the route's errors.
-fn signature(cx: &Cx, route: &Route) -> TokenStream {
-    let name = &route.name;
-    // Spanned on the type, which the note `required by this bound` of a value that is no argument of it points at:
-    // rustc puts the error itself on the method's name, the call and its `.await`, as the method returns an
-    // `impl Trait`.
-    let args = route
-        .params
-        .iter()
-        .map(|Param { name, ty, .. }| quote_spanned! {ty.span()=> #name: impl ::quoll::Arg<#ty> });
-    let output = output_type(route);
     let error = error_type(cx, route);
 
     quote_spanned! {route.name.span()=>
@@ -205,13 +173,12 @@ fn group_client(cx: &Cx) -> TokenStream {
         group.name.unraw(),
     );
     let (shapes, taken) = shapes(cx);
-    let bodies = group
+    let methods = group
         .routes
         .iter()
         .zip(taken)
         .enumerate()
-        .map(|(index, (route, shape))| body(cx, index, route, &shape_const(shape)));
-    let methods = group.routes.iter().map(|route| method(cx, route));
+        .map(|(index, (route, shape))| method(cx, index, route, &shape_const(shape)));
     let shape_consts = shape_consts(shapes);
     let http = Ident::new("client", Span::mixed_site());
     let prefix = Ident::new("prefix", Span::mixed_site());
@@ -230,7 +197,6 @@ fn group_client(cx: &Cx) -> TokenStream {
 
         impl #client {
             #shape_consts
-            #(#bodies)*
         }
 
         impl #name for #client {
@@ -258,36 +224,9 @@ fn group_client(cx: &Cx) -> TokenStream {
     }
 }
 
-/// `__quoll_get`, the method of the group's client that holds the body of the route's method.
-fn body_name(route: &Route) -> Ident {
-    format_ident!("__quoll_{}", route.name.unraw(), span = route.name.span())
-}
-
-/// A route's method on the group's client: each argument's value, given to the [`body`] of the route, which is
-/// compiled once whatever the types of the arguments.
-fn method(cx: &Cx, route: &Route) -> TokenStream {
+/// A route's method on the group's client: the route, then its path, query and body written from the arguments.
+fn method(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
     let signature = signature(cx, route);
-    let body = body_name(route);
-    let values = route.params.iter().map(|Param { name, ty, .. }| {
-        quote_spanned! {ty.span()=> ::quoll::Arg::<#ty>::into_value(#name) }
-    });
-
-    quote! {
-        #signature {
-            self.#body(#(#values),*)
-        }
-    }
-}
-
-/// The body of a route's method, a method of the group's client that takes the contract's types: the route, then its
-/// path, query and body written from the arguments.
-fn body(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
-    let name = body_name(route);
-    let args = route
-        .params
-        .iter()
-        .map(|Param { name, ty, .. }| quote_spanned! {ty.span()=> #name: #ty });
-    let output = output_type(route);
     let error = error_type(cx, route);
 
     let path_calls = path_calls(route);
@@ -350,15 +289,9 @@ fn body(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
         }
     };
     let request = Ident::new("request", Span::mixed_site());
-    // Clippy's limit, `self` counted. `allow` and not `expect`, which would go unfulfilled in a crate that does not run
-    // clippy, or whose clippy does not lint the tokens of a macro.
-    let many =
-        (route.params.len() + 1 > 7).then(|| quote! { #[allow(clippy::too_many_arguments)] });
 
     quote! {
-        #[doc(hidden)]
-        #many
-        fn #name(&self, #(#args),*) -> ::quoll::__private::client::Pending<'_, #output, #error> {
+        #signature {
             #query_type
 
             let #request = ::quoll::__private::client::Request::write(
@@ -377,7 +310,7 @@ fn body(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
                 ),
             );
 
-            ::quoll::__private::client::Pending::new(#request, |#answer| #read, Self::#shape)
+            ::quoll::__private::client::Pending::<_, #error>::new(#request, |#answer| #read, Self::#shape)
         }
     }
 }

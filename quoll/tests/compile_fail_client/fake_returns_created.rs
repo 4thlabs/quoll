@@ -1,4 +1,4 @@
-use quoll::{Arg, Call, Created};
+use quoll::{Call, Created};
 
 quoll::api! {
     pub api Api = "/api";
@@ -12,9 +12,7 @@ quoll::api! {
 struct Fake;
 
 impl Notes for Fake {
-    fn create(&self, title: impl Arg<String>) -> impl Call<Created<String>> {
-        let title = title.into_value();
-
+    fn create(&self, title: String) -> impl Call<Created<String>> {
         async move { Err(quoll::Error::not_found(title)) }
     }
 }

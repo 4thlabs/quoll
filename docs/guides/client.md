@@ -70,24 +70,6 @@ async fn main() -> quoll::Result<()> {
 - Each call returns a `quoll::Call`. `.await` sends it and gives a `quoll::Result`.
   [Errors](errors.md#what-a-client-sees) says what its error holds.
 
-## Arguments
-
-Each argument is an `impl quoll::Arg<T>`, `T` its type in the contract. For the `Issues` group of
-[Another API](another-api.md), a call reads `list("rust-lang", &repo, ["C-bug"], Some(State::Open), Some(5), None)`.
-
-- A `String` takes a `String`, a `&str`, a `&&str`, which `for name in &names` gives, or a `&String`, which is cloned.
-- A `Vec` takes a `Vec`, an array, a reference to either, or a slice: `["C-bug"]`, `&labels` or `&labels[..]`. A
-  `Vec<String>` takes `["a", "b"]` rather than `vec!["a", "b"]`, and a `&Vec<&str>` is written `&names[..]`.
-- An `Option` takes `Some(..)` or `None`. An `Option<String>` takes `Some("x".into())`: `Some("x")` would make
-  `None` ambiguous, as `vec!["a"]` would `vec![]`.
-- Any other type takes itself, or a reference to itself when it is `Clone`, which is cloned. No number becomes
-  another: a number of another type is converted first, `i64::from(n)` for an `i32` given for an `i64`, or
-  `n.try_into()?` when it may not fit.
-- A value whose type came from the parameter, as `id.parse()?`, `.collect()` or `Default::default()`, has several
-  candidates. It says its type: `id.parse::<i64>()?`.
-- A call keeps borrowed what its arguments borrow until it is awaited. A call kept longer than an argument, such as
-  one pushed into a `Vec` and awaited later, takes the value itself: `owner` or `owner.clone()`, not `&owner`.
-
 ## The whole answer
 
 Each method returns a `quoll::Call`: the call described, and not sent yet. `.await` sends it and gives the route's
@@ -375,7 +357,7 @@ quoll::api! {
 
 async fn export(api: &ApiClient) -> quoll::Result<u64> {
     api.exports()
-        .create("notes")
+        .create("notes".into())
         .timeout(Duration::from_secs(600))
         .await
 }

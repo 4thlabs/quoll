@@ -84,18 +84,19 @@ async fn main() -> anyhow::Result<()> {
         .with(client::user_agent("quoll-guide"))
         .build::<GitHub>("https://api.github.com")?;
 
-    let repo = github.repos().get("rust-lang", "rust").await?;
+    let repo = github.repos().get("rust-lang".into(), "rust".into()).await?;
 
     println!("{} has {} stars", repo.full_name, repo.stargazers_count);
 
-    let readme = github.repos().readme("rust-lang", "rust").await?;
+    let readme = github.repos().readme("rust-lang".into(), "rust".into()).await?;
     let readme = String::from_utf8(readme.into_vec())?;
 
     println!("{readme}");
 
+    let labels = vec!["C-bug".into(), "T-compiler".into()];
     let issues = github
         .issues()
-        .list("rust-lang", "rust", ["C-bug", "T-compiler"], Some(State::Open), Some(5), None)
+        .list("rust-lang".into(), "rust".into(), labels, Some(State::Open), Some(5), None)
         .await?;
 
     for issue in issues {
@@ -348,7 +349,7 @@ quoll::api! {
 }
 
 async fn starred(github: &GitHubClient, owner: &str, repo: &str) -> quoll::Result<bool, GitHubError> {
-    match github.stars().check(owner, repo).await {
+    match github.stars().check(owner.into(), repo.into()).await {
         Ok(()) => Ok(true),
         Err(error) if error.status() == Some(StatusCode::NOT_FOUND) => Ok(false),
         Err(error) => Err(error),
@@ -702,14 +703,15 @@ async fn main() -> quoll::Result<()> {
     let geocoding = OpenMeteo::client_with(http.clone(), "https://geocoding-api.open-meteo.com")?;
     let weather = OpenMeteo::client_with(http, "https://api.open-meteo.com")?;
 
-    let places = geocoding.search().search("Hobart", Some(1)).await?;
+    let places = geocoding.search().search("Hobart".into(), Some(1)).await?;
     let Some(hobart) = places.results.first() else {
         return Ok(());
     };
 
+    let hourly = vec!["temperature_2m".into()];
     let forecast = weather
         .forecasts()
-        .get(hobart.latitude, hobart.longitude, ["temperature_2m"], Some(1))
+        .get(hobart.latitude, hobart.longitude, hourly, Some(1))
         .await?;
 
     for (time, temperature) in forecast.hourly.time.iter().zip(&forecast.hourly.temperature_2m) {
@@ -770,7 +772,7 @@ async fn all_issues(github: &GitHubClient, owner: &str, repo: &str) -> quoll::Re
     for page in 1.. {
         let response = github
             .issues()
-            .list(owner, repo, Some(100), Some(page))
+            .list(owner.into(), repo.into(), Some(100), Some(page))
             .response()
             .await?;
         let link = response.headers().get(LINK).and_then(|link| link.to_str().ok());

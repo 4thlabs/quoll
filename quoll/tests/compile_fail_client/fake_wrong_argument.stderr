@@ -1,8 +1,22 @@
-error[E0276]: impl has stricter requirements than trait
-  --> tests/compile_fail_client/fake_wrong_argument.rs:15:28
+error[E0053]: method `get` has an incompatible type for trait
+  --> tests/compile_fail_client/fake_wrong_argument.rs:15:23
+   |
+15 |     fn get(&self, id: String) -> impl Call<String> {
+   |                       ^^^^^^     -----------------
+   |                       |          |
+   |                       |          the expected opaque type
+   |                       |          the found opaque type
+   |                       expected `i64`, found `String`
+   |
+note: type in trait
+  --> tests/compile_fail_client/fake_wrong_argument.rs:7:38
    |
  7 |         GET "/notes/{id}" => get(id: i64) -> String;
-   |             ------------- definition of `get` from trait
-...
-15 |     fn get(&self, id: impl Arg<String>) -> impl Call<String> {
-   |                            ^^^^^^^^^^^ impl has extra requirement `impl Arg<String>: Arg<String>`
+   |                                      ^^^
+   = note: expected signature `fn(&Fake, i64) -> impl Call<String>`
+              found signature `fn(&Fake, String) -> impl Call<String>`
+help: change the parameter type to match the trait
+   |
+15 -     fn get(&self, id: String) -> impl Call<String> {
+15 +     fn get(&self, id: i64) -> impl Call<String> {
+   |

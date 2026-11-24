@@ -56,7 +56,7 @@ async fn calls(api: &ApiClient) -> Result<()> {
     let _: Note = api.notes().update(1, NewNote { title: "Bread".into() }).await?;
     let (): () = api.notes().remove(1).await?;
     let (): () = api.notes().options().await?;
-    let _: String = api.admin_tools().r#match("a", None, "b").await?;
+    let _: String = api.admin_tools().r#match("a".into(), None, "b".into()).await?;
     let _: Vec<String> = api.r#type().list().await?;
 
     Ok(())

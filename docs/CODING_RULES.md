@@ -50,10 +50,6 @@ Quoll is a Rust library, edition 2024, built with the latest stable Rust. The ru
 - What outlives a call owns what it needs. A public type borrows only when it is a view, and a user never has to keep a
   value alive for the library.
 - A function takes what it reads as `&str` or `&[T]`, and what it keeps as `impl Into<String>` or by value.
-- A client's method is the exception: it takes each argument as `impl quoll::Arg<T>`, `T` its type in the contract.
-  `impl Into<T>` would refuse `5` for a `u32` and `["a"]` for a `Vec<String>`, and a borrowed type would have the
-  macro guess it from type names. `Arg` takes the contract's type, a `&str`, a
-  reference or an array, and guesses nothing.
 - Async functions in traits are native, written `fn ... -> impl Future<Output = ...> + Send` where they must be `Send`.
   The `async-trait` crate is not used.
 - Nothing blocks in async code. Work that blocks goes through `tokio::task::spawn_blocking`.

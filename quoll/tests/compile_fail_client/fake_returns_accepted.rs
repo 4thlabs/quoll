@@ -1,4 +1,4 @@
-use quoll::{Accepted, Arg, Call};
+use quoll::{Accepted, Call};
 
 quoll::api! {
     pub api Api = "/api";
@@ -12,9 +12,7 @@ quoll::api! {
 struct Fake;
 
 impl Exports for Fake {
-    fn export(&self, name: impl Arg<String>) -> impl Call<Accepted<String>> {
-        let name = name.into_value();
-
+    fn export(&self, name: String) -> impl Call<Accepted<String>> {
         async move { Err(quoll::Error::not_found(name)) }
     }
 }

@@ -7,7 +7,7 @@ use std::fmt;
 
 use gists::Gists as _;
 use http::header::{ETAG, IF_NONE_MATCH};
-use quoll::{Arg, Call, Error, Problem, Response, Result};
+use quoll::{Call, Error, Problem, Response, Result};
 use reqwest::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -176,8 +176,8 @@ async fn serve(router: axum::Router) -> String {
 async fn an_error_answer_reads_as_the_apis_shape() -> Result<()> {
     let hub = Hub::client(&serve(hub()).await)?;
 
-    let found: quoll::Result<Repo, HubError> = hub.repos().get("quoll").await;
-    let error = hub.repos().get("secret").await.expect_err("a 401");
+    let found: quoll::Result<Repo, HubError> = hub.repos().get("quoll".into()).await;
+    let error = hub.repos().get("secret".into()).await.expect_err("a 401");
     let answer = error.response().expect("the answer of a `HubError`");
 
     assert_eq!(found?.name, "quoll");
@@ -203,7 +203,7 @@ async fn an_error_answer_reads_as_the_apis_shape() -> Result<()> {
 async fn a_body_that_is_not_the_shape_keeps_its_status_and_its_body() -> Result<()> {
     let hub = Hub::client(&serve(hub()).await)?;
 
-    let error = hub.repos().get("down").await.expect_err("a 502");
+    let error = hub.repos().get("down".into()).await.expect_err("a 502");
 
     assert_eq!(error.status(), Some(StatusCode::BAD_GATEWAY));
     assert!(error.detail().is_none() && error.response().is_none());
@@ -216,9 +216,9 @@ async fn a_body_that_is_not_the_shape_keeps_its_status_and_its_body() -> Result<
 async fn the_nearest_error_to_a_route_wins() -> Result<()> {
     let hub = Hub::client(&serve(hub()).await)?;
 
-    let token: quoll::Result<String, OAuthError> = hub.repos().token("x").await;
-    let mirror: quoll::Result<Repo> = hub.mirror().get("quoll").await;
-    let gist: quoll::Result<String, HubError> = hub.gists().get("1").await;
+    let token: quoll::Result<String, OAuthError> = hub.repos().token("x".into()).await;
+    let mirror: quoll::Result<Repo> = hub.mirror().get("quoll".into()).await;
+    let gist: quoll::Result<String, HubError> = hub.gists().get("1".into()).await;
 
     let token = token.expect_err("a 400");
     let mirror = mirror.expect_err("a 404");
@@ -244,11 +244,11 @@ async fn the_nearest_error_to_a_route_wins() -> Result<()> {
 async fn the_whole_answer_has_the_error_of_the_shape_as_its_body() -> Result<()> {
     let hub = Hub::client(&serve(hub()).await)?;
 
-    let refused = hub.repos().get("secret").response().await?;
-    let fresh = hub.repos().topics("quoll", None).response().await?;
+    let refused = hub.repos().get("secret".into()).response().await?;
+    let fresh = hub.repos().topics("quoll".into(), None).response().await?;
     let same = hub
         .repos()
-        .topics("quoll", Some(TOPICS_TAG.into()))
+        .topics("quoll".into(), Some(TOPICS_TAG.into()))
         .response()
         .await?;
 
@@ -278,9 +278,7 @@ async fn the_whole_answer_has_the_error_of_the_shape_as_its_body() -> Result<()>
 struct FakeRepos;
 
 impl Repos for FakeRepos {
-    fn get(&self, name: impl Arg<String>) -> impl Call<Repo, HubError> {
-        let name = name.into_value();
-
+    fn get(&self, name: String) -> impl Call<Repo, HubError> {
         async move {
             if name == "quoll" {
                 return Ok(Repo { name });
@@ -296,17 +294,11 @@ impl Repos for FakeRepos {
         }
     }
 
-    fn topics(
-        &self,
-        _name: impl Arg<String>,
-        _tag: impl Arg<Option<String>>,
-    ) -> impl Call<Vec<String>, HubError> {
+    fn topics(&self, _name: String, _tag: Option<String>) -> impl Call<Vec<String>, HubError> {
         async { Ok(vec!["rust".to_owned()]) }
     }
 
-    fn token(&self, code: impl Arg<String>) -> impl Call<String, OAuthError> {
-        let code = code.into_value();
-
+    fn token(&self, code: String) -> impl Call<String, OAuthError> {
         async move {
             if code.is_empty() {
                 return Err(Error::bad_request("no code").into_shape());
@@ -321,8 +313,8 @@ impl Repos for FakeRepos {
 async fn a_fake_answers_an_error_of_the_shape() -> Result<()> {
     let repos = FakeRepos;
 
-    let error = repos.get("nope").await.expect_err("a 404");
-    let response = repos.get("nope").response().await?;
+    let error = repos.get("nope".into()).await.expect_err("a 404");
+    let response = repos.get("nope".into()).response().await?;
 
     assert_eq!(error.status(), Some(StatusCode::NOT_FOUND));
     assert_eq!(
@@ -332,7 +324,7 @@ async fn a_fake_answers_an_error_of_the_shape() -> Result<()> {
     assert_eq!(error.to_string(), "another api answered 404: Not Found");
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert!(response.into_value().is_err());
-    assert_eq!(repos.get("quoll").await?.name, "quoll");
+    assert_eq!(repos.get("quoll".into()).await?.name, "quoll");
 
     let refused = repos.token(String::new()).await.expect_err("a 400");
 
@@ -371,9 +363,13 @@ async fn an_error_of_the_shape_goes_up_into_a_handlers_error_and_answers_502() -
     });
     let front = Front::client(&serve(router).await)?;
 
-    let error = front.mirrors().get("secret").await.expect_err("a 502");
+    let error = front
+        .mirrors()
+        .get("secret".into())
+        .await
+        .expect_err("a 502");
 
-    assert_eq!(front.mirrors().get("quoll").await?.name, "quoll");
+    assert_eq!(front.mirrors().get("quoll".into()).await?.name, "quoll");
     assert_eq!(error.status(), Some(StatusCode::BAD_GATEWAY));
     assert_eq!(error.detail().and_then(Problem::detail), None);
     Ok(())

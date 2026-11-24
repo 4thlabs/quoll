@@ -391,7 +391,7 @@ async fn a_header_that_would_not_read_back_is_refused_by_the_client() {
     for tag in ["line\nbreak", "nul\0", " leading", "trailing\t"] {
         let error = api
             .bodies()
-            .mixed(Text::from("x"), &filter, tag, 1)
+            .mixed(Text::from("x"), filter.clone(), tag.into(), 1)
             .await
             .expect_err("not a header's value as it is");
 
@@ -722,7 +722,7 @@ async fn every_kind_of_argument_goes_together() {
 
     let mixed = api
         .bodies()
-        .mixed(Text::from("a note"), &filter, "tag ✓", 9)
+        .mixed(Text::from("a note"), filter.clone(), "tag ✓".into(), 9)
         .await
         .unwrap();
 
