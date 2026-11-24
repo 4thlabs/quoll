@@ -1,8 +1,8 @@
 //! The kind of a failure of reqwest or of a middleware chain, which the client's errors, `retry` and `trace` read.
 //!
 //! It reads reqwest's own predicates, and nothing of the crates under reqwest: a middleware's error is `Middleware`,
-//! unless it passes on a reqwest error or a chain's, or is quoll's `HeadTimedOut`; a reqwest error is of the kind its
-//! predicates say, `Closed` for any other.
+//! unless it passes on a reqwest error or a chain's, whichever client it came from, or is quoll's `HeadTimedOut`; a
+//! reqwest error is of the kind its predicates say, `Closed` for any other.
 
 use std::error::Error as StdError;
 
@@ -44,10 +44,12 @@ fn kind_of_middleware(error: &(dyn StdError + 'static)) -> ErrorKind {
     ErrorKind::Middleware
 }
 
-/// The kind of a reqwest error, by reqwest's predicates alone, in this order: `is_builder`, `Invalid`; `is_connect`,
-/// `Connect`; `is_timeout`, `Timeout`; `is_body`, `Body`; `is_decode`, `Decode`; `is_redirect`, reqwest's own policy
-/// that gave up, `Middleware`; and any other, `is_request` among them, `Closed`: the request left and no usable head
-/// came back.
+/// The kind of a reqwest error of a request before its answer, by reqwest's predicates alone, in this order:
+/// `is_builder`, `Invalid`; `is_connect`, `Connect`; `is_timeout`, `Timeout`; a `status`, of an answer a middleware
+/// turned into an error, `Status` of it; `is_body`, `Body`; `is_decode`, which reqwest gives only while it follows a
+/// redirect, a `Location` that does not parse, `is_redirect` and `is_upgrade`, `Middleware`; and any other,
+/// `is_request` among them, `Closed`: the request left and no usable head came back. A body's read is not sorted
+/// here: any failure of it but a deadline is `Body`.
 fn of_reqwest(error: &reqwest::Error) -> ErrorKind {
     if error.is_builder() {
         return ErrorKind::Invalid;
@@ -61,15 +63,15 @@ fn of_reqwest(error: &reqwest::Error) -> ErrorKind {
         return ErrorKind::Timeout;
     }
 
+    if let Some(status) = error.status() {
+        return ErrorKind::Status(status);
+    }
+
     if error.is_body() {
         return ErrorKind::Body;
     }
 
-    if error.is_decode() {
-        return ErrorKind::Decode;
-    }
-
-    if error.is_redirect() {
+    if error.is_decode() || error.is_redirect() || error.is_upgrade() {
         return ErrorKind::Middleware;
     }
 

@@ -315,8 +315,12 @@ impl Attempt<'_> {
     ///
     /// A failure that may pass is an attempt of the [kind](Attempt::kind) [`ErrorKind::Connect`], the connection
     /// refused, [`ErrorKind::Timeout`], a deadline of [`timeout`](super::timeout) passed before the answer began, or
-    /// [`ErrorKind::Closed`], the connection closed, reset or cut before the answer; or an answer 502, 503 or 504. A
-    /// request that may be sent twice is a `GET`, a `HEAD`, a `PUT` or a `DELETE`.
+    /// [`ErrorKind::Closed`], a request that left with no usable head back; or an answer 502, 503 or 504. A request
+    /// that may be sent twice is a `GET`, a `HEAD`, a `PUT` or a `DELETE`.
+    ///
+    /// A peer that answers bytes that are not HTTP, a TLS port called over `http`, is a `Closed` too, which reqwest
+    /// does not tell from a connection closed: it fails the same way each time, and costs the call all of its
+    /// attempts and their backoff before its error comes.
     pub fn transient(&self) -> Retry {
         let idempotent = [Method::GET, Method::HEAD, Method::PUT, Method::DELETE]
             .contains(self.request.method());

@@ -25,11 +25,13 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
   or an item of a stream that does not read from a stream cut short, without reqwest's types. `status()` stays, and is
   `Some(status)` exactly when the kind is `Status(status)`. `ErrorKind::as_str()` and its `Display` give `404` or
   `timeout`, and `answered()` says whether the other API answered
-  ([#126](https://github.com/4thlabs/quoll/issues/126)). A failure of reqwest is sorted by reqwest's own predicates,
-  in this order: `is_builder` is `Invalid`, `is_connect` `Connect`, `is_timeout` `Timeout`, `is_body` `Body`,
-  `is_decode` `Decode`, `is_redirect` `Middleware`, and any other, `is_request` among them, `Closed`: the request left
-  and no usable head came back. A middleware's own error is `Middleware`, unless it passes on a reqwest error or an
-  error of the chain, which keeps its kind.
+  ([#126](https://github.com/4thlabs/quoll/issues/126)). A failure of reqwest before the answer is sorted by reqwest's
+  own predicates, in this order: `is_builder` is `Invalid`, `is_connect` `Connect`, `is_timeout` `Timeout`, a
+  `status` `Status` of it, `is_body` `Body`, `is_decode`, `is_redirect` and `is_upgrade` `Middleware`, and any other,
+  `is_request` among them, `Closed`: the request left and no usable head came back. A failure while a body is read,
+  `is_decode` included, is `Body`, unless it is a deadline. A middleware's own error is `Middleware`, unless it passes
+  on a reqwest error or an error of reqwest-middleware's, which keeps its kind whichever client it came from: a
+  middleware whose own failure must read `Middleware` wraps it in an error type of its own.
 - `Error::failed(kind, message)` builds a failure of the client of any kind, for a fake: a call that got no answer,
   whose `.response()` is the error, or with `ErrorKind::Status(status)` an answer of that status whose body is not the
   api's error shape, whose `.response()` is an answer of that status. A handler that returns it answers 502, or 500
