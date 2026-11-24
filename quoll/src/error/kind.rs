@@ -29,11 +29,11 @@ use http::StatusCode;
 /// ```
 ///
 /// A body quoll reads that fails is `Body`, or `Timeout` for a deadline. A failure of reqwest that dispatch or a
-/// middleware returns, which nothing ties to a client, is sorted by reqwest's own predicates, in this order:
-/// `is_builder` is `Invalid`, `is_connect` `Connect`, `is_timeout` `Timeout`; `is_body`, `is_decode`, `is_redirect`,
-/// `is_upgrade` and an error of a `status` are `Middleware`, a middleware's or reqwest's own doing; and any other,
-/// `is_request` among them, is `Closed`. A middleware's own error is `Middleware`, unless it passes on a reqwest error
-/// or an error of a chain, which is sorted so. quoll's own cases are said with each kind.
+/// middleware returns is sorted by reqwest's own predicates, in this order: `is_builder` is `Invalid`, `is_connect`
+/// `Connect`, `is_timeout` `Timeout`; `is_decode`, `is_redirect`, `is_upgrade` and an error of a `status` are
+/// `Middleware`, as each is a decision or a read by a middleware or by reqwest itself, never quoll's read of the call's
+/// answer; and any other, `is_request` among them, is `Closed`. A middleware's own error is `Middleware`, unless it
+/// passes on a reqwest error or an error of a chain, which is sorted so. quoll's own cases are said with each kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ErrorKind {
@@ -86,12 +86,17 @@ pub enum ErrorKind {
     /// What caused it stays among its sources.
     ///
     /// A reqwest error, or an error of reqwest-middleware's, that a middleware passes on as it is, from the rest of
-    /// this call's chain or from a client of its own, which nothing tells apart, is sorted by reqwest's predicates: a
-    /// body, decode, redirect, upgrade or status error is a `Middleware`, a body a middleware read itself, a `json()`
-    /// of its own, reqwest's own following of redirects, an answer a middleware turned into an error with
-    /// `error_for_status`, which has no status; and it keeps `Connect`, `Timeout`, `Invalid` or `Closed` otherwise. A
+    /// this call's chain or from a client of its own, is sorted by reqwest's predicates. `is_connect`, `is_timeout`
+    /// and `is_builder` come first, and keep `Connect`, `Timeout` and `Invalid`: a middleware's own read that times out
+    /// is a `Timeout`, which [`client::retry`] tries again. Then a decode, redirect, upgrade or status error is a
+    /// `Middleware`, a decision or a read by a middleware or by reqwest itself: a body a middleware read itself or a
+    /// `json()` of its own, which reqwest reports as a decode error, reqwest's own following of redirects, an answer a
+    /// middleware turned into an error with `error_for_status`, which has no status. Any other is a `Closed`. A
     /// middleware whose own failure must read `Middleware` wraps it in an error type of its own. quoll's deadline on
     /// the head of a stream is a [`Timeout`](Self::Timeout).
+    ///
+    #[cfg_attr(feature = "client", doc = "[`client::retry`]: crate::client::retry")]
+    #[cfg_attr(not(feature = "client"), doc = "[`client::retry`]: crate#features")]
     Middleware,
     /// The call could not be sent as it was written, what reqwest reports as `is_builder`, or what quoll finds before
     /// it sends: a client given a URL that is not one, a path parameter that is `None`, a header with a line break. It

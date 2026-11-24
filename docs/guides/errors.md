@@ -182,9 +182,11 @@ Every error has a kind, which `error.kind()` gives. A handler's errors have one 
 A middleware's error says why among its sources. A reqwest error, or an error of reqwest-middleware's, that a
 middleware passes on as it is keeps its kind, whichever client it came from: the rest of the call's chain, or a client
 of the middleware's own, which the kind cannot tell apart. A middleware whose own failure must read `Middleware` wraps
-it in an error type of its own. A reqwest error passed on is `Middleware` when it is a body, decode, redirect,
-upgrade or status error, and keeps `Connect`, `Timeout`, `Invalid` or `Closed` otherwise. A body that quoll reads
-itself and that fails is `Body`. quoll's deadline on the head of a stream is `Timeout`.
+it in an error type of its own. A reqwest error passed on keeps `Connect`, `Timeout` or `Invalid` first: a
+middleware's own read that times out is `Timeout`, and is tried again. Otherwise it is `Middleware` when it is a
+decode, redirect, upgrade or status error, a middleware's own read of a body or `json()` among them, which reqwest
+reports as a decode error, and `Closed` for any other. A body that quoll reads itself and that fails is `Body`.
+quoll's deadline on the head of a stream is `Timeout`.
 
 `ErrorKind` is `#[non_exhaustive]`: a `match` on it ends with `_`, so that a later version may add a kind. A status is
 matched by its constant, or by a guard:
