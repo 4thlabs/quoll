@@ -17,6 +17,13 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.0" }
 
 ## [Unreleased]
 
+### Added
+
+- `ByteStream::with_length` sends a stream of a known size, such as a file, with its `Content-Length` rather than in
+  chunked encoding. A stream that gives another number of bytes is cut before its last bytes and logged, and the
+  client reads an error. `ByteStream::length` gives the length on both sides, and on the client the `Content-Length`
+  of the answer ([#115](https://github.com/4thlabs/quoll/issues/115)).
+
 ### Changed
 
 - `server::builder()`'s `serve` and `serve_on`, and `test::spawn`, set `TCP_NODELAY` on every connection whose stream

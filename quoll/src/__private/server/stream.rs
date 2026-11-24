@@ -3,6 +3,7 @@
 
 use std::error::Error as StdError;
 use std::future;
+use std::pin::Pin;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -129,17 +130,18 @@ pub fn json_lines<L: IsJsonLines + Written>(
 }
 
 /// A 200 with the chunks of the handler's stream, each sent as it comes, of their content type, with
-/// `X-Content-Type-Options: nosniff` as a `Bytes` has it, `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
+/// `X-Content-Type-Options: nosniff` as a `Bytes` has it, `Cache-Control: no-cache` and `X-Accel-Buffering: no`, and
+/// the `Content-Length` of the stream's length, when it has one, in place of chunked encoding.
 ///
 /// A chunk that fails once the 200 is sent is logged, and cuts the answer short, as JSON Lines are: the client reads
-/// an error rather than an end.
+/// an error rather than an end. So does a stream that gives another number of bytes than its length.
 ///
 /// # Errors
 ///
 /// The handler's error, or a 500 when the content type is not a media type or a header it gave cannot be sent.
 pub fn byte_stream<B: IsByteStream>(result: Result<crate::Response<B>>) -> Result<Response> {
     let (given, bytes) = parts(result)?;
-    let (chunks, content_type) = bytes.into_parts();
+    let (chunks, content_type, length) = bytes.into_parts();
     let content_type = media_type_value(content_type).map_err(|content_type| {
         Error::internal(format!(
             "the content type of a `ByteStream`, {content_type:?}, is not a media type"
@@ -158,11 +160,123 @@ pub fn byte_stream<B: IsByteStream>(result: Result<crate::Response<B>>) -> Resul
         ),
         (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
     ];
+    let Some(length) = length else {
+        return with_headers(
+            unbuffered((headers, Body::from_stream(chunks)).into_response()),
+            given,
+        );
+    };
 
-    with_headers(
-        unbuffered((headers, Body::from_stream(chunks)).into_response()),
-        given,
-    )
+    // hyper sends a body of unknown size as the `Content-Length` says, in place of chunked encoding.
+    let mut response = (headers, Body::from_stream(measured(chunks, length))).into_response();
+
+    response
+        .headers_mut()
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(length));
+
+    with_headers(unbuffered(response), given)
+}
+
+/// What the server sends of `chunks`, which a `ByteStream` says are `length` bytes in all: each chunk as it comes,
+/// but the one that brings them to `length`, which waits for the stream to end, so that a stream that gives more is
+/// never answered as if it were whole.
+///
+/// A stream that gives more than `length` bytes, or ends before, is logged, and cuts the answer short before its last
+/// bytes, as an error of its chunks does: the client reads fewer bytes than its `Content-Length` says, which is an
+/// error. An error of the chunks, logged already, cuts it the same way, and the chunk held is dropped.
+fn measured<S>(chunks: S, length: u64) -> impl Stream<Item = Result<Vec<u8>>> + Send + 'static
+where
+    S: Stream<Item = Result<Vec<u8>>> + Send + 'static,
+{
+    let measure = Measure {
+        chunks: Box::pin(chunks),
+        length,
+        given: 0,
+        last: None,
+    };
+
+    stream::unfold(Some(measure), |measure| async move {
+        let mut measure = measure?;
+
+        loop {
+            let Some(chunk) = measure.chunks.next().await else {
+                let last = measure.ended()?;
+
+                if last.is_err() {
+                    // As for an error of the chunks, a turn may let hyper send what came before.
+                    tokio::task::yield_now().await;
+                }
+
+                return Some((last, None));
+            };
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(error) => return Some((Err(error), None)),
+            };
+
+            if chunk.is_empty() {
+                continue;
+            }
+
+            measure.given = measure.given.saturating_add(chunk.len() as u64);
+
+            if measure.last.is_some() || measure.given > measure.length {
+                let error = cut(format!(
+                    "its `ByteStream` gave more than its length, {} bytes",
+                    measure.length
+                ));
+
+                // As for an error of the chunks, a turn may let hyper send what came before.
+                tokio::task::yield_now().await;
+
+                return Some((Err(error), None));
+            }
+
+            if measure.given < measure.length {
+                return Some((Ok(chunk), Some(measure)));
+            }
+
+            measure.last = Some(chunk);
+        }
+    })
+}
+
+/// The chunks of a `ByteStream` of a known length, as [`measured`] sends them.
+struct Measure<S> {
+    chunks: Pin<Box<S>>,
+    /// The length the `ByteStream` says.
+    length: u64,
+    /// How many bytes its chunks have given.
+    given: u64,
+    /// The chunk that brought them to the length, held until the stream ends.
+    last: Option<Vec<u8>>,
+}
+
+impl<S> Measure<S> {
+    /// What is sent once the chunks have ended: the chunk held, an error when they gave fewer bytes than their length,
+    /// or nothing more.
+    fn ended(self) -> Option<Result<Vec<u8>>> {
+        if let Some(last) = self.last {
+            return Some(Ok(last));
+        }
+
+        if self.given == self.length {
+            return None;
+        }
+
+        Some(Err(cut(format!(
+            "its `ByteStream` ended after {} of its {} bytes",
+            self.given, self.length
+        ))))
+    }
+}
+
+/// Logs that a `ByteStream` of a known length was cut short after its 200, for the reason `what`, and the error that
+/// cuts it.
+fn cut(what: String) -> Error {
+    tracing::error!("a stream cut short after its 200: {what}");
+
+    Error::internal(what)
 }
 
 /// `response` with `X-Accel-Buffering: no`, which tells nginx, and the proxies that read it as nginx does, to send

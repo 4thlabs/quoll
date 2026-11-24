@@ -279,8 +279,9 @@ impl<T> fmt::Debug for JsonLines<T> {
 ///
 /// The server builds it from a stream of chunks, [`ByteStream::new`], or of results, [`ByteStream::try_new`], of
 /// `application/octet-stream` unless [`ByteStream::with_content_type`] says another. The client gets the same type: a
-/// [`Stream`] of `Result<Vec<u8>>`, the chunks of the body as they arrive, and the [content type](Self::content_type)
-/// of the answer; a 204 or a 205 gives a stream that ends at once, of `application/octet-stream`.
+/// [`Stream`] of `Result<Vec<u8>>`, the chunks of the body as they arrive, the [content type](Self::content_type)
+/// of the answer and its [length](Self::length), when it says one; a 204 or a 205 gives a stream that ends at once, of
+/// `application/octet-stream`.
 ///
 /// ```
 /// use futures_util::{StreamExt, stream};
@@ -307,6 +308,10 @@ impl<T> fmt::Debug for JsonLines<T> {
 /// down, and one that goes away drops it, with the connection. Nothing goes out before the first chunk: a proxy that
 /// holds the head of an answer until its first bytes, as Vite's does, holds it until then.
 ///
+/// With no length, the chunks go out in chunked encoding. One given by [`ByteStream::with_length`], a file whose size
+/// is known, is sent as `Content-Length`, so that a browser shows the size of a download and its progress, and a
+/// client tells a cut answer from a whole one. A `HEAD` of the route answers it too, with no body.
+///
 /// A server of `server::builder()` that is told to stop does not end the chunks: they run on until its grace has
 /// passed, and are then cut with their connection as its runtime ends, which the client reads as an error. A clean
 /// end would make a finite stream, a file, cut by the stop look complete; what it should say is an open question,
@@ -322,6 +327,7 @@ impl<T> fmt::Debug for JsonLines<T> {
 pub struct ByteStream {
     pub(crate) chunks: Items<Vec<u8>>,
     pub(crate) content_type: Cow<'static, str>,
+    pub(crate) length: Option<u64>,
 }
 
 impl ByteStream {
@@ -334,6 +340,7 @@ impl ByteStream {
         Self {
             chunks: Items::values(chunks),
             content_type: Cow::Borrowed(OCTET_STREAM),
+            length: None,
         }
     }
 
@@ -357,6 +364,7 @@ impl ByteStream {
         Self {
             chunks: Items::new(results),
             content_type: Cow::Borrowed(OCTET_STREAM),
+            length: None,
         }
     }
 
@@ -369,8 +377,38 @@ impl ByteStream {
     #[must_use]
     pub fn with_content_type(self, content_type: impl Into<String>) -> Self {
         Self {
-            chunks: self.chunks,
             content_type: Cow::Owned(content_type.into()),
+            ..self
+        }
+    }
+
+    /// The same chunks, `length` bytes in all, which the server sends as `Content-Length` rather than in chunked
+    /// encoding: the size of a file, which a browser shows with the progress of its download.
+    ///
+    /// A stream that gives another length is never answered as if it were whole. The server sends each chunk as it
+    /// comes, but holds the one that brings the bytes to `length` until the stream ends. One that gives more than
+    /// `length` bytes, ends before, or gives an error, is logged and cut short before its last bytes, as an error of
+    /// [`try_new`](Self::try_new) is: the client reads fewer bytes than its `Content-Length` says, and an error. So the
+    /// stream ends once it has given its bytes: one that waits after them holds its last chunk back.
+    ///
+    /// A length of 0 sends the head alone: the stream is dropped unread, as for a `HEAD`.
+    ///
+    /// ```
+    /// use futures_util::stream;
+    /// use quoll::ByteStream;
+    ///
+    /// let archive = vec![b"PK".to_vec(), b"\x03\x04".to_vec()];
+    /// let download = ByteStream::new(stream::iter(archive))
+    ///     .with_content_type("application/zip")
+    ///     .with_length(4);
+    ///
+    /// assert_eq!(download.length(), Some(4));
+    /// ```
+    #[must_use]
+    pub fn with_length(self, length: u64) -> Self {
+        Self {
+            length: Some(length),
+            ..self
         }
     }
 
@@ -378,6 +416,13 @@ impl ByteStream {
     /// nothing said it.
     pub fn content_type(&self) -> &str {
         &self.content_type
+    }
+
+    /// How many bytes the chunks hold in all, when it is known: the length given by
+    /// [`with_length`](Self::with_length), or on the client the `Content-Length` of the answer. `None` for chunks of
+    /// no known length, an answer in chunked encoding, a compressed one that the client decodes, or a 204 or a 205.
+    pub fn length(&self) -> Option<u64> {
+        self.length
     }
 
     /// Whether the bytes are of `media_type`, a type and a subtype, whatever the case and the parameters of their
@@ -406,11 +451,12 @@ impl Stream for ByteStream {
     }
 }
 
-/// Shows the content type: the chunks are known only as they are read.
+/// Shows the content type and the length: the chunks are known only as they are read.
 impl fmt::Debug for ByteStream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ByteStream")
             .field("content_type", &self.content_type)
+            .field("length", &self.length)
             .finish_non_exhaustive()
     }
 }
