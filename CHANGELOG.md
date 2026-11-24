@@ -26,15 +26,16 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
   `Some(status)` exactly when the kind is `Status(status)`. `ErrorKind::as_str()` and its `Display` give `404` or
   `timeout`, and `answered()` says whether the other API answered
   ([#126](https://github.com/4thlabs/quoll/issues/126)). A failure of reqwest is sorted by reqwest's own predicates,
-  in this order: `is_builder` is `Invalid`, `is_connect` `Connect`, `is_timeout` `Timeout`, `is_body`, `is_decode`,
-  `is_redirect`, `is_upgrade` and an error of a `status` `Middleware`, and any other, `is_request` among them,
-  `Closed`: the request left and no usable head came back. A body quoll reads that fails is `Body`; a reqwest body or
-  decode error a middleware passes on is `Middleware`. A middleware's own error is `Middleware`, unless it passes
-  on a reqwest error or an error of reqwest-middleware's, which keeps its kind whichever client it came from: a
-  middleware whose own failure must read `Middleware` wraps it in an error type of its own. A middleware that turns
-  an answer into an error with `error_for_status` fails the call as `Middleware`, with no status: the error's message
-  says that a middleware failed with a reqwest error of that status, which says nothing of which client's answer it
-  was.
+  in this order: `is_builder` is `Invalid`, `is_connect` `Connect`, `is_timeout` `Timeout`, then `is_decode`,
+  `is_redirect`, `is_upgrade` and an error of a `status` `Middleware`, a decision or a read by a middleware or by
+  reqwest itself, and any other, `is_request` among them, `Closed`: the request left and no usable head came back. A
+  body quoll reads that fails is `Body`; a middleware's own read of a body or `json()`, which reqwest reports as a
+  decode error, is `Middleware`, and `Timeout` when it times out. A middleware's own error is `Middleware`, unless
+  it passes on a reqwest error or an error of reqwest-middleware's, which keeps its kind whichever client it came
+  from: a middleware whose own failure must read `Middleware` wraps it in an error type of its own. A middleware that
+  turns an answer into an error with `error_for_status` fails the call as `Middleware`, with no status: the error's
+  message says that a middleware failed with a reqwest error of that status, which says nothing of which client's
+  answer it was.
 - `Error::failed(kind, message)` builds a failure of the client of any kind, for a fake: a call that got no answer,
   whose `.response()` is the error, or with `ErrorKind::Status(status)` an answer of that status whose body is not the
   api's error shape, whose `.response()` is an answer of that status. A handler that returns it answers 502, or 500

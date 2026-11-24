@@ -894,7 +894,7 @@ async fn trace_records_no_status_for_a_reqwest_error_of_a_status_a_middleware_fa
 }
 
 #[tokio::test]
-async fn a_middleware_whose_own_read_of_a_body_fails_is_middleware() {
+async fn a_middlewares_own_read_of_a_cut_body_reported_as_decode_is_middleware() {
     let (url, calls) = raw(ok("application/json", br#"{"id":1}"#)).await;
     let (other, _) = raw(cut(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100",
@@ -905,7 +905,8 @@ async fn a_middleware_whose_own_read_of_a_body_fails_is_middleware() {
         let other = other.clone();
 
         Box::pin(async move {
-            // reqwest's error of the middleware's own read of a cut body, passed on with `?`.
+            // reqwest's error of the middleware's own read of a cut body, which reqwest 0.13 reports as a decode
+            // error, passed on with `?`.
             reqwest::get(format!("{other}/token"))
                 .await?
                 .bytes()

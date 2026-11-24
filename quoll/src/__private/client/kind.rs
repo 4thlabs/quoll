@@ -65,9 +65,11 @@ pub(crate) fn passed_on_status(error: &(dyn StdError + 'static)) -> Option<http:
 }
 
 /// The kind of a reqwest error that dispatch or a middleware returns, by reqwest's predicates alone, in this order:
-/// `is_builder`, `Invalid`; `is_connect`, `Connect`; `is_timeout`, `Timeout`; `is_body`, `is_decode`, `is_redirect`,
-/// `is_upgrade` and a `status`, `Middleware`, a middleware's or reqwest's own doing, as nothing says which client the
-/// error came from; and any other, `is_request` among them, `Closed`: the request left and no usable head came back.
+/// `is_builder`, `Invalid`; `is_connect`, `Connect`; `is_timeout`, `Timeout`, checked first, so that a middleware's own
+/// read that times out is a `Timeout`; `is_decode`, `is_redirect`, `is_upgrade` and a `status`, `Middleware`: a
+/// decision or a read by a middleware or by reqwest itself, a middleware's own read of a body or `json()`, which
+/// reqwest reports as `is_decode`, never quoll's read of the call's answer; and any other, `is_request` among them,
+/// `Closed`: the request left and no usable head came back.
 ///
 /// A body quoll reads is not sorted here: where it reads, a failure is `Body`, or `Timeout` for a deadline.
 fn of_reqwest(error: &reqwest::Error) -> ErrorKind {
@@ -83,6 +85,8 @@ fn of_reqwest(error: &reqwest::Error) -> ErrorKind {
         return ErrorKind::Timeout;
     }
 
+    // reqwest 0.13 reports a middleware's own read of a body as `is_decode`; `is_body` is kept in case another
+    // version reports it so.
     let own = error.is_body()
         || error.is_decode()
         || error.is_redirect()
