@@ -30,8 +30,13 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.1" }
 
   - drop the `.into()` on the arguments of a call, which no longer compiles, and write `["a", "b"]` for a
     `vec!["a".into(), "b".into()]`;
+  - an `.into()` from a type that is no argument, a `Cow<str>`, a `Box<str>` or a type of the application with
+    `From<MyId> for i64`, becomes `T::from(x)`: `String::from(cow)`, `i64::from(id)`; and
+    `name.as_deref().map(Into::into)` becomes `.map(String::from)`;
   - an argument whose type came from the parameter, `id.parse()?`, `.collect()`, `Default::default()` or
     `n.try_into()?`, is now ambiguous: say its type, `id.parse::<i64>()?`;
+  - a call returned from a function or stored past a borrowed argument takes the argument by value,
+    `name.to_owned()` rather than `&name`, as the call keeps borrowed what its arguments borrow until it is awaited;
   - a fake takes each argument as `impl Arg<T>`, and reads it with `into_value()`:
     `fn get(&self, id: impl Arg<i64>) -> impl Call<Note>`, then `let id = id.into_value();`.
 
