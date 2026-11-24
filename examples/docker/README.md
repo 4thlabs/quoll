@@ -5,7 +5,7 @@ and a command line that calls it.
 
 ```text
 docker/
-  api/   docker-api   the contract and its models: quoll and serde, `#[openapi(none)]`, as the daemon is only called
+  api/   docker-api   the contract and its models: quoll and serde, `#[server(none)]`, as the daemon is only called
   cli/   docker-cli   the command line: clap, and docker-api with feature "client"
 ```
 

@@ -2,7 +2,7 @@ error[E0277]: the group has no OpenAPI document, which the document of the api t
   --> tests/compile_fail/group_listed_without_document.rs:11:28
    |
 11 |     pub api Api = "/api" { notes::Notes };
-   |                            ^^^^^^^^^^^^ a group with `#[openapi(none)]`
+   |                            ^^^^^^^^^^^^ a group with `#[openapi(none)]` or `#[server(none)]`
    |
 help: the trait `quoll::__private::openapi::GroupDocument` is not implemented for `__QuollGroupNotes`
   --> tests/compile_fail/group_listed_without_document.rs:2:5
@@ -11,5 +11,5 @@ help: the trait `quoll::__private::openapi::GroupDocument` is not implemented fo
  3 | |         #[openapi(none)]
  4 | |         pub group Notes {
    | |_______________________^
-   = note: remove `#[openapi(none)]` from the group's `quoll::group!`, or write it on the api, whose document is then left out
+   = note: remove `#[openapi(none)]` or `#[server(none)]` from the group's `quoll::group!`, or write the same on the api
    = note: this error originates in the macro `quoll::group` (in Nightly builds, run with -Z macro-backtrace for more info)

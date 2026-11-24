@@ -300,6 +300,28 @@ pub use crate::__table as table;
 /// Checks, at compile time, that `G` is a group: the descriptor of a group an api lists.
 pub const fn is_group<G: Group>() {}
 
+/// The descriptor of a group that has a server side, which an api that serves lists.
+#[diagnostic::on_unimplemented(
+    message = "the group has no server side, which the api that lists it serves",
+    label = "a group with `#[server(none)]`",
+    note = "remove `#[server(none)]` from the group's `quoll::group!`, or write it on the api, which then only calls its groups"
+)]
+pub trait Served {}
+
+/// The descriptor of a group that has a client side, which an api that calls lists.
+#[diagnostic::on_unimplemented(
+    message = "the group has no client side, which the api that lists it calls",
+    label = "a group with `#[client(none)]`",
+    note = "remove `#[client(none)]` from the group's `quoll::group!`, or write it on the api, which then only serves its groups"
+)]
+pub trait Called {}
+
+/// Checks, at compile time, that the group `G` has a server side, which the api that lists it serves.
+pub const fn is_served<G: Served>() {}
+
+/// Checks, at compile time, that the group `G` has a client side, which the api that lists it calls.
+pub const fn is_called<G: Called>() {}
+
 /// The shape `E` of an api's errors, as its checks tell it by its type: [`IS_PROBLEM`](Shape::IS_PROBLEM) is `true`
 /// for quoll's `quoll::Problem` alone, by the impl of that type, and `false` for any other, by [`OtherShape`], whose
 /// constant a path reaches only where no impl of the type's own has one.
@@ -465,7 +487,7 @@ const fn check_pair(
                 .push(first_group.name)
                 .push("::")
                 .push(first.function)
-                .push("` too, told apart by their `#[body(...)]`, which the OpenAPI document does not describe yet: write `#[openapi(none)]` on the api, for a contract that is only called"),
+                .push("` too, told apart by their `#[body(...)]`, which the OpenAPI document does not describe yet: write `#[server(none)]` on the api of a contract that is only called, or `#[openapi(none)]` on one that is served with no document"),
         );
     }
 

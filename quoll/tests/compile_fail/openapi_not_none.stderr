@@ -1,4 +1,4 @@
-error: `#[openapi(...)]` takes `none`: write `#[openapi(none)]`, which leaves out the OpenAPI document of a contract that is only called, whose types need no schema
+error: `#[openapi(...)]` takes `none`: write `#[openapi(none)]`, which leaves out the OpenAPI document of a served api, or `#[server(none)]` on a contract that is only called, which has no document either
  --> tests/compile_fail/openapi_not_none.rs:2:15
   |
 2 |     #[openapi(all)]

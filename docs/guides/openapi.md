@@ -137,9 +137,9 @@ assert!(json.contains("SettingsOutput"));
 
 ## A contract that is only called
 
-The contract of an API that quoll did not write, and that the application only calls, says `#[openapi(none)]` on its
-api. It has no `Api::openapi()`, and its types need only serde: they may come from crates that do not implement
-`JsonSchema`.
+The contract of an API that quoll did not write, and that the application only calls, says `#[server(none)]` on its
+api. It has no server side, and no `Api::openapi()`, since the document describes what is served. Its types need only
+serde: they may come from crates that do not implement `JsonSchema`.
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -152,7 +152,7 @@ pub struct Repo {
 
 quoll::api! {
     /// GitHub's API, which the application only calls.
-    #[openapi(none)]
+    #[server(none)]
     pub api GitHub = "";
 
     pub group Repos {
@@ -161,8 +161,11 @@ quoll::api! {
 }
 ```
 
-A `quoll::group!` of such a contract says `#[openapi(none)]` on its group. An api with a document lists only groups
+A `quoll::group!` of such a contract says `#[server(none)]` on its group. An api with a document lists only groups
 that have one.
+
+An api that is served with no document says `#[openapi(none)]`: it keeps its server side, and its types need no
+`JsonSchema`. A `quoll::group!` says it on its group too.
 
 [Another API](another-api.md) goes through such a contract:
 

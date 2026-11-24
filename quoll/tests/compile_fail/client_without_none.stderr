@@ -1,0 +1,5 @@
+error: `#[client]` takes `none`: write `#[client(none)]`, which leaves out the client side of a contract that is only served
+ --> tests/compile_fail/client_without_none.rs:2:5
+  |
+2 |     #[client]
+  |     ^^^^^^^^^

@@ -41,7 +41,9 @@ use crate::syntax::{Contract, GroupContract};
 /// The block holds, in any order:
 ///
 /// - the api, once: its visibility, its name, its prefix, `""` for none, and the groups of other modules it lists,
-///   by their paths, which `quoll::group!` blocks write. `#[openapi(none)]` on it leaves out its OpenAPI document;
+///   by their paths, which `quoll::group!` blocks write. `#[openapi(none)]` on it leaves out its OpenAPI document,
+///   `#[server(none)]` its server side and its document, for an API that is only called, and `#[client(none)]` its
+///   client side, for one that is only served: a side left out is not written whatever the features of `quoll`;
 /// - the schemes it declares, `header`, `cookie`, `query` or `openid`, each with its visibility and its name;
 /// - its groups, each a table of routes, with `#[auth(...)]` on the group or on a route.
 ///
@@ -67,20 +69,23 @@ use crate::syntax::{Contract, GroupContract};
 ///
 /// The contract becomes these items, in the module that writes it, each with the contract's `///` comments:
 ///
-/// | Item                            | Feature of `quoll` | What it is                                          |
-/// | ------------------------------- | ------------------ | --------------------------------------------------- |
-/// | `struct Api`                    | whatever           | the api's type                                      |
-/// | `Api::openapi()`                | whatever           | the OpenAPI 3.1 document, unless `#[openapi(none)]` |
-/// | `struct Key`, ...               | whatever           | each scheme it declares                             |
-/// | `trait NotesServer`             | `server`           | a handler per route, with the caller                |
-/// | `struct ApiServices`            | `server`           | a field per group: its service                      |
-/// | `Api::router(services)`         | `server`           | the `axum::Router` of the api                       |
-/// | `trait Notes`                   | `client`           | a method per route, for the client and fakes        |
-/// | `struct NotesClient`            | `client`           | the client of the group                             |
-/// | `struct ApiClient`              | `client`           | a method per group: `api.notes()`                   |
-/// | `Api::client(url)`              | `client`           | a client with no middleware                         |
-/// | `Api::client_with(http, url)`   | `client`           | a client on a `ClientWithMiddleware`                |
-/// | `impl client::Contract for Api` | `client`           | what `client::builder().build::<Api>(url)` builds   |
+/// | Item                            | Feature of `quoll` | What it is                                                              |
+/// | ------------------------------- | ------------------ | ----------------------------------------------------------------------- |
+/// | `struct Api`                    | whatever           | the api's type                                                          |
+/// | `Api::openapi()`                | whatever           | the OpenAPI 3.1 document, unless `#[openapi(none)]` or `#[server(none)]` |
+/// | `struct Key`, ...               | whatever           | each scheme it declares                                                 |
+/// | `trait NotesServer`             | `server`           | a handler per route, with the caller                                    |
+/// | `struct ApiServices`            | `server`           | a field per group: its service                                          |
+/// | `Api::router(services)`         | `server`           | the `axum::Router` of the api                                           |
+/// | `trait Notes`                   | `client`           | a method per route, for the client and fakes                            |
+/// | `struct NotesClient`            | `client`           | the client of the group                                                 |
+/// | `struct ApiClient`              | `client`           | a method per group: `api.notes()`                                       |
+/// | `Api::client(url)`              | `client`           | a client with no middleware                                             |
+/// | `Api::client_with(http, url)`   | `client`           | a client on a `ClientWithMiddleware`                                    |
+/// | `impl client::Contract for Api` | `client`           | what `client::builder().build::<Api>(url)` builds                       |
+///
+/// The items of the feature `server` are not written with `#[server(none)]`, nor those of `client` with
+/// `#[client(none)]`.
 ///
 /// Each handler of `NotesServer` returns `impl Future<Output = Result<Response<T>>> + Send`, and an implementation
 /// writes `async fn`, which returns `Ok(Response::new(note))`; each method of `Notes` returns `impl Call<T, E>`, `E`
@@ -118,7 +123,9 @@ pub fn api(input: TokenStream) -> TokenStream {
 /// module: its server trait, `NotesServer`, its client's trait and its client, `Notes` and `NotesClient`, each behind
 /// its feature. A scheme the api declares is named by its path or an import, `#[auth(crate::Key)]`, as any type
 /// implementing `quoll::Scheme`. The group has an OpenAPI document, for which each type it names implements
-/// `schemars::JsonSchema`, unless it says `#[openapi(none)]`, as the group of an api that has none. Its client's trait
+/// `schemars::JsonSchema`, unless it says `#[openapi(none)]` or `#[server(none)]`, as the group of an api that has
+/// none. It has both sides unless it says `#[server(none)]` or `#[client(none)]`, and an api lists it only when it has
+/// each side the api has: a side of the group's that the api does not have is left out of that api. Its client's trait
 /// is written in its block, before an api lists it: the group says the shape of its errors itself, `#[error(E)]`, and an
 /// api with an `#[error(...)]` lists only groups that say one. The group takes the fixed headers, `#[header(...)]`, of
 /// the api that lists it, and any api may list it: a `none` of the group's leaves a header where that api fixes it,

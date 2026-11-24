@@ -1,0 +1,5 @@
+error: a group takes no `#[server(...)]`: `#[server(none)]` goes on the api, whose whole server side it leaves out
+ --> tests/compile_fail/server_on_group.rs:4:5
+  |
+4 |     #[server(none)]
+  |     ^^^^^^^^^^^^^^^

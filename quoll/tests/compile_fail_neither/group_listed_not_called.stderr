@@ -1,0 +1,20 @@
+error[E0277]: the group has no client side, which the api that lists it calls
+  --> tests/compile_fail_neither/group_listed_not_called.rs:11:28
+   |
+11 |     pub api Api = "/api" { notes::Notes };
+   |                            ^^^^^^^^^^^^ a group with `#[client(none)]`
+   |
+help: the trait `quoll::__private::group::Called` is not implemented for `__QuollGroupNotes`
+  --> tests/compile_fail_neither/group_listed_not_called.rs:2:5
+   |
+ 2 | /     quoll::group! {
+ 3 | |         #[client(none)]
+ 4 | |         pub group Notes {
+   | |_______________________^
+   = note: remove `#[client(none)]` from the group's `quoll::group!`, or write it on the api, which then only serves its groups
+note: required by a bound in `quoll::__private::group::is_called`
+  --> src/__private/group.rs
+   |
+   | pub const fn is_called<G: Called>() {}
+   |                           ^^^^^^ required by this bound in `is_called`
+   = note: this error originates in the macro `quoll::group` (in Nightly builds, run with -Z macro-backtrace for more info)

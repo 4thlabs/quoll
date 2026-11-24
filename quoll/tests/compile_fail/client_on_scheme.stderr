@@ -1,0 +1,5 @@
+error: a scheme takes no `#[client(...)]`: `#[client(none)]` goes on the api, whose whole client side it leaves out
+ --> tests/compile_fail/client_on_scheme.rs:4:5
+  |
+4 |     #[client(none)]
+  |     ^^^^^^^^^^^^^^^

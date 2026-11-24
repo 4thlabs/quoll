@@ -27,7 +27,7 @@ pub type SchemaFn = fn(&mut SchemaGenerator) -> Schema;
 #[diagnostic::on_unimplemented(
     message = "`{Self}` has no schema, which the OpenAPI document of the contract describes it with",
     label = "no `schemars::JsonSchema`",
-    note = "derive `schemars::JsonSchema` for `{Self}`, or write `#[openapi(none)]` on the api, or on the group of a `quoll::group!`, of a contract that is only called, which has no document"
+    note = "derive `schemars::JsonSchema` for `{Self}`, or write `#[server(none)]` on the api, or on the group of a `quoll::group!`, of a contract that is only called, which has no document, or `#[openapi(none)]` on one that is served with no document"
 )]
 pub trait Documented: JsonSchema {}
 
@@ -64,11 +64,12 @@ pub struct Api {
     pub groups: &'static [&'static Group],
 }
 
-/// The document of a group, which `quoll::group!` writes unless the group says `#[openapi(none)]`.
+/// The document of a group, which `quoll::group!` writes unless the group says `#[openapi(none)]` or
+/// `#[server(none)]`.
 #[diagnostic::on_unimplemented(
     message = "the group has no OpenAPI document, which the document of the api that lists it holds",
-    label = "a group with `#[openapi(none)]`",
-    note = "remove `#[openapi(none)]` from the group's `quoll::group!`, or write it on the api, whose document is then left out"
+    label = "a group with `#[openapi(none)]` or `#[server(none)]`",
+    note = "remove `#[openapi(none)]` or `#[server(none)]` from the group's `quoll::group!`, or write the same on the api"
 )]
 pub trait GroupDocument {
     /// The group, as the document describes it.

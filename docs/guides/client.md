@@ -469,7 +469,7 @@ pub struct Version {
 }
 
 quoll::api! {
-    #[openapi(none)]
+    #[server(none)]
     pub api Docker = "/v1.47";
 
     pub group System {

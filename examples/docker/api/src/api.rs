@@ -7,7 +7,7 @@ use crate::{
 
 quoll::api! {
     /// The Docker Engine API, version 1.47, which Docker 27.3 and later serve.
-    #[openapi(none)]
+    #[server(none)]
     #[error(DockerError)]
     pub api Docker = "/v1.47";
 

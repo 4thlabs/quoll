@@ -1,4 +1,4 @@
-error: POST on this path is the route `Messages::create` too, told apart by their `#[body(...)]`, which the OpenAPI document does not describe yet: write `#[openapi(none)]` on the api, for a contract that is only called
+error: POST on this path is the route `Messages::create` too, told apart by their `#[body(...)]`, which the OpenAPI document does not describe yet: write `#[server(none)]` on the api of a contract that is only called, or `#[openapi(none)]` on one that is served with no document
   --> tests/compile_fail/fixed_field_pair_with_document.rs:16:14
    |
 16 |         POST "/messages" => stream(request: Request);

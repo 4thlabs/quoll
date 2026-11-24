@@ -196,7 +196,7 @@ fn shared_in_document(route: &Route, first: &str, what: &str) -> Error {
     Error::new(
         route.span,
         format!(
-            "{} on this path is the route `{first}` too, told apart by their `#[body(...)]`, which the OpenAPI document does not describe yet: write `#[openapi(none)]` on {what}, for a contract that is only called",
+            "{} on this path is the route `{first}` too, told apart by their `#[body(...)]`, which the OpenAPI document does not describe yet: write `#[server(none)]` on {what} of a contract that is only called, or `#[openapi(none)]` on one that is served with no document",
             route.method.as_str()
         ),
     )
