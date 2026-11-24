@@ -568,10 +568,10 @@
 //! `client`, and cargo builds `quoll` once per binary, with the features of all its dependents. `#[server(none)]` on
 //! the api leaves out the server side whatever the features, and the OpenAPI document with it, for an API that is only
 //! called. `#[client(none)]` leaves out the client side, for one that is only served, such as a webhook receiver. A
-//! contract has at least one side, and its types need only what that side reads and writes. With the feature of the
-//! missing side, hidden stand-ins take the names of its items, so that implementing the group's trait, or calling
-//! `Api::router` or `Api::client`, is one error that says the contract has no such side. A [`group!`] says it on its
-//! group, and an api lists only groups that have each side it has.
+//! contract has at least one side, and its types need only what that side reads and writes. No item of the missing
+//! side is written, whatever the features, so that naming one, `impl NotesServer for App` on a contract with
+//! `#[server(none)]`, is rustc's own error. A [`group!`] says it on its group, and an api lists only groups that have
+//! each side it has.
 //!
 //! ```
 //! use serde::Deserialize;

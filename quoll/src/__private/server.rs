@@ -35,6 +35,16 @@ pub use axum::routing::MethodFilter;
 pub(crate) use stream::ended_on_stop;
 pub use stream::{Written, byte_stream, events, json_lines};
 
+/// The descriptor of a group served by `S`, a service implementing the group's server trait: how an api's router serves
+/// the group, reaching it by its descriptor alone. Generic over the service, as the group's impl bounds it by the
+/// group's trait, which the api does not name. Not bound on `Served`, which the api checks on its own: the router's
+/// bound on a group with no server side is then no second error.
+pub trait Serve<S> {
+    /// Adds the group's routes, served by `service`, to `router`, each with its route of `routes`, the table of the
+    /// api that lists the group. Named so that no call of the application's, `serve`, takes it for a candidate.
+    fn serve_group(router: Routes, service: S, routes: &'static [crate::Route]) -> Routes;
+}
+
 /// The routes of an api, which its groups add theirs to: the router of the routes that have no fixed field in their
 /// body, and the routes that have, which [`Routes::finish`] serves once every group has added its own, as two of
 /// them, from two groups, may share a method and a path.

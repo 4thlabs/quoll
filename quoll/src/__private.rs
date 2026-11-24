@@ -72,3 +72,23 @@ macro_rules! __client {
 }
 
 pub use crate::__client as client;
+
+/// Drops its input: `quoll` has the feature `client`, whose code checks what the input would.
+#[cfg(feature = "client")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __without_client {
+    ($($item:tt)*) => {};
+}
+
+/// Writes out its input: `quoll` does not have the feature `client`, whose code would check what the input does.
+#[cfg(not(feature = "client"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __without_client {
+    ($($item:tt)*) => {
+        $($item)*
+    };
+}
+
+pub use crate::__without_client as without_client;
