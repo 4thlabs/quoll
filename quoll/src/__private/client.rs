@@ -34,7 +34,7 @@ mod kind;
 mod redact;
 mod stream;
 
-pub(crate) use kind::{kind_of, of_reqwest};
+pub(crate) use kind::kind_of;
 
 pub(crate) use redact::{redacted, strip_urls};
 

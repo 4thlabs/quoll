@@ -666,8 +666,20 @@ async fn an_error_of_a_middleware_of_its_own_is_middleware() {
     assert_eq!(kind(&error), ErrorKind::Middleware);
 }
 
+/// Whether a reqwest error among the sources of `error` says its connection could not be opened.
+fn caused_by_connect(error: &(dyn std::error::Error + 'static)) -> bool {
+    std::iter::successors(error.source(), |&error| error.source()).any(|source| {
+        let reqwest = match source.downcast_ref::<reqwest_middleware::Error>() {
+            Some(reqwest_middleware::Error::Reqwest(error)) => Some(error),
+            _ => source.downcast_ref::<reqwest::Error>(),
+        };
+
+        reqwest.is_some_and(reqwest::Error::is_connect)
+    })
+}
+
 #[tokio::test]
-async fn a_reqwest_error_a_middleware_wraps_keeps_its_kind() {
+async fn an_error_of_the_chain_a_middleware_wraps_is_middleware_and_keeps_its_cause() {
     let (url, _socket) = refused();
 
     let error = client::builder()
@@ -679,7 +691,120 @@ async fn a_reqwest_error_a_middleware_wraps_keeps_its_kind() {
         .await
         .expect_err("refused");
 
+    assert_eq!(kind(&error), ErrorKind::Middleware);
+    assert!(caused_by_connect(&error), "{error:?}");
+}
+
+#[tokio::test]
+async fn a_reqwest_error_a_middleware_passes_through_as_it_is_keeps_its_kind() {
+    let (url, _socket) = refused();
+    let passing = middleware(|request, extensions, next| {
+        Box::pin(async move {
+            next.run(request, extensions)
+                .await
+                .map_err(|error| match error {
+                    reqwest_middleware::Error::Reqwest(error) => {
+                        reqwest_middleware::Error::middleware(error)
+                    }
+                    error => error,
+                })
+        })
+    });
+
+    let error = client::builder()
+        .with(passing)
+        .build::<Api>(&url)
+        .expect("a client")
+        .notes()
+        .get(1)
+        .await
+        .expect_err("refused");
+
     assert_eq!(kind(&error), ErrorKind::Connect);
+}
+
+/// An error of the application's that is the `quoll::Error` it holds, its message and its sources, as thiserror's
+/// `#[error(transparent)]` writes it.
+#[derive(Debug)]
+struct Transparent(Error<GitHubError>);
+
+impl fmt::Display for Transparent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for Transparent {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        std::error::Error::source(&self.0)
+    }
+}
+
+#[tokio::test]
+async fn a_middleware_that_fails_with_a_transparent_wrapper_of_a_quoll_error_is_middleware() {
+    let (url, calls) = raw(ok("application/json", br#"{"id":1}"#)).await;
+    let (other, _socket) = refused();
+    let looked_up = middleware(move |request, extensions, next| {
+        let other = other.clone();
+
+        Box::pin(async move {
+            GitHub::client(&other)
+                .expect("a client")
+                .repos()
+                .get("ana")
+                .await
+                .map_err(|error| reqwest_middleware::Error::middleware(Transparent(error)))?;
+
+            next.run(request, extensions).await
+        })
+    });
+
+    let error = client::builder()
+        .with(looked_up)
+        .build::<Api>(&url)
+        .expect("a client")
+        .notes()
+        .get(1)
+        .await
+        .expect_err("the middleware fails");
+
+    assert_eq!(kind(&error), ErrorKind::Middleware);
+    assert!(caused_by_connect(&error), "{error:?}");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "the api was not called");
+}
+
+#[tokio::test]
+async fn retry_and_kind_agree_on_an_error_of_the_chain_a_middleware_wraps() {
+    let (url, resets) = raw(Then::Reset).await;
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let kinds = Arc::clone(&seen);
+    let retry = client::retry(2).when(move |attempt: &Attempt| {
+        kinds.lock().expect("no panic").push(attempt.kind());
+
+        attempt.transient()
+    });
+
+    // `retry` first, then the wrapper: each attempt's error is the wrapper's.
+    let error = client::builder()
+        .with(retry)
+        .with(wrapping())
+        .build::<Api>(&url)
+        .expect("a client")
+        .notes()
+        .get(1)
+        .await
+        .expect_err("reset");
+
+    assert_eq!(kind(&error), ErrorKind::Middleware);
+    assert_eq!(
+        *seen.lock().expect("no panic"),
+        [Some(ErrorKind::Middleware)]
+    );
+    assert_eq!(
+        resets.load(Ordering::SeqCst),
+        1,
+        "a middleware's error is not tried again"
+    );
 }
 
 #[tokio::test]
