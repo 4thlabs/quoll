@@ -389,6 +389,10 @@ returns one of these:
 answer. [The kind of an error](errors.md#the-kind-of-an-error) lists them.
 
 `attempt.transient()` is the rule of `retry(times)` alone, for the cases that the closure leaves.
+
+`retry` reads the status of the answers that reach it. A middleware that turns answers into errors, with
+`error_for_status`, goes before `retry` in the builder. After it, `retry` never sees the status: it sees the
+middleware's error, of the kind `Middleware`, which it does not try again.
 `attempt.retry_after()` is the wait that the answer's `Retry-After` asks, in seconds or as an HTTP date. It is a minute
 at most, unless `.max_wait(..)` sets another.
 
