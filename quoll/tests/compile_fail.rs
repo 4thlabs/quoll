@@ -12,15 +12,18 @@
 //! - `tests/compile_fail_server/`, built with the feature `server`: what only the server's code checks, a route left
 //!   out of a service, a handler of the wrong signature, a status of no content on a route of a value or one that is
 //!   not a status, a body that is not `Deserialize`, a service that does not authenticate, and an argument the server
-//!   cannot receive owned, `&mut X`, `&&X` or `&impl Trait`, which a client alone takes; and the server's trait of a
-//!   contract with `#[server(none)]` implemented, rustc's own error, as the contract writes none.
+//!   cannot receive owned, `&mut X`, `&&X` or `&impl Trait`, which a client alone takes; a service of a listed group
+//!   that lacks the group's trait, in `listed_service_without_its_trait`, and the router of an api that lists a group
+//!   with `#[server(none)]` called, in `router_of_a_group_not_served`; and the server's trait of a contract with
+//!   `#[server(none)]` implemented, rustc's own error, as the contract writes none.
 //! - `tests/compile_fail_server_alone/`, built with the feature `server` and not `client`: what the server reports
 //!   among the errors of rustc's own that the client's code would change, `&dyn Trait` and a `&X` whose `X` has no
 //!   size, `&OsStr`.
 //! - `tests/compile_fail_client/`, built with the feature `client`: what only the client's checks, a fake of the wrong
 //!   signature, a result that is not `Deserialize`, `build` or `key` on the wrong type, a call not awaited, a borrowed
 //!   argument given by value, and a call that outlives what it borrows; and the client of a contract with
-//!   `#[client(none)]` built, rustc's own error, as the contract writes none.
+//!   `#[client(none)]` built, in `client_none_has_no_client`, or its trait faked, in `client_none_has_no_fake`, each
+//!   rustc's own error, as the contract writes none.
 //! - `tests/compile_fail_neither/`, built with neither feature: what each side would repeat a message of its own for.
 //!   A type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines` or `ByteStream` that is not
 //!   quoll's; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to

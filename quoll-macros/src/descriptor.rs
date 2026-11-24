@@ -343,19 +343,26 @@ impl GroupRef<'_> {
         self.path.is_none()
     }
 
-    /// The path of an item of the group, `notes::NotesClient` for `NotesClient`, as a link of the api's docs writes it.
+    /// The path of an item of the group, `notes::NotesClient` for `NotesClient`, as a link of the api's docs writes it:
+    /// the list's path, its leading `::` kept, as [`GroupRef::item`] keeps it.
     pub(crate) fn shown(&self, item: &str) -> String {
-        let module = self.path.into_iter().flat_map(|path| {
-            path.segments
-                .iter()
-                .take(path.segments.len() - 1)
-                .map(|segment| segment.ident.to_string())
-        });
+        let Some(path) = self.path else {
+            return item.to_owned();
+        };
 
-        module
-            .chain([item.to_owned()])
-            .collect::<Vec<_>>()
-            .join("::")
+        let colon = if path.leading_colon.is_some() {
+            "::"
+        } else {
+            ""
+        };
+        let module = path
+            .segments
+            .iter()
+            .take(path.segments.len() - 1)
+            .map(|segment| segment.ident.to_string());
+        let segments: Vec<String> = module.chain([item.to_owned()]).collect();
+
+        format!("{colon}{}", segments.join("::"))
     }
 
     /// The group's field in `ApiServices`, and its method on `ApiClient`.
@@ -576,5 +583,32 @@ fn is_group(path: &syn::Path) -> TokenStream {
 
     quote_spanned! {group.span()=>
         const _: () = ::quoll::__private::group::is_group::<#descriptor>();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shown(path: Option<&str>) -> String {
+        let path = path.map(|path| syn::parse_str::<syn::Path>(path).expect("a path"));
+        let name = Ident::new("Notes", Span::call_site());
+        let group = GroupRef {
+            name: &name,
+            path: path.as_ref(),
+        };
+
+        group.shown("NotesClient")
+    }
+
+    #[test]
+    fn a_link_to_an_item_of_a_group_keeps_the_path_of_the_list() {
+        assert_eq!(shown(None), "NotesClient");
+        assert_eq!(shown(Some("Notes")), "NotesClient");
+        assert_eq!(shown(Some("api::notes::Notes")), "api::notes::NotesClient");
+        assert_eq!(
+            shown(Some("::other::notes::Notes")),
+            "::other::notes::NotesClient"
+        );
     }
 }

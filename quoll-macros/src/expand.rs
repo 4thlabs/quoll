@@ -295,12 +295,17 @@ mod tests {
             "ApiServices",
             "fn router",
             "fn openapi () -> :: quoll :: openapi :: Document",
-            "GroupDocument",
+            "schema ::",
             "CHALLENGE",
             "Served for",
         ] {
             assert!(!tokens.contains(item), "{item} is written: {tokens}");
         }
+        // An empty document, which no api that builds reads: an api with a document refuses the group by `Served`.
+        assert!(
+            tokens.contains(r#"GroupDocument for __QuollGroupNotes { const GROUP : :: quoll :: __private :: openapi :: Group = :: quoll :: __private :: openapi :: Group { name : "Notes" , docs : & [] , routes : & [] , } ; }"#),
+            "{tokens}"
+        );
         assert!(tokens.contains("struct NotesClient {"), "{tokens}");
         assert!(tokens.contains("Called for __QuollGroupNotes"), "{tokens}");
     }
