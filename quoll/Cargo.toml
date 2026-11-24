@@ -70,7 +70,7 @@ hyper = { version = "1", default-features = false, optional = true }
 percent-encoding = "2"
 # The values of a stream result written as results, with no box of their own.
 pin-project-lite = "0.2"
-quoll-macros = { version = "0.9.1", path = "../quoll-macros" }
+quoll-macros = { version = "0.9.2", path = "../quoll-macros" }
 # TLS through rustls with the platform's roots, and the system's proxy settings, as reqwest's defaults have them.
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "system-proxy"], optional = true }
 reqwest-middleware = { version = "0.5", optional = true }
