@@ -1,13 +1,8 @@
 error[E0276]: impl has stricter requirements than trait
   --> tests/compile_fail_client/fake_wrong_argument.rs:15:28
    |
- 3 | / quoll::api! {
- 4 | |     pub api Api = "/api";
- 5 | |
- 6 | |     pub group Notes {
-...  |
- 9 | | }
-   | |_- definition of `get` from trait
+ 7 |         GET "/notes/{id}" => get(id: i64) -> String;
+   |             ------------- definition of `get` from trait
 ...
-15 |       fn get(&self, id: impl Arg<String>) -> impl Call<String> {
-   |                              ^^^^^^^^^^^ impl has extra requirement `impl Arg<String>: Arg<String>`
+15 |     fn get(&self, id: impl Arg<String>) -> impl Call<String> {
+   |                            ^^^^^^^^^^^ impl has extra requirement `impl Arg<String>: Arg<String>`

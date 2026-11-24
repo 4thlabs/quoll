@@ -22,7 +22,7 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.1" }
 - **Breaking.** A client's method takes each argument as `impl quoll::Arg<T>`, `T` its type in the contract, so that
   a call needs no `.into()`: `list("rust-lang", "rust", ["C-bug"], Some(State::Open), Some(5), None)` for the
   GitHub contract of the guide [Another API](docs/guides/another-api.md). An argument takes its type, a `&str` for a
-  `String`, a reference, which is cloned, or an array or a slice for a `Vec`. An `Option` still takes `Some(..)` or
+  `String`, a reference when the type is `Clone`, which is cloned, or an array or a slice for a `Vec`. An `Option` still takes `Some(..)` or
   `None`, and an `Option<String>` takes `Some("x".into())`. The server does not change
   ([#119](https://github.com/4thlabs/quoll/issues/119)).
 

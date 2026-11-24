@@ -65,10 +65,10 @@ impl Notes for Fake {
         }
     }
 
+    // An argument is `Send`, so that a fake may convert it inside its block as well.
     fn remove(&self, id: impl Arg<i64>) -> impl Call<()> {
-        let id = id.into_value();
-
         async move {
+            let id = id.into_value();
             let mut notes = self.notes.lock().expect("no test panics while holding it");
 
             notes

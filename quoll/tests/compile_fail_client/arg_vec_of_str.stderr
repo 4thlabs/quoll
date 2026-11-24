@@ -5,8 +5,8 @@ error[E0277]: `Vec<&str>` is not an argument of type `Vec<String>`
    |                  ^^^^ not an argument of type `Vec<String>`
    |
    = help: the trait `Arg<Vec<String>>` is not implemented for `Vec<&str>`
-   = note: an argument of type `Vec<String>` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
-   = note: no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
+   = note: an argument of type `Vec<String>` takes that type, or a reference to it when it is `Clone`, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
+   = note: no number becomes another: convert it first, with `From`, or `try_into()?` where it may not fit; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
    = help: the following other types implement trait `Arg<T>`:
              `&&str` implements `Arg<String>`
              `&T` implements `Arg<T>`
@@ -29,8 +29,8 @@ error[E0277]: `Vec<&str>` is not an argument of type `Vec<String>`
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not an argument of type `Vec<String>`
    |
    = help: the trait `Arg<Vec<String>>` is not implemented for `Vec<&str>`
-   = note: an argument of type `Vec<String>` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
-   = note: no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
+   = note: an argument of type `Vec<String>` takes that type, or a reference to it when it is `Clone`, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
+   = note: no number becomes another: convert it first, with `From`, or `try_into()?` where it may not fit; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
    = help: the following other types implement trait `Arg<T>`:
              `&&str` implements `Arg<String>`
              `&T` implements `Arg<T>`
@@ -53,8 +53,8 @@ error[E0277]: `Vec<&str>` is not an argument of type `Vec<String>`
    |                                      ^^^^^ not an argument of type `Vec<String>`
    |
    = help: the trait `Arg<Vec<String>>` is not implemented for `Vec<&str>`
-   = note: an argument of type `Vec<String>` takes that type, or a reference to it, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
-   = note: no number becomes another: write `i64::from(n)`, or `n.try_into()?`; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
+   = note: an argument of type `Vec<String>` takes that type, or a reference to it when it is `Clone`, which is cloned; a `String` takes a `&str` too, and a `Vec` an array or a slice of what an item takes
+   = note: no number becomes another: convert it first, with `From`, or `try_into()?` where it may not fit; an `Option<String>` takes `Some("x".into())`, and a `Vec<String>` `["a"]` rather than `vec!["a"]`
    = help: the following other types implement trait `Arg<T>`:
              `&&str` implements `Arg<String>`
              `&T` implements `Arg<T>`

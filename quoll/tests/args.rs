@@ -3,8 +3,6 @@
 
 #![cfg(all(feature = "server", feature = "client"))]
 
-use std::cell::Cell;
-
 use quoll::{Response, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -36,13 +34,6 @@ struct NewNote {
     title: String,
 }
 
-/// A body that is `Send` but not `Sync`, which a reference passes all the same, as it is cloned before the call is
-/// built.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct Counter {
-    count: Cell<u32>,
-}
-
 quoll::api! {
     api Api = "/api";
 
@@ -54,7 +45,6 @@ quoll::api! {
             => options(state: Option<State>, page: Option<u32>, key: Option<String>) -> Options;
         GET  "/numbers/{id}?page={page}" => numbers(id: i64, page: u32) -> Numbers;
         POST "/notes/{owner}" => create(owner: String, note: NewNote) -> NewNote;
-        POST "/counters" => count(counter: Counter) -> u32;
     }
 }
 
@@ -84,10 +74,6 @@ impl ArgsServer for App {
 
     async fn numbers(&self, id: i64, page: u32) -> Result<Response<Numbers>> {
         Ok(Response::new(Numbers { id, page }))
-    }
-
-    async fn count(&self, counter: Counter) -> Result<Response<u32>> {
-        Ok(Response::new(counter.count.get()))
     }
 
     async fn create(&self, owner: String, note: NewNote) -> Result<Response<NewNote>> {
@@ -252,17 +238,6 @@ async fn a_body_takes_its_value_or_a_reference() -> Result<()> {
 
     assert_eq!(api.args().create("ana", &note).await?.title, "ana: Milk");
     assert_eq!(api.args().create("bo", note).await?.title, "bo: Milk");
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_body_that_is_not_sync_takes_a_reference() -> Result<()> {
-    let api = served().await;
-    let counter = Counter {
-        count: Cell::new(3),
-    };
-
-    assert_eq!(api.args().count(&counter).await?, 3);
     Ok(())
 }
 

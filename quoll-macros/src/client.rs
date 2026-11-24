@@ -6,7 +6,7 @@
 //! client, `__quoll_get`, compiled once: it writes the route's path, query and body through a helper of `quoll`, and
 //! returns the call, which sends the request and reads its answer once it is awaited.
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Group, Span, TokenStream, TokenTree};
 use quote::{format_ident, quote, quote_spanned};
 use syn::{Ident, ext::IdentExt, spanned::Spanned};
 
@@ -119,10 +119,14 @@ fn group_trait(cx: &Cx) -> TokenStream {
     lines.extend([String::new(), usage]);
     let docs = doc_attrs(&lines);
     let methods = group.routes.iter().map(|route| {
-        let docs = route_docs(cx.prefix(), route);
+        // Spanned on its route, so that rustc's `definition of `get` from trait` points at the route rather than at
+        // the whole contract; resolved at the call site, so that the item stays the macro's, which rustc's lints of
+        // the user's code, `dead_code` among them, leave alone.
+        let span = route.span.resolved_at(Span::call_site());
+        let docs = respanned(route_docs(cx.prefix(), route), span);
         let signature = signature(cx, route);
 
-        quote! {
+        quote_spanned! {span=>
             #docs
             #signature;
         }
@@ -134,6 +138,26 @@ fn group_trait(cx: &Cx) -> TokenStream {
             #(#methods)*
         }
     }
+}
+
+/// `tokens` with every span, inside their groups too, set to `span`.
+fn respanned(tokens: TokenStream, span: Span) -> TokenStream {
+    tokens
+        .into_iter()
+        .map(|token| match token {
+            TokenTree::Group(group) => {
+                let mut respanned = Group::new(group.delimiter(), respanned(group.stream(), span));
+                respanned.set_span(span);
+
+                TokenTree::Group(respanned)
+            }
+            mut token => {
+                token.set_span(span);
+
+                token
+            }
+        })
+        .collect()
 }
 
 /// What a call of `route` gives on the client: `()` for no result, and the `T` of a `Created<T>` or an `Accepted<T>`,
@@ -326,10 +350,14 @@ fn body(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
         }
     };
     let request = Ident::new("request", Span::mixed_site());
+    // Clippy's limit, `self` counted. `allow` and not `expect`, which would go unfulfilled in a crate that does not run
+    // clippy, or whose clippy does not lint the tokens of a macro.
+    let many =
+        (route.params.len() + 1 > 7).then(|| quote! { #[allow(clippy::too_many_arguments)] });
 
     quote! {
         #[doc(hidden)]
-        #[allow(clippy::too_many_arguments)]
+        #many
         fn #name(&self, #(#args),*) -> ::quoll::__private::client::Pending<'_, #output, #error> {
             #query_type
 
