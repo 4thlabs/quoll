@@ -1,4 +1,4 @@
-use quoll::{Arg, Call, Created, Response, Result};
+use quoll::{Call, Created, Response, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -30,17 +30,13 @@ impl NotesServer for Local {
 }
 
 impl Notes for Local {
-    fn get(&self, id: impl Arg<i64>) -> impl Call<Note> {
-        let id = id.into_value();
-
+    fn get(&self, id: i64) -> impl Call<Note> {
         async move {
             Ok(Note { id })
         }
     }
 
-    fn create(&self, note: impl Arg<Note>) -> impl Call<Note> {
-        let note = note.into_value();
-
+    fn create(&self, note: Note) -> impl Call<Note> {
         async move {
             Ok(note)
         }

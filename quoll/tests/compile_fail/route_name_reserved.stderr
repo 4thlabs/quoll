@@ -1,5 +1,0 @@
-error: a route's name may not begin with `__quoll`, which the client's hidden methods use: give it another name
- --> tests/compile_fail/route_name_reserved.rs:7:31
-  |
-7 |         GET "/drafts/{id}" => __quoll_get(id: i64) -> String;
-  |                               ^^^^^^^^^^^

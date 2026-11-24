@@ -196,7 +196,7 @@ quoll::api! {
 async fn main() -> quoll::Result<()> {
     let docker = Docker::client("http://localhost:2375")?;
 
-    if let Err(error) = docker.containers().start("web").await {
+    if let Err(error) = docker.containers().start("web".into()).await {
         // another api answered 404: No such container: web
         eprintln!("{error}");
 
@@ -272,8 +272,9 @@ quoll::api! {
 async fn main() -> quoll::Result<()> {
     let github = GitHub::client("https://github.com")?;
 
-    let topics: quoll::Result<Vec<String>, GitHubError> = github.repos().topics("rust-lang", "rust").await;
-    let token: quoll::Result<String, OAuthError> = github.repos().token("code").await;
+    let topics: quoll::Result<Vec<String>, GitHubError> =
+        github.repos().topics("rust-lang".into(), "rust".into()).await;
+    let token: quoll::Result<String, OAuthError> = github.repos().token("code".into()).await;
 
     println!("{:?}", topics?);
     println!("{}", token?);
@@ -281,8 +282,7 @@ async fn main() -> quoll::Result<()> {
 }
 ```
 
-A fake of such an api returns an `impl Call<T, E>`, and takes its arguments as the trait does, as `impl Arg<T>`
-(see [Fakes](testing.md#fakes)). It builds the error of an answer with
+A fake of such an api returns an `impl Call<T, E>`. It builds the error of an answer with
 `quoll::Error::answered(status, e)`. That error has its status, its detail, a `response()` with no headers, and no
 body. An error of a status alone, with no detail, is `quoll::Error::not_found(..).into_shape()`, and the same goes for
 the other constructors.
@@ -291,7 +291,7 @@ the other constructors.
 use std::fmt;
 
 use http::StatusCode;
-use quoll::{Arg, Call};
+use quoll::Call;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -318,9 +318,7 @@ quoll::api! {
 struct NoContainers;
 
 impl Containers for NoContainers {
-    fn start(&self, id: impl Arg<String>) -> impl Call<(), DockerError> {
-        let id = id.into_value();
-
+    fn start(&self, id: String) -> impl Call<(), DockerError> {
         async move {
             let missing = DockerError {
                 message: format!("No such container: {id}"),
@@ -333,7 +331,7 @@ impl Containers for NoContainers {
 
 #[tokio::main]
 async fn main() {
-    let error = NoContainers.start("web").await.unwrap_err();
+    let error = NoContainers.start("web".into()).await.unwrap_err();
 
     assert_eq!(error.to_string(), "another api answered 404: No such container: web");
 }

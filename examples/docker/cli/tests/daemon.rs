@@ -152,7 +152,7 @@ async fn each_command_works_on_a_real_daemon() {
 
     let mut progress = docker
         .images()
-        .pull(IMAGE, TAG)
+        .pull(IMAGE.into(), TAG.into())
         .await
         .expect("the pull starts");
 

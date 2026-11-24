@@ -559,19 +559,6 @@ fn parse_route(input: ParseStream, group_auth: Option<&Auth>) -> Result<Result<R
         }
     };
 
-    // The client's hidden method of a route `get` is `__quoll_get`, which would shadow a route of that name.
-    if name.unraw().to_string().starts_with("__quoll") {
-        let refused = Error::new(
-            name.span(),
-            "a route's name may not begin with `__quoll`, which the client's hidden methods use: give it another name",
-        );
-
-        match &mut attr_error {
-            Some(error) => error.combine(refused),
-            None => attr_error = Some(refused),
-        }
-    }
-
     let route = Route::resolve(
         RouteDecl {
             docs,

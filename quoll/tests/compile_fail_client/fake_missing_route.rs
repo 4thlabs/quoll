@@ -1,4 +1,4 @@
-use quoll::{Arg, Call};
+use quoll::Call;
 
 quoll::api! {
     pub api Api = "/api";
@@ -12,7 +12,7 @@ quoll::api! {
 struct Fake;
 
 impl Notes for Fake {
-    fn get(&self, _id: impl Arg<i64>) -> impl Call<String> {
+    fn get(&self, _id: i64) -> impl Call<String> {
         async move {
             Ok(String::new())
         }

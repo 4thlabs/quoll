@@ -119,7 +119,7 @@ client, and a fake in its tests, with no server:
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use quoll::{Arg, Call, Created, Error, Result};
+use quoll::{Call, Created, Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -161,9 +161,7 @@ struct Fake {
 }
 
 impl Notes for Fake {
-    fn get(&self, id: impl Arg<i64>) -> impl Call<Note> {
-        let id = id.into_value();
-
+    fn get(&self, id: i64) -> impl Call<Note> {
         async move {
             let notes = self.notes.lock().expect("no test panics while holding the lock");
 
@@ -174,9 +172,7 @@ impl Notes for Fake {
         }
     }
 
-    fn create(&self, note: impl Arg<NewNote>) -> impl Call<Note> {
-        let note = note.into_value();
-
+    fn create(&self, note: NewNote) -> impl Call<Note> {
         async move {
             let mut notes = self.notes.lock().expect("no test panics while holding the lock");
             let id = notes.len() as i64 + 1;
@@ -207,16 +203,8 @@ async fn a_copy_has_the_title_of_its_note() -> Result<()> {
 }
 ```
 
-A fake's methods have the client's signatures: no caller, each argument an `impl Arg<T>` of its type in the contract,
-the `T` of a `Created<T>`, and an `impl Call<T>`. `into_value()` gives the argument's value, before the block or
-inside it, and an `async move` block is an `impl Call<T>`. A route left out, or a method with the wrong signature,
-does not compile. Two messages of rustc do not name `impl Arg`, and both mean the same signature to write,
-`fn get(&self, id: impl Arg<i64>)` for `get(id: i64)`:
-
-- ``method `get` has 0 type parameters but its trait declaration has 1 type parameter`` (E0049): the fake takes
-  `id: i64`, the contract's type alone.
-- `impl has stricter requirements than trait` (E0276): the fake takes `id: impl Arg<String>`, an `Arg` of another
-  type than the contract's.
+A fake's methods have the client's signatures: no caller, the `T` of a `Created<T>`, and an `impl Call<T>`. An
+`async move` block is an `impl Call<T>`. A route left out, or a method with the wrong signature, does not compile.
 
 Some apis answer their errors in a shape of their own, with `#[error(E)]`. A fake of such an api returns an
 `impl Call<T, E>`. It builds the error of an answer with `quoll::Error::answered(StatusCode::NOT_FOUND, e)`:
