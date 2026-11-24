@@ -1,7 +1,7 @@
 //! The builder of a server: the layers of quoll in the order they work in, any other layer where it is given, and the
 //! loop that serves a router until it is told to stop.
 
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::convert::Infallible;
 use std::fmt;
 use std::future::{Future, IntoFuture};
@@ -21,7 +21,6 @@ use futures_core::Stream;
 use futures_util::future::{Either, select};
 use futures_util::{StreamExt, stream};
 use sync_wrapper::SyncWrapper;
-use tokio::net::TcpStream;
 use tokio::sync::{oneshot, watch};
 use tower_layer::Layer;
 use tower_service::Service;
@@ -29,6 +28,7 @@ use tower_service::Service;
 use super::layer::{
     BodyLimitLayer, CompressionLayer, CorsLayer, RequestIdLayer, TimeoutLayer, TraceLayer,
 };
+use super::no_delay::no_delay;
 use super::page::{self, Page};
 use crate::__private::server::ended_on_stop;
 use crate::order::arrange;
@@ -242,9 +242,11 @@ impl Builder {
     /// `UnixListener`, until it is told to stop: on Ctrl-C, or `SIGTERM` on Unix, which `docker stop` sends, unless
     /// [`shutdown`](Self::shutdown) says otherwise.
     ///
-    /// Every TCP connection it accepts has `TCP_NODELAY`, Nagle's algorithm off: a small write, an event of a stream,
-    /// is sent at once rather than held for about 40 ms. A connection where it cannot be set is served all the same,
-    /// logged at `DEBUG`.
+    /// A connection whose stream is tokio's `TcpStream`, as a `TcpListener` accepts, gets `TCP_NODELAY`, Nagle's
+    /// algorithm off: a small write, an event of a stream, is sent at once rather than held for about 40 ms. A
+    /// connection where it cannot be set is served all the same, logged at `DEBUG`. A listener of its own whose
+    /// stream wraps a TCP stream, TLS or another wrapper, sets the option itself, as on the accepted `TcpStream`
+    /// before it wraps it.
     ///
     /// Once told, it accepts no more connections, closes those that wait for a request, and returns `Ok` when the
     /// requests it serves have ended. It returns `Ok` too once [`grace`](Self::grace) has passed, or when it is told a
@@ -412,19 +414,6 @@ where
     }
 }
 
-/// Turns Nagle's algorithm off on a TCP connection, and leaves any other alone. quoll writes whole answers and the
-/// chunks of streams, never a byte at a time: Nagle buys nothing there, and with the client's delayed ACK it holds a
-/// small write for about 40 ms, each chunk of a stream paying it again.
-fn no_delay<Io: Any>(io: &mut Io) {
-    let Some(tcp) = (io as &mut dyn Any).downcast_mut::<TcpStream>() else {
-        return;
-    };
-
-    if let Err(error) = tcp.set_nodelay(true) {
-        tracing::debug!(%error, "TCP_NODELAY could not be set: the connection is served with Nagle's algorithm");
-    }
-}
-
 /// Shows its layers by their number, as they have no `Debug` once added.
 impl fmt::Debug for Builder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -529,43 +518,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-
-    /// A listener that sends a copy of each connection it accepts, the same socket, for a test to read its options.
-    struct Watched {
-        listener: TcpListener,
-        accepted: mpsc::UnboundedSender<std::net::TcpStream>,
-    }
-
-    impl Listener for Watched {
-        type Io = TcpStream;
-        type Addr = SocketAddr;
-
-        async fn accept(&mut self) -> (TcpStream, SocketAddr) {
-            let (stream, address) = self
-                .listener
-                .accept()
-                .await
-                .expect("the test's connection is accepted");
-            let stream = stream
-                .into_std()
-                .expect("an accepted stream leaves the runtime");
-            let copy = stream
-                .try_clone()
-                .expect("an accepted stream can be duplicated");
-
-            self.accepted
-                .send(copy)
-                .expect("the test waits for the connection");
-
-            let stream = TcpStream::from_std(stream).expect("the stream goes back to the runtime");
-
-            (stream, address)
-        }
-
-        fn local_addr(&self) -> io::Result<SocketAddr> {
-            self.listener.local_addr()
-        }
-    }
+    use crate::server::no_delay::Watched;
 
     /// Signals sent through a channel, as the system sends Ctrl-C: the sender, and what the server is told by.
     fn sent() -> (mpsc::UnboundedSender<()>, Signals) {
@@ -580,20 +533,12 @@ mod tests {
     #[tokio::test]
     async fn an_accepted_connection_has_tcp_nodelay() {
         let router = Router::new().route("/", axum::routing::get(|| async { "ok" }));
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("a port of 127.0.0.1 is free");
-        let url = format!(
-            "http://{}/",
-            listener
-                .local_addr()
-                .expect("a bound listener has an address")
-        );
-        let (accepted, mut connections) = mpsc::unbounded_channel();
+        let (listener, address, mut connections) = Watched::bind().await;
+        let url = format!("http://{address}/");
         let (signal, signals) = sent();
         let (stopping, _) = watch::channel(false);
         let serving = tokio::spawn(run(
-            Watched { listener, accepted },
+            listener,
             router,
             signals,
             stopping,
