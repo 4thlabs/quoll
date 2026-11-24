@@ -316,6 +316,24 @@ pub trait Served {}
 )]
 pub trait Called {}
 
+/// What a contract with `#[server(none)]` asks of the types given to the stand-ins of its server's items, which the
+/// feature `server` writes under their names: implemented by none, so that using them is one error, with this message.
+#[diagnostic::on_unimplemented(
+    message = "the contract says `#[server(none)]`: it has no server side",
+    label = "a server of a contract with `#[server(none)]`",
+    note = "remove `#[server(none)]` from the api, or from the group's `quoll::group!`, to serve it"
+)]
+pub trait NoServer {}
+
+/// What a contract with `#[client(none)]` asks of the types given to the stand-ins of its client's items, which the
+/// feature `client` writes under their names: implemented by none, so that using them is one error, with this message.
+#[diagnostic::on_unimplemented(
+    message = "the contract says `#[client(none)]`: it has no client side",
+    label = "a client of a contract with `#[client(none)]`",
+    note = "remove `#[client(none)]` from the api, or from the group's `quoll::group!`, to call it"
+)]
+pub trait NoClient {}
+
 /// Checks, at compile time, that the group `G` has a server side, which the api that lists it serves.
 pub const fn is_served<G: Served>() {}
 
@@ -382,6 +400,8 @@ pub struct ApiInfo {
     pub headers: &'static [Fixed],
     /// Whether it has an OpenAPI document, which does not describe two routes of one method and path yet.
     pub openapi: bool,
+    /// Whether it has a server side, whose router takes two paths of parameters named otherwise for one.
+    pub server: bool,
 }
 
 /// Checks, at compile time, a group an api lists against the api and the groups before it: the message of the first
@@ -389,8 +409,8 @@ pub struct ApiInfo {
 /// the group in the api's list.
 ///
 /// A mistake is when the group is less visible than the api, takes a declared scheme less visible than itself, has a route of a
-/// method and a path that another route has, or of a path another route names with other parameters, or of an
-/// operation id another route has; when a route takes two schemes of an api that read one place, or reads the
+/// method and a path that another route has, or, in an api that serves, of a path another route names with other
+/// parameters, or of an operation id another route has; when a route takes two schemes of an api that read one place, or reads the
 /// credential of a scheme it takes in an argument or sends it in a fixed header; or when a route takes the api's
 /// `Content-Type` that its body does not keep. A header the group or a route leaves is not checked: any api may list
 /// the group, and a `none` does nothing where the api does not fix the header.
@@ -512,6 +532,10 @@ const fn check_pair(
                     "`: a method and a path belong to one route, unless a field both fix in their `#[body(...)]` tells them apart, of one kind and two values"
                 }),
         );
+    }
+
+    if !api.server {
+        return None;
     }
 
     if let Some((named, other)) = renamed(first.path, route.path) {

@@ -1,11 +1,11 @@
 error[E0277]: the group has no server side, which the api that lists it serves
-  --> tests/compile_fail_neither/group_listed_not_served.rs:13:28
+  --> tests/compile_fail/group_listed_not_served.rs:13:28
    |
 13 |     pub api Api = "/api" { notes::Notes };
    |                            ^^^^^^^^^^^^ a group with `#[server(none)]`
    |
 help: the trait `quoll::__private::group::Served` is not implemented for `__QuollGroupNotes`
-  --> tests/compile_fail_neither/group_listed_not_served.rs:2:5
+  --> tests/compile_fail/group_listed_not_served.rs:2:5
    |
  2 | /     quoll::group! {
  3 | |         #[server(none)]

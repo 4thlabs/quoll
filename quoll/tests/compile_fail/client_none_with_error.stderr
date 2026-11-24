@@ -1,0 +1,11 @@
+error: a contract with `#[client(none)]` takes no `#[error(...)]`: only its client would read the shape of its errors, so remove it
+ --> tests/compile_fail/client_none_with_error.rs:4:13
+  |
+4 |     #[error(String)]
+  |             ^^^^^^
+
+error: a contract with `#[client(none)]` takes no `#[error(...)]`: only its client would read the shape of its errors, so remove it
+ --> tests/compile_fail/client_none_with_error.rs:8:17
+  |
+8 |         #[error(u16)]
+  |                 ^^^

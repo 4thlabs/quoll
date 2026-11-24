@@ -60,6 +60,17 @@ pub(crate) struct Api {
     pub(crate) headers: Headers,
 }
 
+/// What an api, or the group of a `quoll::group!`, has of a contract: its document and its two sides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Sides {
+    /// Whether it has an OpenAPI document.
+    pub(crate) openapi: bool,
+    /// Whether it has a server side.
+    pub(crate) server: bool,
+    /// Whether it has a client side.
+    pub(crate) client: bool,
+}
+
 /// Routes that go together: one service on the server, one trait on the client, one tag in OpenAPI.
 #[derive(Debug)]
 pub(crate) struct Group {
@@ -1061,6 +1072,10 @@ impl Api {
     ///
     /// An error spanned on the second of two groups with a name, of two routes with a name in a group, or of two routes
     /// with a method and a path in the api; or on the prefix, when it is not empty or `/` and segments.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the parts of the api's declaration, which the syntax reads apart, and its groups"
+    )]
     pub(crate) fn new(
         docs: Docs,
         vis: Visibility,
@@ -1069,6 +1084,7 @@ impl Api {
         schemes: Vec<DeclaredScheme>,
         listed: Vec<syn::Path>,
         groups: Vec<Group>,
+        sides: Sides,
     ) -> Result<Self> {
         let mut errors = ErrorList::default();
         let prefix = check_prefix(prefix).unwrap_or_else(|error| {
@@ -1083,9 +1099,9 @@ impl Api {
             schemes,
             listed,
             groups,
-            openapi: true,
-            server: true,
-            client: true,
+            openapi: sides.openapi,
+            server: sides.server,
+            client: sides.client,
             error: None,
             headers: Headers::default(),
         };
@@ -1101,7 +1117,7 @@ impl Api {
     /// # Errors
     ///
     /// As [`Api::new`], for the one group.
-    pub(crate) fn alone(group: Group) -> Result<Self> {
+    pub(crate) fn alone(group: Group, sides: Sides) -> Result<Self> {
         let mut errors = ErrorList::default();
         let mut api = Self {
             docs: Docs::default(),
@@ -1111,9 +1127,9 @@ impl Api {
             schemes: Vec::new(),
             listed: Vec::new(),
             groups: vec![group],
-            openapi: true,
-            server: true,
-            client: true,
+            openapi: sides.openapi,
+            server: sides.server,
+            client: sides.client,
             error: None,
             headers: Headers::default(),
         };
@@ -1261,7 +1277,7 @@ impl Api {
                 };
                 if let Some(error) = seen
                     .iter()
-                    .find_map(|first| first.clash(&current, route.span))
+                    .find_map(|first| first.clash(&current, route.span, self.server))
                 {
                     errors.push(error);
                 }
@@ -1410,9 +1426,10 @@ struct Seen<'a> {
 }
 
 impl Seen<'_> {
-    /// The error when `next`, whose string is at `span`, cannot sit beside this route in one router: the same method
-    /// and path, or the same path with its parameters named otherwise, which a router takes for one path.
-    fn clash(&self, next: &Seen<'_>, span: Span) -> Option<Error> {
+    /// The error when `next`, whose string is at `span`, cannot sit beside this route in one api: the same method and
+    /// path, or, when the api is `served`, the same path with its parameters named otherwise, which a router takes for
+    /// one path.
+    fn clash(&self, next: &Seen<'_>, span: Span, served: bool) -> Option<Error> {
         let Self { group, route, .. } = self;
 
         if self.method == next.method
@@ -1429,7 +1446,7 @@ impl Seen<'_> {
             ));
         }
 
-        if self.shape != next.shape {
+        if !served || self.shape != next.shape {
             return None;
         }
 

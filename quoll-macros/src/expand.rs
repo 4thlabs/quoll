@@ -26,8 +26,16 @@ pub(crate) fn api(api: &Api) -> TokenStream {
     let error = api.error.as_ref().map(named);
     let fixed = headers::api_checks(&api.headers);
     let openapi = openapi::expand(api);
-    let server = api.server.then(|| server::expand(api));
-    let client = api.client.then(|| client::expand(api));
+    let server = if api.server {
+        server::expand(api)
+    } else {
+        server::api_stand_in(api)
+    };
+    let client = if api.client {
+        client::expand(api)
+    } else {
+        client::api_stand_in(api)
+    };
 
     quote! {
         #api_type
@@ -73,8 +81,16 @@ fn group(cx: &Cx) -> TokenStream {
     let fixed = headers::group_checks(cx);
     let openapi = openapi::group(cx);
     let named_types = named_types(cx);
-    let server = cx.server.then(|| server::group(cx));
-    let client = cx.client.then(|| client::group(cx));
+    let server = if cx.server {
+        server::group(cx)
+    } else {
+        server::stand_in(cx)
+    };
+    let client = if cx.client {
+        client::group(cx)
+    } else {
+        client::stand_in(cx)
+    };
 
     quote! {
         #descriptor
@@ -148,15 +164,16 @@ fn named_types(cx: &Cx) -> TokenStream {
         return TokenStream::new();
     }
 
+    // The function is the macro's, its type alone the contract's: a lint on a signature, clippy's `ptr_arg` on a
+    // `&String` or `box_collection` on a `Box<String>`, is not the user's to fix in a function that nothing calls.
     let names = types.iter().enumerate().map(|(index, ty)| {
         let name = Ident::new(&format!("__quoll_names_{index}"), Span::mixed_site());
 
-        quote_spanned! {ty.span()=> fn #name(_: #ty) {} }
+        quote! { fn #name(_: #ty) {} }
     });
 
-    // Never called: by value, as the type is written, with nothing a lint would read in it.
     quote! {
-        #[allow(dead_code, clippy::needless_pass_by_value)]
+        #[allow(dead_code, clippy::all, clippy::pedantic, clippy::nursery)]
         const _: () = {
             #(#names)*
         };
@@ -274,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn server_none_writes_no_server_side_and_no_document() {
+    fn server_none_writes_stand_ins_of_the_server_and_no_document() {
         let tokens = expansion(quote! {
             #[server(none)]
             pub api Api = "/api";
@@ -288,9 +305,9 @@ mod tests {
         });
 
         for item in [
-            ":: quoll :: __private :: server !",
-            "trait NotesServer",
-            "fn router",
+            "struct ApiServices",
+            "fn router (services",
+            "Authenticate",
             "fn openapi () -> :: quoll :: openapi :: Document",
             "GroupDocument",
             "CHALLENGE",
@@ -298,15 +315,19 @@ mod tests {
         ] {
             assert!(!tokens.contains(item), "{item} is written: {tokens}");
         }
-        assert!(
-            tokens.contains(":: quoll :: __private :: client !"),
-            "{tokens}"
-        );
+        // Stand-ins under the names of the server's items, which no type can implement or call.
+        for item in [
+            "trait NotesServer : :: quoll :: __private :: group :: NoServer { }",
+            "fn router (_ : impl :: quoll :: __private :: group :: NoServer ,)",
+        ] {
+            assert!(tokens.contains(item), "{item} is not written: {tokens}");
+        }
+        assert!(tokens.contains("struct NotesClient {"), "{tokens}");
         assert!(tokens.contains("Called for __QuollGroupNotes"), "{tokens}");
     }
 
     #[test]
-    fn client_none_writes_no_client_side() {
+    fn client_none_writes_stand_ins_of_the_client() {
         let tokens = expansion(quote! {
             #[client(none)]
             pub api Api = "/api";
@@ -317,18 +338,23 @@ mod tests {
         });
 
         for item in [
-            ":: quoll :: __private :: client !",
-            "trait Notes :",
-            "struct NotesClient",
-            "fn client (",
+            "struct NotesClient {",
+            "struct ApiClient",
+            "fn client (url",
             "Called for",
+            "Pending",
         ] {
             assert!(!tokens.contains(item), "{item} is written: {tokens}");
         }
-        assert!(
-            tokens.contains(":: quoll :: __private :: server !"),
-            "{tokens}"
-        );
+        // Stand-ins under the names of the client's items, which no type can implement or call.
+        for item in [
+            "trait Notes : :: quoll :: __private :: group :: NoClient { }",
+            "struct NotesClient ;",
+            "fn client (_ : impl :: quoll :: __private :: group :: NoClient)",
+        ] {
+            assert!(tokens.contains(item), "{item} is not written: {tokens}");
+        }
+        assert!(tokens.contains("trait NotesServer : :: core"), "{tokens}");
         assert!(
             tokens.contains("fn openapi () -> :: quoll :: openapi :: Document"),
             "{tokens}"
