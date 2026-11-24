@@ -38,9 +38,10 @@ pub enum ErrorKind {
     /// No connection could be opened: refused, a name that does not resolve, a TLS handshake that failed, a proxy
     /// that refused. Nothing was sent, so that any call may be tried again.
     Connect,
-    /// A deadline passed before the answer: the call's `timeout`, the one of [`client::timeout`], or reqwest's own. On
-    /// a whole result it covers the body too; on a stream, the head of the answer alone. The other api may have served
-    /// the request.
+    /// A deadline passed: the call's `timeout`, the one of [`client::timeout`], or reqwest's own. On a whole result it
+    /// covers the body too. On a stream, quoll's deadline bounds the head of the answer alone, and a deadline of
+    /// reqwest's that passes while the body is read is a `Timeout` too, after which the stream ends. The other api may
+    /// have served the request, and may have begun to answer it.
     ///
     #[cfg_attr(
         feature = "client",
@@ -48,19 +49,21 @@ pub enum ErrorKind {
     )]
     #[cfg_attr(not(feature = "client"), doc = "[`client::timeout`]: crate#features")]
     Timeout,
-    /// The connection was open and the request sent, then the connection was closed or reset before the head of its
-    /// answer came: a server that restarts, a proxy that drops an idle connection.
+    /// The connection was open and the request sent, then the connection was closed, reset or cancelled before the
+    /// head of its answer came: a server that restarts, a proxy that drops an idle connection.
     Closed,
     /// The answer began, and its body could not be read to its end: a connection cut or reset in the middle of it, a
     /// compression that does not decode, or an item of a stream longer than the 1 MiB the client reads. A stream ends
     /// after it.
     Body,
-    /// The answer came whole, with a success status, and is not the route's result: a content type that is not the
-    /// route's, a text that is not UTF-8, JSON that is not the result. In a stream, an item that does not read as the
-    /// route's item, after which the stream goes on. The other api answered: the connection works.
+    /// The answer does not read: it came whole, with a success status, and is not the route's result, a content type
+    /// that is not the route's, a text that is not UTF-8, JSON that is not the result; or it is not HTTP at all, a head
+    /// of another protocol, as a TLS port called over `http`. In a stream, an item that does not read as the route's
+    /// item, after which the stream goes on. Something answered: the connection works, and the call fails again.
     Decode,
-    /// A middleware failed the call itself: a credential that cannot be sent, a token that could not be had, a
-    /// redirect to a request sent already or past its limit, or a middleware of the application's.
+    /// A middleware failed the call itself: a credential that cannot be sent, a token that could not be had, whatever
+    /// kept the token's own call from it, a redirect to a request sent already or past its limit, or a middleware of
+    /// the application's.
     Middleware,
     /// The call could not be sent as it was written: a client given a URL that is not one, a path parameter that is
     /// `None`, a header with a line break. It is the mistake of the code that called it, and fails again.
@@ -70,6 +73,9 @@ pub enum ErrorKind {
 impl ErrorKind {
     /// Whether the other api answered: an error [status](Self::Status), or a body that could not be read,
     /// [`Body`](Self::Body), or that is not the route's result, [`Decode`](Self::Decode). The connection works.
+    ///
+    /// A [`Timeout`](Self::Timeout) is not counted, as a deadline that passes before the answer and one that passes
+    /// while its body is read are one kind: the other api may have begun to answer.
     #[must_use]
     pub const fn answered(&self) -> bool {
         matches!(self, Self::Status(_) | Self::Body | Self::Decode)

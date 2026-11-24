@@ -909,8 +909,8 @@ impl Answer {
     ///
     /// # Errors
     ///
-    /// None to the read itself; in the stream, an error with no status for a body that cannot be read, after which the
-    /// stream ends.
+    /// None to the read itself; in the stream, an error of [`ErrorKind::Body`], or [`ErrorKind::Timeout`], for a body
+    /// that cannot be read, after which the stream ends.
     pub fn byte_stream<B: IsByteStream + Send + 'static>(self) -> Read<B> {
         Read::new(self.read_byte_stream())
     }
@@ -958,10 +958,12 @@ impl Answer {
     ///
     /// # Errors
     ///
-    /// The read resolves to an error with no status when the answer is not `text/event-stream`. Then, in the stream,
-    /// an error with no status for an event that does not read as an item; the error of an answer for an
-    /// `event: problem`, with the problem's status and the problem; and an error with no status for an event or a line
-    /// longer than 1 MiB, or a body that cannot be read. The stream ends after any of them but the first.
+    /// The read resolves to an error of [`ErrorKind::Decode`] when the answer is not `text/event-stream`. Then, in the
+    /// stream, an error of `Decode` for an event that does not read as an item, or an `event: problem` whose data is
+    /// not a problem, after which the stream goes on; the error of an answer for an `event: problem` whose data is a
+    /// problem, with the problem's status and the problem; and an error of [`ErrorKind::Body`] for an event or a line
+    /// longer than 1 MiB, or of `Body` or [`ErrorKind::Timeout`] for a body that cannot be read. The stream ends after
+    /// any of them but `Decode`.
     pub fn events<E>(self) -> Read<E>
     where
         E: IsEvents + Send + 'static,
@@ -991,9 +993,11 @@ impl Answer {
     ///
     /// # Errors
     ///
-    /// The read resolves to an error with no status when the answer is not `application/jsonl`, `application/x-ndjson`,
-    /// `application/x-jsonlines` or `application/json`. Then, in the stream, an error with no status for a line that does not read as an
-    /// item; and for a line longer than 1 MiB, or a body that cannot be read, after which the stream ends.
+    /// The read resolves to an error of [`ErrorKind::Decode`] when the answer is not `application/jsonl`,
+    /// `application/x-ndjson`, `application/x-jsonlines` or `application/json`. Then, in the stream, an error of
+    /// `Decode` for a line that does not read as an item, after which the stream goes on; and an error of
+    /// [`ErrorKind::Body`] for a line longer than 1 MiB, or of `Body` or [`ErrorKind::Timeout`] for a body that cannot
+    /// be read, after which the stream ends.
     pub fn json_lines<L>(self) -> Read<L>
     where
         L: IsJsonLines + Send + 'static,
