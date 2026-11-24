@@ -1,4 +1,4 @@
-use quoll::Call;
+use quoll::{Arg, Call};
 
 quoll::api! {
     pub api Api = "/api";
@@ -10,9 +10,11 @@ quoll::api! {
 
 struct Fake;
 
-// A fake's method takes the route's arguments, of their types.
+// A fake's method takes the route's arguments, as `impl Arg<T>` of their types.
 impl Notes for Fake {
-    fn get(&self, id: String) -> impl Call<String> {
+    fn get(&self, id: impl Arg<String>) -> impl Call<String> {
+        let id = id.into_value();
+
         async move {
             Ok(id)
         }

@@ -17,6 +17,21 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.1" }
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking.** A client's method takes each argument as `impl quoll::Arg<T>`, `T` its type in the contract, so that
+  a call needs no `.into()`: `list("rust-lang", "rust", ["C-bug"], Some(State::Open), Some(5))`. An argument takes its
+  type, a `&str` for a `String`, a reference, which is cloned, or an array or a slice for a `Vec`. An `Option` still
+  takes `Some(..)` or `None`, and an `Option<String>` takes `Some("x".into())`. The server does not change
+  ([#119](https://github.com/4thlabs/quoll/issues/119)).
+
+  To migrate:
+
+  - drop the `.into()` on the arguments of a call, which no longer compiles, and write `["a", "b"]` for a
+    `vec!["a".into(), "b".into()]`;
+  - a fake takes each argument as `impl Arg<T>`, and reads it with `into_value()`:
+    `fn get(&self, id: impl Arg<i64>) -> impl Call<Note>`, then `let id = id.into_value();`.
+
 ## [0.9.1] - 2026-11-24
 
 ### Added

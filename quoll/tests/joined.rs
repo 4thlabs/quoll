@@ -88,7 +88,7 @@ async fn a_joined_list_round_trips_with_each_separator() {
 
     assert_eq!(
         api.issues()
-            .list(labels.clone(), Some(State::InReview))
+            .list(&labels, Some(State::InReview))
             .await
             .unwrap(),
         Listed {
@@ -99,7 +99,7 @@ async fn a_joined_list_round_trips_with_each_separator() {
     assert_eq!(api.issues().spaced(vec![3, 1, 2]).await.unwrap(), [3, 1, 2]);
     assert_eq!(
         api.issues()
-            .piped(1, vec![State::Open, State::InReview], vec!["a".into()])
+            .piped(1, vec![State::Open, State::InReview], ["a"])
             .await
             .unwrap(),
         [State::Open, State::InReview]
@@ -186,20 +186,13 @@ async fn the_client_writes_the_separator_between_escaped_values() {
     let api = Api::client(&url).expect("the url is the api's");
 
     api.issues()
-        .list(
-            vec!["bug".into(), "good first".into(), "a&b|c".into()],
-            Some(State::Open),
-        )
+        .list(["bug", "good first", "a&b|c"], Some(State::Open))
         .await
         .unwrap();
     api.issues().list(Vec::new(), None).await.unwrap();
     api.issues().spaced(vec![1, 22]).await.unwrap();
     api.issues()
-        .piped(
-            2,
-            vec![State::Open, State::InReview],
-            vec!["x".into(), "y".into()],
-        )
+        .piped(2, vec![State::Open, State::InReview], ["x", "y"])
         .await
         .unwrap();
     api.issues().piped(3, Vec::new(), Vec::new()).await.unwrap();
@@ -309,10 +302,7 @@ async fn a_list_the_server_would_read_otherwise_is_refused_by_the_client() {
         assert!(error.to_string().contains(refused), "{error}");
     }
 
-    let spaced = api
-        .issues()
-        .piped(1, vec![State::Open], vec!["a|b".into()])
-        .await;
+    let spaced = api.issues().piped(1, vec![State::Open], ["a|b"]).await;
     assert!(
         spaced.is_ok(),
         "a key that is not joined holds a `|`: {spaced:?}"

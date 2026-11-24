@@ -87,21 +87,14 @@ async fn bracketed_keys_round_trip() {
 
     assert_eq!(
         api.shop()
-            .customer(
-                "cus_1".into(),
-                vec!["sources".into(), "invoice.subscription".into()]
-            )
+            .customer("cus_1", ["sources", "invoice.subscription"])
             .await
             .unwrap(),
         ["sources", "invoice.subscription"]
     );
     assert_eq!(
         api.shop()
-            .articles(
-                Some("rust".into()),
-                Some(20),
-                vec!["title".into(), "body".into()]
-            )
+            .articles(Some("rust".into()), Some(20), ["title", "body"])
             .await
             .unwrap(),
         Articles {
@@ -182,11 +175,7 @@ async fn the_client_escapes_the_brackets_of_a_key() {
     let api = Api::client(&url).expect("the url is the api's");
 
     api.shop()
-        .articles(
-            Some("a b".into()),
-            Some(2),
-            vec!["title".into(), "body".into()],
-        )
+        .articles(Some("a b".into()), Some(2), ["title", "body"])
         .await
         .unwrap();
     api.shop()

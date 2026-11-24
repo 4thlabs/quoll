@@ -180,7 +180,7 @@ impl ProxyServer for Proxying {
     async fn dead(&self) -> Result<Response<()>> {
         self.dead
             .failures()
-            .fail("conflict".into())
+            .fail("conflict")
             .await
             .map(Response::new)
     }
@@ -293,7 +293,7 @@ async fn a_path_parameter_reads_back_as_it_was_written() -> Result<()> {
     ];
 
     for value in values {
-        let echoed = api.echo().echo(value.into(), Shelf::KitchenTop).await?;
+        let echoed = api.echo().echo(value, Shelf::KitchenTop).await?;
 
         assert_eq!(echoed, format!("KitchenTop {value}"), "{value}");
     }
@@ -307,7 +307,7 @@ async fn a_path_parameter_that_would_call_another_route_is_refused() -> Result<(
     for value in ["", ".", ".."] {
         let error = api
             .echo()
-            .echo(value.into(), Shelf::Office)
+            .echo(value, Shelf::Office)
             .await
             .expect_err("not a segment");
 
@@ -333,11 +333,7 @@ async fn a_query_leaves_none_out_and_repeats_a_vec() -> Result<()> {
     );
 
     let found = search
-        .find(
-            Some("milk & jar".into()),
-            Some(2),
-            vec!["a".into(), "b=c".into()],
-        )
+        .find(Some("milk & jar".into()), Some(2), ["a", "b=c"])
         .await?;
     assert_eq!(
         found,
@@ -378,7 +374,7 @@ async fn an_error_is_read_back_with_its_status_and_its_problem() -> Result<()> {
 
     let error = api
         .failures()
-        .fail("conflict".into())
+        .fail("conflict")
         .await
         .expect_err("a conflict");
     assert_eq!(error.status(), Some(StatusCode::CONFLICT));
@@ -389,7 +385,7 @@ async fn an_error_is_read_back_with_its_status_and_its_problem() -> Result<()> {
 
     let error = api
         .failures()
-        .fail("internal".into())
+        .fail("internal")
         .await
         .expect_err("an internal error");
     assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
@@ -579,7 +575,7 @@ async fn a_client_calls_an_api_served_below_a_path() -> Result<()> {
     ] {
         let api = Api::client(&base)?;
 
-        let echoed = api.echo().echo("x".into(), Shelf::Office).await?;
+        let echoed = api.echo().echo("x", Shelf::Office).await?;
         assert_eq!(echoed, "Office x", "{base}");
     }
     Ok(())
@@ -627,9 +623,7 @@ async fn a_middleware_sees_the_route_of_each_request() -> Result<()> {
         })
         .await?;
     api.notes().get(1).await?;
-    api.search()
-        .find(None, Some(2), vec!["a b".into(), "c".into()])
-        .await?;
+    api.search().find(None, Some(2), ["a b", "c"]).await?;
 
     let seen = seen.lock().expect("no test panics while holding it");
     let routes: Vec<_> = seen

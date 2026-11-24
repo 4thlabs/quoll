@@ -1,0 +1,89 @@
+error[E0277]: `Vec<&str>` is not an argument of type `Vec<String>`
+  --> tests/compile_fail_client/arg_vec_of_str.rs:12:18
+   |
+12 |     api.issues().list(vec!["C-bug"]).await
+   |                  ^^^^ not an argument of type `Vec<String>`
+   |
+   = help: the trait `Arg<Vec<String>>` is not implemented for `Vec<&str>`
+   = note: an argument takes its type in the contract, a `&str` for a `String`, a reference, which is cloned, or an array or a slice for a `Vec`: write `["a"]` rather than `vec!["a"]`, and `Some("x".into())` for an `Option<String>`
+help: the following other types implement trait `Arg<T>`
+  --> src/arg.rs
+   |
+   | impl Arg<String> for &str {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ `&str` implements `Arg<String>`
+...
+   | impl<T: Clone + Sync> Arg<T> for &T {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&T` implements `Arg<T>`
+...
+   | impl<T, A: Arg<T>, const N: usize> Arg<Vec<T>> for [A; N] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `[A; N]` implements `Arg<Vec<T>>`
+...
+   | impl<T, A: Arg<T> + Clone + Sync> Arg<Vec<T>> for &[A] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&[A]` implements `Arg<Vec<T>>`
+note: required by a bound in `Issues::list::{anon_assoc#0}`
+  --> tests/compile_fail_client/arg_vec_of_str.rs:6:55
+   |
+ 1 | quoll::api! {
+...
+ 6 |         GET "/issues?labels={labels}" => list(labels: Vec<String>) -> Vec<String>;
+   |                                                       ^^^ required by this bound in `Issues::list::{anon_assoc#0}`
+
+error[E0277]: `Vec<&str>` is not an argument of type `Vec<String>`
+  --> tests/compile_fail_client/arg_vec_of_str.rs:12:5
+   |
+12 |     api.issues().list(vec!["C-bug"]).await
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not an argument of type `Vec<String>`
+   |
+   = help: the trait `Arg<Vec<String>>` is not implemented for `Vec<&str>`
+   = note: an argument takes its type in the contract, a `&str` for a `String`, a reference, which is cloned, or an array or a slice for a `Vec`: write `["a"]` rather than `vec!["a"]`, and `Some("x".into())` for an `Option<String>`
+help: the following other types implement trait `Arg<T>`
+  --> src/arg.rs
+   |
+   | impl Arg<String> for &str {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ `&str` implements `Arg<String>`
+...
+   | impl<T: Clone + Sync> Arg<T> for &T {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&T` implements `Arg<T>`
+...
+   | impl<T, A: Arg<T>, const N: usize> Arg<Vec<T>> for [A; N] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `[A; N]` implements `Arg<Vec<T>>`
+...
+   | impl<T, A: Arg<T> + Clone + Sync> Arg<Vec<T>> for &[A] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&[A]` implements `Arg<Vec<T>>`
+note: required by a bound in `<IssuesClient as Issues>::list`
+  --> tests/compile_fail_client/arg_vec_of_str.rs:6:55
+   |
+ 1 | quoll::api! {
+...
+ 6 |         GET "/issues?labels={labels}" => list(labels: Vec<String>) -> Vec<String>;
+   |                                                       ^^^ required by this bound in `<IssuesClient as Issues>::list`
+
+error[E0277]: `Vec<&str>` is not an argument of type `Vec<String>`
+  --> tests/compile_fail_client/arg_vec_of_str.rs:12:38
+   |
+12 |     api.issues().list(vec!["C-bug"]).await
+   |                                      ^^^^^ not an argument of type `Vec<String>`
+   |
+   = help: the trait `Arg<Vec<String>>` is not implemented for `Vec<&str>`
+   = note: an argument takes its type in the contract, a `&str` for a `String`, a reference, which is cloned, or an array or a slice for a `Vec`: write `["a"]` rather than `vec!["a"]`, and `Some("x".into())` for an `Option<String>`
+help: the following other types implement trait `Arg<T>`
+  --> src/arg.rs
+   |
+   | impl Arg<String> for &str {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ `&str` implements `Arg<String>`
+...
+   | impl<T: Clone + Sync> Arg<T> for &T {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&T` implements `Arg<T>`
+...
+   | impl<T, A: Arg<T>, const N: usize> Arg<Vec<T>> for [A; N] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `[A; N]` implements `Arg<Vec<T>>`
+...
+   | impl<T, A: Arg<T> + Clone + Sync> Arg<Vec<T>> for &[A] {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&[A]` implements `Arg<Vec<T>>`
+note: required by a bound in `<IssuesClient as Issues>::list`
+  --> tests/compile_fail_client/arg_vec_of_str.rs:6:55
+   |
+ 1 | quoll::api! {
+...
+ 6 |         GET "/issues?labels={labels}" => list(labels: Vec<String>) -> Vec<String>;
+   |                                                       ^^^ required by this bound in `<IssuesClient as Issues>::list`

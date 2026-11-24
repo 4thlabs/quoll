@@ -76,7 +76,7 @@ use crate::{Problem, Response, Result};
 /// # async fn run() -> quoll::Result<()> {
 /// let github = GitHub::client("https://api.github.com")?;
 ///
-/// match github.repos().topics("rust-lang".into(), "rust".into()).await {
+/// match github.repos().topics("rust-lang", "rust").await {
 ///     Ok(topics) => println!("{topics:?}"),
 ///     Err(error) => match error.detail() {
 ///         Some(GitHubError { documentation_url: Some(url), .. }) => println!("{error}, see {url}"),
@@ -97,7 +97,7 @@ use crate::{Problem, Response, Result};
 /// `async { Ok::<_, quoll::Error>(3) }.timeout(duration)`.
 ///
 /// ```
-/// use quoll::Call;
+/// use quoll::{Arg, Call};
 ///
 /// quoll::api! {
 ///     pub api Api = "/api";
@@ -110,7 +110,9 @@ use crate::{Problem, Response, Result};
 /// struct FakeNotes;
 ///
 /// impl Notes for FakeNotes {
-///     fn get(&self, id: i64) -> impl Call<String> {
+///     fn get(&self, id: impl Arg<i64>) -> impl Call<String> {
+///         let id = id.into_value();
+///
 ///         async move {
 ///             if id == 1 {
 ///                 return Ok("Milk".to_owned());

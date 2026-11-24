@@ -100,6 +100,7 @@ Decided by the maintainer:
 - **2026-11-24**:
   - `serve`, `serve_on` and `quoll::test::spawn` set `TCP_NODELAY` on every TCP connection they accept, with no option, as Node does: the server sends each chunk a handler gives as soon as it is given, so its latency matters more than coalescing, and with the client's delayed ACK Nagle's algorithm held each small chunk, the echo of a terminal in a `ByteStream` or an event, for about 40 ms ([#114](https://github.com/4thlabs/quoll/issues/114)). `serve_on` keeps its signature, generic over axum's `Listener`: a connection is told to be TCP by its type, tokio's `TcpStream`, which a `UnixListener`'s is not, nor a stream that wraps one, as TLS does, whose listener sets the option itself; one where the option cannot be set is served all the same, logged at `DEBUG`.
   - a `ByteStream` may say its length, `with_length(n)` on the server, sent as `Content-Length` in place of chunked encoding, so that a download of a file whose size is known shows its size and its progress, and a client tells a cut answer from a whole one ([#115](https://github.com/4thlabs/quoll/issues/115)); `length()` gives the bytes still to come on both sides, on the client from the `Content-Length` of the answer when it has one; a stream that lies is never answered as if it were whole: one that gives more than `n` bytes, ends before, or gives an error is logged and cut before its last bytes, the chunk that brings it to `n` held until the stream ends, and the client reads an error; the rest is as for any `ByteStream`, and the OpenAPI document does not change.
+  - a client's method takes each argument as `impl quoll::Arg<T>`, `T` its type in the contract, so that a call writes no `.into()` ([#119](https://github.com/4thlabs/quoll/issues/119)): `Arg<T>` is a trait of quoll, behind `client`, implemented for `T`, for `&str` to `String`, for `&T` to `T`, cloned, and for `[A; N]` and `&[A]` to `Vec<T>` when `A` is an argument of type `T`; there is no impl from a value alone to an `Option<T>`, which takes `Some(..)` or `None`, and no conversion between number types, so that `5` keeps the argument's type; `vec!["a"]` and `Some("x")` for an `Option<String>` are refused, with a message saying to write `["a"]` and `Some("x".into())`, as accepting them would make `vec![]` and `None` ambiguous; the macro guesses no type by its name, writing `impl ::quoll::Arg<T>` and a `let` that calls `into_value()` per argument, the rest of the method unchanged; a fake takes `impl Arg<T>` too, as the trait says, and calls `into_value()` on what it reads; the server does not change; rejected: `impl Into<T>`, which refuses `5` to a `u32`, `["a"]` to a `Vec<String>` and `"x"` to an `Option<String>`, and borrowed arguments, `&str`, `&[T]`, `Option<&str>`, which would have the macro guess them from type names.
 
 ## Stack and crates
 
@@ -387,7 +388,7 @@ Nothing is written to disk: the macro runs as rustc compiles the contract, and i
 |---|---|---|
 | `trait NotesServer` | server | one method per route, with the caller its authentication gives, returning a `quoll::Response` |
 | `struct __QuollGroupNotes` | both, and neither | hidden: the routes of the group, which the api that lists it reads |
-| `trait Notes` | client | one method per route, returning a `quoll::Call`, implemented by the client and by fakes in tests |
+| `trait Notes` | client | one method per route, taking `impl quoll::Arg<T>` and returning a `quoll::Call`, implemented by the client and by fakes in tests |
 | `struct ApiServices` | server | a field per group: its service |
 | `Api::router` | server | an `axum::Router` from an `ApiServices` |
 | `Api::client`, `Api::client_with` | client | `api.notes()` is a `NotesClient`, implementing `Notes` |
@@ -399,7 +400,9 @@ The generated code stays thin and calls the crate, compiled once. A client metho
 
 ```rust
 impl Notes for NotesClient {
-    fn get(&self, id: i64) -> impl quoll::Call<Note> {
+    fn get(&self, id: impl quoll::Arg<i64>) -> impl quoll::Call<Note> {
+        let id = quoll::Arg::<i64>::into_value(id);
+
         // The macro writes the call: the api's prefix and fixed headers, read at run time, as a group may be listed
         // by two apis, the path with its segment, then the call that sends the request and reads its JSON once
         // awaited, through `quoll::__private`.
@@ -407,7 +410,7 @@ impl Notes for NotesClient {
 }
 ```
 
-A server trait's method returns `impl Future<Output = quoll::Result<quoll::Response<Note>>> + Send`, which axum needs; an implementation writes `async fn`. A client trait's returns `impl quoll::Call<Note>`: a fake writes `fn get(&self, id: i64) -> impl quoll::Call<Note>` and an `async move` block, as an `async fn` there compiles but makes rustc warn `refining_impl_trait`, which `-D warnings` refuses.
+A server trait's method returns `impl Future<Output = quoll::Result<quoll::Response<Note>>> + Send`, which axum needs; an implementation writes `async fn`. A client trait's takes each argument as `impl quoll::Arg<T>` and returns `impl quoll::Call<Note>`: a fake writes `fn get(&self, id: impl quoll::Arg<i64>) -> impl quoll::Call<Note>`, then `let id = id.into_value();` and an `async move` block, as an `async fn` there compiles but makes rustc warn `refining_impl_trait`, which `-D warnings` refuses.
 
 ## The server
 
@@ -441,6 +444,7 @@ A server trait's method returns `impl Future<Output = quoll::Result<quoll::Respo
 - `Api::client(url)` makes a client with no middleware; `Api::client_with(http, url)` takes a `ClientWithMiddleware`.
 - `client::builder()` builds one with middleware: `.with(middleware)` for quoll's helpers and any `reqwest_middleware::Middleware` (see Middleware), `.http(|http| http.proxy(proxy))` configures reqwest's `ClientBuilder`, and `.build::<Api>(url)` gives the `ApiClient`, through `client::Contract`, which the macro implements on `Api`: its `Client` and its `client_with`. `.build_http()` gives the `ClientWithMiddleware`, for the clients of several contracts. Both return a `quoll::Result`, an error when reqwest cannot build its client or the URL is not an api's.
 - `api.notes().get(3)`: a method per route, arguments in the contract's order. Rust has no named arguments: a route with many optional filters takes a query struct with `Default`.
+- Each argument is an `impl quoll::Arg<T>`, `T` its type in the contract: a `T`, a `&str` for a `String`, a `&T`, cloned, or an array or a slice of what an item takes for a `Vec<T>`. `github.issues().list("rust-lang", "rust", ["C-bug"], Some(State::Open), Some(5))`, `list(&owner, "rust", &labels, None, None)`. An `Option<T>` takes `Some(..)` or `None`, an `Option<String>` `Some("x".into())`; `vec!["a"]` and `Some("x")` do not compile, with a message saying to write `["a"]` and `Some("x".into())`. No number becomes another. An application may implement `Arg` for a type of its own, `Arg<Name> for &str`.
 - Each method returns a `quoll::Call<T>`, the call described and not sent yet, which `.await` sends: it gives `quoll::Result<T>`, the value, or an error that goes up, an answer with an error status among them. Its methods give the call changed: `.timeout(duration)`, a deadline for this call alone, in place of the client's `client::timeout`, with its meaning, a deadline per attempt and per hop, for the head of the answer alone on a stream, which `retry` tries again; a client of `client::builder()` or of `Api::client` keeps it per attempt whatever its helpers, a chain built otherwise without `client::timeout` for the whole call on a stream.
 - `.response()` sends it and gives the whole answer, `quoll::Result<Response<quoll::Result<T, E>>, E>`, as reqwest's `send()` gives an `Ok` whatever the status: its status, its version, its headers, a rate limit's or a `Retry-After`, and its body, `Ok(T)` on a success and `Err(quoll::Error<E>)` on any other status, which holds its status, its detail when the body is an `E`, and its body. A 304 is such an `Err`, with no detail: it comes only to a caller that sent `If-None-Match`, whose answer's headers are those of the `.response()`. `response.into_value()` gives the value, or that error, to go up with `?`. A 204 or a 205 is a success, read as `()`, `None`, an empty text or bytes, or a stream that ends at once: on a route `-> T`, as another API may answer it, the body of the `.response()` is the read error, which keeps its status and its headers. The `Err` of `.response()` is only no usable answer: a connection, a timeout, an answer with a success status but a 204 or a 205 that is not the route's result.
 
@@ -1566,6 +1570,7 @@ function NoteText({ note, error, onEdit, onRemove }: NoteTextProps) {
 - A group listed twice, or of the name of another group of the api; an empty list; a path of the list that is not a group, or a group named alone that is not in scope; a group of the list with `#[openapi(none)]` in an api with a document. A `quoll::group!` with no group, two groups, an api or a scheme.
 - Two items the macro writes with one name: a group named as its api, or as the `NotesServer`, `NotesClient`, `ApiServices` or `ApiClient` the contract writes for another; two routes of one operation id, as `tags_list` in a group `Note` and `list` in a group `NoteTags`, both `note_tags_list`.
 - A route left out of a service or a fake, a handler or a fake's method of the wrong signature: Rust's own errors on the trait.
+- A call's argument that is no `quoll::Arg` of its type, `vec!["a"]` for a `Vec<String>` or `Some("x")` for an `Option<String>`: the message names both types and says to write `["a"]` and `Some("x".into())`.
 - `client::builder().build::<T>(url)` for a type that is not the api of a contract: the message says what an api is.
 - A group without a service; a service of a group with authentication that does not implement `Authenticate` for its schemes; two schemes of one `#[auth(A | B)]` giving callers of two types; scopes on a caller that does not implement `Scoped`.
 - A scheme in `#[auth(...)]` that is neither given by the crate, declared in the contract nor a type implementing `Scheme`; a scheme's credential that is not `Send`; `key::<K>` for a scheme the contract does not declare; two schemes of one `NAME` in an api's block, which names a scheme in the OpenAPI document (from two blocks, `Api::openapi()` panics), or a `NAME` of other characters than ASCII letters, digits, `.`, `-` and `_`.

@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use quoll::{Call, Created, Error, Result};
+use quoll::{Arg, Call, Created, Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +36,9 @@ struct Fake {
 }
 
 impl Notes for Fake {
-    fn get(&self, id: i64) -> impl Call<Note> {
+    fn get(&self, id: impl Arg<i64>) -> impl Call<Note> {
+        let id = id.into_value();
+
         async move {
             let notes = self.notes.lock().expect("no test panics while holding it");
 
@@ -47,7 +49,9 @@ impl Notes for Fake {
         }
     }
 
-    fn create(&self, note: NewNote) -> impl Call<Note> {
+    fn create(&self, note: impl Arg<NewNote>) -> impl Call<Note> {
+        let note = note.into_value();
+
         async move {
             let mut notes = self.notes.lock().expect("no test panics while holding it");
             let id = i64::try_from(notes.len()).expect("few notes") + 1;
@@ -61,7 +65,9 @@ impl Notes for Fake {
         }
     }
 
-    fn remove(&self, id: i64) -> impl Call<()> {
+    fn remove(&self, id: impl Arg<i64>) -> impl Call<()> {
+        let id = id.into_value();
+
         async move {
             let mut notes = self.notes.lock().expect("no test panics while holding it");
 

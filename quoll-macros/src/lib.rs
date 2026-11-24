@@ -79,9 +79,10 @@ use crate::syntax::{Contract, GroupContract};
 /// | `impl client::Contract for Api` | `client`           | what `client::builder().build::<Api>(url)` builds   |
 ///
 /// Each handler of `NotesServer` returns `impl Future<Output = Result<Response<T>>> + Send`, and an implementation
-/// writes `async fn`, which returns `Ok(Response::new(note))`; each method of `Notes` returns `impl Call<T, E>`, `E`
-/// the shape of the route's errors, `Problem` by default, and a fake writes an `async move` block. A hidden descriptor
-/// of each group, `__QuollGroupNotes`, holds its routes, which the api that lists it reads.
+/// writes `async fn`, which returns `Ok(Response::new(note))`; each method of `Notes` takes each argument as
+/// `impl Arg<T>`, `T` its type in the contract, and returns `impl Call<T, E>`, `E` the shape of the route's errors,
+/// `Problem` by default, and a fake writes an `async move` block. A hidden descriptor of each group,
+/// `__QuollGroupNotes`, holds its routes, which the api that lists it reads.
 #[proc_macro]
 pub fn api(input: TokenStream) -> TokenStream {
     match syn::parse::<Contract>(input) {

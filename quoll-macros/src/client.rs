@@ -2,8 +2,9 @@
 //! builds it, and `ApiClient`, `Api::client` and `Api::client_with`, which give each group's client by its descriptor.
 //!
 //! All of it goes through `::quoll::__private::client!`, which writes it out only when `quoll` has the feature
-//! `client`. Each method writes the route's path, query and body through a helper of `quoll`, and returns the call,
-//! which sends the request and reads its answer once it is awaited.
+//! `client`. Each method takes its arguments as `impl quoll::Arg<T>`, reads each one's value, writes the route's path,
+//! query and body through a helper of `quoll`, and returns the call, which sends the request and reads its answer once
+//! it is awaited.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
@@ -135,14 +136,15 @@ fn group_trait(cx: &Cx) -> TokenStream {
     }
 }
 
-/// `fn get(&self, id: i64) -> impl quoll::Call<Note, Problem>`, of the shape of the route's errors: a `Created<T>` or
-/// an `Accepted<T>` gives its `T`, as the 201 or the 202 is only the server's answer.
+/// `fn get(&self, id: impl quoll::Arg<i64>) -> impl quoll::Call<Note, Problem>`, of the shape of the route's errors:
+/// a `Created<T>` or an `Accepted<T>` gives its `T`, as the 201 or the 202 is only the server's answer.
 fn signature(cx: &Cx, route: &Route) -> TokenStream {
     let name = &route.name;
+    // Spanned on the type, as a value that is no argument of it is the mistake an error names then.
     let args = route
         .params
         .iter()
-        .map(|Param { name, ty, .. }| quote! { #name: #ty });
+        .map(|Param { name, ty, .. }| quote_spanned! {ty.span()=> #name: impl ::quoll::Arg<#ty> });
     let output = match route.reply.as_deref() {
         None => quote! { () },
         Some(returned) => {
@@ -289,9 +291,13 @@ fn method(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
         }
     };
     let request = Ident::new("request", Span::mixed_site());
+    let values = route.params.iter().map(|Param { name, ty, .. }| {
+        quote_spanned! {ty.span()=> let #name = ::quoll::Arg::<#ty>::into_value(#name); }
+    });
 
     quote! {
         #signature {
+            #(#values)*
             #query_type
 
             let #request = ::quoll::__private::client::Request::write(
