@@ -15,7 +15,10 @@ use std::marker::PhantomData;
 
 use serde::de::DeserializeOwned;
 
-use crate::{Accepted, Allows, ByteStream, Bytes, Created, Events, Form, JsonLines, NoBody, Text};
+use crate::{
+    Accepted, Allows, ByteStream, Bytes, Created, Error, Events, Form, JsonLines, NoBody, Result,
+    Text,
+};
 
 pub use crate::stream::Items;
 
@@ -233,6 +236,9 @@ pub trait IsJsonLines: Streamed {}
 
 impl<T> IsJsonLines for JsonLines<T> {}
 
+/// The chunks of a [`ByteStream`], their content type and their length, as the server sends them.
+pub type ByteParts = (Items<Vec<u8>>, Cow<'static, str>, Option<u64>);
+
 /// The crate's [`ByteStream`]: its chunks, their content type and their length, which the server sends and the client
 /// reads.
 #[diagnostic::on_unimplemented(
@@ -249,7 +255,11 @@ pub trait IsByteStream: Sized {
     ) -> Self;
 
     /// The chunks, their content type and their length, as the server sends them.
-    fn into_parts(self) -> (Items<Vec<u8>>, Cow<'static, str>, Option<u64>);
+    ///
+    /// # Errors
+    ///
+    /// When a chunk was read past the length before the stream was sent: what is left of it is no length.
+    fn into_parts(self) -> Result<ByteParts>;
 }
 
 impl IsByteStream for ByteStream {
@@ -262,11 +272,18 @@ impl IsByteStream for ByteStream {
             chunks,
             content_type,
             length,
+            read_past: false,
         }
     }
 
-    fn into_parts(self) -> (Items<Vec<u8>>, Cow<'static, str>, Option<u64>) {
-        (self.chunks, self.content_type, self.length)
+    fn into_parts(self) -> Result<ByteParts> {
+        if self.read_past {
+            return Err(Error::internal(
+                "a `ByteStream` was read past its length before it was sent: its chunks hold more bytes than it said",
+            ));
+        }
+
+        Ok((self.chunks, self.content_type, self.length))
     }
 }
 

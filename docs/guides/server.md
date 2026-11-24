@@ -488,7 +488,8 @@ The streams in flight:
   between, reads a clean end, the same as when the handler's stream ends. An `EventSource` connects again after it:
   see [the TypeScript guide](typescript.md#events-with-a-cookie).
 - A `JsonLines` or a `ByteStream` is not ended. It runs on until the grace has passed, and is then cut. Its client
-  reads that as an error.
+  reads that as an error. A clean end would make a finite one with no length look complete. A `ByteStream` with a
+  length is read as cut either way.
 
 What a stream should say about a stop is an open question: [#70](https://github.com/4thlabs/quoll/issues/70). A router
 served by `axum::serve` itself, or by `quoll::test::spawn`, leaves its streams to run until their connection closes.

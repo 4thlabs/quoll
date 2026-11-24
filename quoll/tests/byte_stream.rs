@@ -33,6 +33,7 @@ quoll::api! {
         GET "/sized?count={count}&length={length}" => sized(count: u32, length: u64) -> ByteStream;
         GET "/sized_failing"        => sized_failing() -> ByteStream;
         GET "/empty_sized"          => empty_sized() -> ByteStream;
+        GET "/read_past"            => read_past() -> ByteStream;
     }
 }
 
@@ -161,6 +162,17 @@ impl OutputServer for App {
         });
 
         Ok(Response::new(ByteStream::new(chunks).with_length(0)))
+    }
+
+    async fn read_past(&self) -> Result<Response<ByteStream>> {
+        let chunks = stream::iter([b"6 byte".to_vec(), b"more".to_vec()]);
+        let mut output = ByteStream::new(chunks).with_length(4);
+
+        // The first chunk holds more than the length: what is left of it says nothing true.
+        output.next().await.transpose()?;
+        assert_eq!(output.length(), Some(0));
+
+        Ok(Response::new(output))
     }
 }
 
@@ -393,6 +405,23 @@ async fn a_length_of_0_sends_an_empty_body_and_never_polls_the_stream() {
 }
 
 #[tokio::test]
+async fn a_stream_read_past_its_length_is_answered_500_and_logged() {
+    let (log, _capture) = support::log::capture(false);
+    let (_, api, _) = served().await;
+
+    let error = api.output().read_past().await.expect_err("a 500");
+
+    assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
+
+    let log = log.text();
+
+    assert!(
+        log.contains("was read past its length before it was sent"),
+        "{log}"
+    );
+}
+
+#[tokio::test]
 async fn a_client_stream_partly_read_is_forwarded_with_the_length_left() {
     let (_, api, _) = served().await;
     let read = Arc::default();
@@ -581,7 +610,11 @@ fn third_party(
                     "count=4" => ([(CONTENT_TYPE, "text/plain")], "whole").into_response(),
                     // "whole" in gzip, with the `Content-Length` of the gzip, which the client decodes.
                     "count=5" => {
-                        let gzip: &[u8] = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\x03\x2b\xcf\xc8\xcf\x49\x05\x00\x4f\x29\x59\xc4\x05\x00\x00\x00";
+                        let gzip: &[u8] = &[
+                            0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x03, 0x2b, 0xcf,
+                            0xc8, 0xcf, 0x49, 0x05, 0x00, 0x4f, 0x29, 0x59, 0xc4, 0x05, 0x00, 0x00,
+                            0x00,
+                        ];
 
                         (
                             [(CONTENT_TYPE, "text/plain"), (CONTENT_ENCODING, "gzip")],
