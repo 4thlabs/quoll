@@ -1,12 +1,13 @@
-//! What the client side of a contract becomes: a trait per group, its client, with the function of its descriptor that
-//! builds it, and `ApiClient`, `Api::client` and `Api::client_with`, which give each group's client by its descriptor.
+//! What the client side of a contract becomes: a trait per group, its client, with the items of its descriptor's
+//! `Called` that build it, and `ApiClient`, `Api::client` and `Api::client_with`, which give each group's client: by
+//! its name for a group the block writes, by its descriptor for one the api lists.
 //!
 //! All of it goes through `::quoll::__private::client!`, which writes it out only when `quoll` has the feature
 //! `client`. Each method writes the route's path, query and body through a helper of `quoll`, and returns the call,
 //! which sends the request and reads its answer once it is awaited.
 
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, quote_spanned};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{Ident, Lifetime, Type, ext::IdentExt, spanned::Spanned};
 
 use crate::borrowed;
@@ -17,8 +18,9 @@ use crate::headers::{api_headers, route_headers};
 use crate::model::{Api, Param, Route, peel};
 use crate::path::Segment;
 
-/// The client's code of a group, behind the feature `client` of `quoll`: its trait, its client, and the function of
-/// its descriptor that builds the client.
+/// The client's code of a group, behind the feature `client` of `quoll`: its trait and its client. The function that
+/// builds the client is an item of the descriptor's `Called`, which [`called_items`] writes in the descriptor's impl,
+/// outside this gate, as the impl is there whatever the features.
 pub(crate) fn group(cx: &Cx) -> TokenStream {
     let group_trait = group_trait(cx);
     let group_client = group_client(cx);
@@ -208,6 +210,7 @@ fn group_client(cx: &Cx) -> TokenStream {
 /// group's client, and the function that builds it, which the api's client calls by the descriptor alone.
 pub(crate) fn called_items(cx: &Cx) -> TokenStream {
     let client = cx.group.client();
+    let count = cx.group.routes.len();
     let http = Ident::new("client", Span::mixed_site());
     let prefix = Ident::new("prefix", Span::mixed_site());
     let routes = Ident::new("routes", Span::mixed_site());
@@ -223,6 +226,10 @@ pub(crate) fn called_items(cx: &Cx) -> TokenStream {
                 #routes: &'static [::quoll::Route],
                 #headers: &'static [::quoll::__private::headers::Fixed],
             ) -> #client {
+                // The api's table has a route per route of the group, as `table!` builds it from the descriptor: the
+                // slice keeps one signature of `Called` for every group, whose length the type no longer says.
+                ::core::debug_assert_eq!(#routes.len(), #count, "a route of the table per route of the group");
+
                 #client {
                     client: #http,
                     prefix: #prefix,
@@ -438,11 +445,28 @@ fn api_client(api: &Api) -> TokenStream {
         let table = table(api, &group);
         let prefix = &api.prefix;
         let headers = api_headers(&api.headers);
-        let docs = format!(" The client of the group `{}`.", group.name.unraw());
+        let group_client = format_ident!("{}Client", group.name.unraw(), span = group.name.span());
+        let docs = if group.is_written() {
+            format!(" The client of the group `{}`.", group.name.unraw())
+        } else {
+            format!(
+                " The client of the group `{}`, [`{}`].",
+                group.name.unraw(),
+                group.shown(&group_client.to_string()),
+            )
+        };
 
-        // The group's client by its descriptor alone, never by its path, which a group with no client side does not
-        // write: the bound is the one error of such a group, quoll's, on the group in the list.
-        let bound = quote_spanned! {group.span()=> #descriptor: ::quoll::__private::group::Called };
+        // A group the block writes has the api's sides, and its client is named. One the api lists is reached by its
+        // descriptor alone, never by its path, which a group with no client side does not write: the bound is the one
+        // error of such a group, quoll's, on the group in the list, and the docs name its client.
+        let (returned, bound) = if group.is_written() {
+            (quote! { #group_client }, None)
+        } else {
+            (
+                quote! { <#descriptor as ::quoll::__private::group::Called>::Client },
+                Some(quote_spanned! {group.span()=> where #descriptor: ::quoll::__private::group::Called }),
+            )
+        };
         let call = quote_spanned! {group.span()=>
             <#descriptor as ::quoll::__private::group::Called>::group_client(
                 ::core::clone::Clone::clone(&self.client),
@@ -454,10 +478,7 @@ fn api_client(api: &Api) -> TokenStream {
 
         quote! {
             #[doc = #docs]
-            #vis fn #method(&self) -> <#descriptor as ::quoll::__private::group::Called>::Client
-            where
-                #bound
-            {
+            #vis fn #method(&self) -> #returned #bound {
                 #call
             }
         }

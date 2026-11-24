@@ -39,6 +39,11 @@ pub use stream::{Written, byte_stream, events, json_lines};
 /// the group, reaching it by its descriptor alone. Generic over the service, as the group's impl bounds it by the
 /// group's trait, which the api does not name. Not bound on `Served`, which the api checks on its own: the router's
 /// bound on a group with no server side is then no second error.
+#[diagnostic::on_unimplemented(
+    message = "`{S}` does not serve the group: it does not implement the group's server trait, or the group has no server side",
+    label = "not a service of the group",
+    note = "the service of a group implements the group's server trait, `NotesServer` for the group `Notes`"
+)]
 pub trait Serve<S> {
     /// Adds the group's routes, served by `service`, to `router`, each with its route of `routes`, the table of the
     /// api that lists the group. Named so that no call of the application's, `serve`, takes it for a candidate.

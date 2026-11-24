@@ -1,3 +1,24 @@
+error[E0277]: the group has no server side, which the api that lists it serves
+  --> tests/compile_fail/group_listed_not_served_documented.rs:11:28
+   |
+11 |     pub api Api = "/api" { notes::Notes };
+   |                            ^^^^^^^^^^^^ a group with `#[server(none)]`
+   |
+help: the trait `quoll::__private::group::Served` is not implemented for `__QuollGroupNotes`
+  --> tests/compile_fail/group_listed_not_served_documented.rs:2:5
+   |
+ 2 | /     quoll::group! {
+ 3 | |         #[server(none)]
+ 4 | |         pub group Notes {
+   | |_______________________^
+   = note: remove `#[server(none)]` from the group's `quoll::group!`, or write it on the api, which then only calls its groups
+note: required by a bound in `quoll::__private::group::is_served`
+  --> src/__private/group.rs
+   |
+   | pub const fn is_served<G: Served>() {}
+   |                           ^^^^^^ required by this bound in `is_served`
+   = note: this error originates in the macro `quoll::group` (in Nightly builds, run with -Z macro-backtrace for more info)
+
 error[E0277]: the group has no OpenAPI document, which the document of the api that lists it holds
   --> tests/compile_fail/group_listed_not_served_documented.rs:11:28
    |
