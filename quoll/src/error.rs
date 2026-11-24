@@ -218,20 +218,26 @@ impl<E> Error<E> {
     /// assert_eq!(proxy.to_string(), "another api answered 502: a page of nginx");
     /// ```
     pub fn failed(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self::failed_from(kind, message, None)
-    }
-
-    /// A call that got no answer to read, of `kind`, with the error it comes from.
-    pub(crate) fn failed_from(
-        kind: ErrorKind,
-        message: impl Into<String>,
-        source: Option<Box<dyn StdError + Send + Sync>>,
-    ) -> Self {
         if let ErrorKind::Status(status) = kind {
             let message = Some(message.into()).filter(|message| !message.is_empty());
 
             return Self::upstream(status, None, None, message);
         }
+
+        Self::failed_from(kind, message, None)
+    }
+
+    /// A call that got no answer to read, of `kind`, which is never a `Status`, with the error it comes from: the
+    /// client's classification never gives one, and an answer is [`Error::upstream`].
+    pub(crate) fn failed_from(
+        kind: ErrorKind,
+        message: impl Into<String>,
+        source: Option<Box<dyn StdError + Send + Sync>>,
+    ) -> Self {
+        debug_assert!(
+            !matches!(kind, ErrorKind::Status(_)),
+            "a call that got no answer has no status"
+        );
 
         Self(Box::new(Repr::Failed {
             kind,

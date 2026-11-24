@@ -25,7 +25,8 @@ pub(crate) struct TooLong;
 pub(crate) enum Piece {
     /// An item, the JSON of a value.
     Item,
-    /// `event: problem`: the RFC 9457 problem the server ends the stream with, in JSON.
+    /// `event: problem`: the RFC 9457 problem the server ends the stream with, in JSON. Its data, when it is not a
+    /// problem, is an item that does not read, after which the stream goes on.
     Problem,
 }
 
@@ -261,7 +262,8 @@ pub(crate) struct EventStream {
     first: bool,
     /// The `data` of the event being read, each of its lines followed by `\n`.
     data: Vec<u8>,
-    /// Whether the event being read is named `problem`, which ends the stream; any other name is an item's.
+    /// Whether the event being read is named `problem`, which ends the stream when its data is a problem; any other
+    /// name is an item's.
     problem: bool,
 }
 

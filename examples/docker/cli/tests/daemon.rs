@@ -5,13 +5,13 @@
 //! With no daemon, the test says so and passes, unless `DOCKER_CLI_TEST_DAEMON` is `required`, as CI sets it on the
 //! runners that have Docker: there, a daemon that does not answer fails it.
 
+use std::error::Error as _;
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use docker_api::{Containers, DockerClient, DockerError, Images, NewContainer, System};
 use docker_cli::Host;
 use futures::StreamExt;
-use quoll::ErrorKind;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
@@ -32,7 +32,20 @@ fn docker() -> DockerClient {
 /// Whether `error` says that nothing listens where the daemon would: no socket, or a connection refused. Any other
 /// error, an answer with a status among them, is the daemon's, and fails the test.
 fn nothing_listens(error: &quoll::Error<DockerError>) -> bool {
-    error.kind() == ErrorKind::Connect
+    let mut source = error.source();
+
+    while let Some(cause) = source {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            return matches!(
+                io.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            );
+        }
+
+        source = cause.source();
+    }
+
+    false
 }
 
 /// Removes the container `name` when dropped, however the test ends, so that a failure leaves none running.

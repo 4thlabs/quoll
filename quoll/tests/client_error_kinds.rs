@@ -53,6 +53,15 @@ quoll::api! {
 }
 
 quoll::api! {
+    api Secured = "/api";
+
+    #[auth(Bearer)]
+    group Secure {
+        GET "/me" => me() -> String;
+    }
+}
+
+quoll::api! {
     #[error(GitHubError)]
     api GitHub = "";
 
@@ -456,6 +465,79 @@ async fn a_redirect_loop_is_middleware() {
         .expect_err("a loop");
 
     assert_eq!(kind(&error), ErrorKind::Middleware);
+}
+
+#[tokio::test]
+async fn a_head_that_is_not_http_is_decode_and_is_not_tried_again() {
+    // What a server of another protocol writes first, as SSH does, or a TLS port called over `http`.
+    let (url, answers) = raw(Then::Answer(Arc::from(&b"SSH-2.0-OpenSSH_9.6\r\n"[..]))).await;
+
+    let error = client::builder()
+        .with(client::retry(2))
+        .build::<Api>(&url)
+        .expect("a client")
+        .notes()
+        .get(1)
+        .await
+        .expect_err("not HTTP");
+
+    assert_eq!(kind(&error), ErrorKind::Decode);
+    assert_eq!(
+        answers.load(Ordering::SeqCst),
+        1,
+        "it fails again: not tried again"
+    );
+}
+
+/// A source of tokens that asks each of an auth server at its URL, through a quoll client of its own.
+struct Remote {
+    url: String,
+}
+
+impl client::TokenSource for Remote {
+    async fn token(&self) -> quoll::Result<String> {
+        let token = api(&self.url).notes().text().await?;
+
+        Ok(token.0)
+    }
+
+    async fn refresh(&self, _refused: &str) -> quoll::Result<String> {
+        self.token().await
+    }
+}
+
+#[tokio::test]
+async fn a_token_that_could_not_be_had_is_middleware_and_keeps_its_own_kind_in_its_sources() {
+    // The api answers; the auth server refuses the connection.
+    let (url, calls) = raw(ok("application/json", br#""ana""#)).await;
+    let (auth, _socket) = refused();
+
+    let error = client::builder()
+        .with(client::bearer_from(Remote { url: auth }))
+        .build::<Secured>(&url)
+        .expect("a client")
+        .secure()
+        .me()
+        .await
+        .expect_err("no token");
+
+    assert_eq!(kind(&error), ErrorKind::Middleware);
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "the api was not called");
+
+    let mut source = std::error::Error::source(&error);
+    let mut token = None;
+
+    while let Some(error) = source {
+        if let Some(reqwest_middleware::Error::Middleware(error)) =
+            error.downcast_ref::<reqwest_middleware::Error>()
+        {
+            token = error.downcast_ref::<Error>().map(Error::kind);
+        }
+
+        source = error.source();
+    }
+
+    assert_eq!(token, Some(ErrorKind::Connect), "{error:?}");
 }
 
 /// What a middleware's call returns.
