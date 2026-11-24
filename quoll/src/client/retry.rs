@@ -11,7 +11,6 @@ use http::{Extensions, HeaderMap, Method, StatusCode};
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next};
 
-use super::request::HeadTimedOut;
 use super::{Handled, own_route};
 use crate::__private::client::{redacted, strip_urls};
 use crate::{ErrorKind, Route};
@@ -316,8 +315,8 @@ impl Attempt<'_> {
     ///
     /// A failure that may pass is an attempt of the [kind](Attempt::kind) [`ErrorKind::Connect`], the connection
     /// refused, [`ErrorKind::Timeout`], a deadline of [`timeout`](super::timeout) passed before the answer began, or
-    /// [`ErrorKind::Closed`], the connection closed, reset or cut before the answer; or an answer 502, 503 or 504. A request that may be
-    /// sent twice is a `GET`, a `HEAD`, a `PUT` or a `DELETE`.
+    /// [`ErrorKind::Closed`], the connection closed, reset or cut before the answer; or an answer 502, 503 or 504. A
+    /// request that may be sent twice is a `GET`, a `HEAD`, a `PUT` or a `DELETE`.
     pub fn transient(&self) -> Retry {
         let idempotent = [Method::GET, Method::HEAD, Method::PUT, Method::DELETE]
             .contains(self.request.method());
@@ -415,20 +414,13 @@ fn seconds(value: &str) -> Option<Duration> {
     Some(Duration::from_secs(value.parse().unwrap_or(u64::MAX)))
 }
 
-/// Whether an attempt that got no answer may pass if tried again: its kind is [`ErrorKind::Connect`], no connection,
-/// [`ErrorKind::Timeout`], a deadline passed, the head of a stream's answer past the deadline of `timeout` among them,
-/// or [`ErrorKind::Closed`], a connection that failed before the answer, closed, reset or cancelled. A middleware's
-/// own failure, a body that cannot be read, an answer that is not HTTP, a redirect, will fail again.
+/// Whether an attempt that got no answer may pass if tried again, by the kind [`Attempt::kind`] gives it:
+/// [`ErrorKind::Connect`], no connection, [`ErrorKind::Timeout`], a deadline passed, the head of a stream's answer past
+/// the deadline of `timeout` among them, or [`ErrorKind::Closed`], a connection that failed once the request was sent.
+/// A middleware's own failure, a body that cannot be read, an answer that is not HTTP, a redirect, will fail again.
 fn may_pass(error: &reqwest_middleware::Error) -> bool {
-    let error = match error {
-        reqwest_middleware::Error::Middleware(error) => {
-            return error.downcast_ref::<HeadTimedOut>().is_some();
-        }
-        reqwest_middleware::Error::Reqwest(error) => error,
-    };
-
     matches!(
-        crate::__private::client::of_reqwest(error),
+        crate::__private::client::kind_of(error),
         ErrorKind::Connect | ErrorKind::Timeout | ErrorKind::Closed
     )
 }

@@ -50,10 +50,11 @@ pub type Result<T, E = Problem> = std::result::Result<T, Error<E>>;
 /// in a call that got no answer to read, which has no status: a connection refused is [`ErrorKind::Connect`], an
 /// answer that is not the route's result [`ErrorKind::Decode`]. Its sources show the URL of the call by its origin and
 /// its path alone, without its credentials and its query, where a query scheme sends its key: the errors of reqwest
-/// and of reqwest-middleware, as the client and its middleware give them, are stripped. A reqwest error that a middleware of the application's, or of another crate,
-/// wraps in an error type of its own, as reqwest-retry's `RetryError`, is out of reach, in the error and in the span
-/// of [`client::trace`]: the middleware strips it, with `reqwest::Error::without_url`, or [`client::retry`] takes the
-/// place of reqwest-retry's.
+/// and of reqwest-middleware, as the client and its middleware give them, are stripped. A reqwest error that a
+/// middleware of the application's, or of another crate, wraps in an error type of its own, as reqwest-retry's
+/// `RetryError`, is out of reach, in the error and in the span of [`client::trace`]: the middleware strips it, with
+/// `reqwest::Error::without_url`, or [`client::retry`] takes the place of reqwest-retry's. Such an error is of the kind
+/// [`ErrorKind::Middleware`], its cause among its sources.
 ///
 #[cfg_attr(feature = "client", doc = "[`client::trace`]: crate::client::trace")]
 #[cfg_attr(feature = "client", doc = "[`client::retry`]: crate::client::retry")]
@@ -467,16 +468,7 @@ impl<E> fmt::Display for Error<E> {
     }
 }
 
-/// What every `quoll::Error`'s `description` gives, whatever its shape: the mark by which the client's classification
-/// knows one among the sources of a middleware's error, where `downcast_ref` would need its `E`.
-pub(crate) const MARK: &str = "a quoll::Error";
-
 impl<E: fmt::Debug> StdError for Error<E> {
-    /// A mark that only quoll reads, to know a `quoll::Error` of any shape: `Display` gives the message.
-    fn description(&self) -> &str {
-        MARK
-    }
-
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match &*self.0 {
             Repr::Internal(source)
