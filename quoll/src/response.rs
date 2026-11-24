@@ -145,7 +145,8 @@ impl<T> Response<T> {
     /// number. A name or a value that is not one, a space in a name or a line break in a value, is kept out of the
     /// headers, and the server answers the response with a 500, logged without the value. A `Content-Type`, a
     /// `Content-Length` or a `Transfer-Encoding`, which quoll writes from the route's result, is kept, and answered
-    /// with a 500 too. The `X-Content-Type-Options: nosniff` quoll sends with bytes stays whatever a handler gives.
+    /// with a 500 too: a [`ByteStream`] says its length with [`ByteStream::with_length`]. The
+    /// `X-Content-Type-Options: nosniff` quoll sends with bytes stays whatever a handler gives.
     #[must_use]
     pub fn header<K, V>(mut self, name: K, value: V) -> Self
     where

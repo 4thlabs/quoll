@@ -1,5 +1,6 @@
 //! The result `ByteStream`: chunks sent by the server a contract becomes as its stream gives them, and read back by
-//! its client, served on a port; and read from another API's chunks as they come, of any content type.
+//! its client, served on a port, with no length or with one; and read from another API's chunks as they come, of any
+//! content type.
 
 #![cfg(all(feature = "server", feature = "client"))]
 
@@ -9,8 +10,12 @@ use std::time::Duration;
 use futures_util::{StreamExt, stream};
 use quoll::{ByteStream, Error, Response, Result};
 use reqwest::StatusCode;
-use reqwest::header::{ACCEPT, CACHE_CONTROL, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING};
 use tokio::sync::mpsc;
+
+mod support {
+    pub(crate) mod log;
+}
 
 quoll::api! {
     api Api = "/api";
@@ -22,6 +27,8 @@ quoll::api! {
         GET "/missing"              => missing() -> quoll::ByteStream;
         GET "/held"                 => held() -> ByteStream;
         GET "/mistyped"             => mistyped() -> ByteStream;
+        GET "/sized?count={count}&length={length}" => sized(count: u32, length: u64) -> ByteStream;
+        GET "/sized_failing"        => sized_failing() -> ByteStream;
     }
 }
 
@@ -109,6 +116,24 @@ impl OutputServer for App {
             ByteStream::new(stream::iter([chunk(1)])).with_content_type("not a type"),
         ))
     }
+
+    async fn sized(&self, count: u32, length: u64) -> Result<Response<ByteStream>> {
+        let chunks = stream::iter((1..=count).map(chunk));
+
+        Ok(Response::new(
+            ByteStream::new(chunks)
+                .with_length(length)
+                .with_content_type("text/plain"),
+        ))
+    }
+
+    async fn sized_failing(&self) -> Result<Response<ByteStream>> {
+        let chunks = [Ok(chunk(1)), Err(Error::internal("the disk went away"))];
+
+        Ok(Response::new(
+            ByteStream::try_new(stream::iter(chunks)).with_length(16),
+        ))
+    }
 }
 
 /// The api served on a port, its URL, its client, and what says when the held stream is dropped.
@@ -134,6 +159,24 @@ fn joined(chunks: Vec<Result<Vec<u8>>>) -> Vec<u8> {
         .into_iter()
         .flat_map(|chunk| chunk.expect("a chunk"))
         .collect()
+}
+
+/// The chunks the client reads of `call`, the error that ends them, and what the server logged: a call that fails
+/// when the server had sent nothing before its error is that error.
+async fn cut_short(
+    call: impl std::future::IntoFuture<Output = Result<ByteStream>>,
+) -> (Vec<u8>, Error, String) {
+    let (log, _capture) = support::log::capture(false);
+    let mut chunks = match call.await {
+        Ok(output) => all(output).await,
+        Err(error) => vec![Err(error)],
+    };
+    let error = chunks
+        .pop()
+        .expect("an error")
+        .expect_err("an error, not an end");
+
+    (joined(chunks), error, log.text())
 }
 
 /// Waits for the server to say which held stream it dropped: a stream it never drops fails the test, rather than
@@ -249,6 +292,116 @@ async fn a_chunk_that_fails_cuts_the_body_short_with_an_error() {
 }
 
 #[tokio::test]
+async fn a_stream_with_a_length_is_sent_as_content_length() {
+    let (url, api, _) = served().await;
+
+    let response = reqwest::get(format!("{url}/api/sized?count=3&length=24"))
+        .await
+        .expect("the server answers");
+    let headers = response.headers().clone();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(headers[CONTENT_LENGTH], "24");
+    assert!(!headers.contains_key(TRANSFER_ENCODING), "{headers:?}");
+    assert_eq!(headers[CONTENT_TYPE], "text/plain");
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert_eq!(headers[CACHE_CONTROL], "no-cache");
+    assert_eq!(headers["x-accel-buffering"], "no");
+    assert_eq!(
+        response.text().await.expect("the body reads"),
+        "chunk 1\nchunk 2\nchunk 3\n"
+    );
+
+    let output = api.output().sized(3, 24).await.expect("chunks");
+
+    assert_eq!(output.length(), Some(24));
+    assert_eq!(output.content_type(), "text/plain");
+    assert_eq!(joined(all(output).await), b"chunk 1\nchunk 2\nchunk 3\n");
+}
+
+#[tokio::test]
+async fn a_stream_with_no_length_has_none_on_the_client() {
+    let (_, api, _) = served().await;
+
+    let output = api.output().chunks(2).await.expect("chunks");
+
+    assert_eq!(output.length(), None);
+}
+
+#[tokio::test]
+async fn a_length_of_0_sends_the_head_alone() {
+    let (_, api, _) = served().await;
+
+    let output = api.output().sized(2, 0).await.expect("chunks");
+
+    assert_eq!(output.length(), Some(0));
+    assert!(all(output).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_head_of_a_stream_with_a_length_says_it_with_no_body() {
+    let (url, _, _) = served().await;
+
+    let response = reqwest::Client::new()
+        .head(format!("{url}/api/sized?count=3&length=24"))
+        .send()
+        .await
+        .expect("the server answers");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[CONTENT_LENGTH], "24");
+    assert!(response.bytes().await.expect("no body").is_empty());
+}
+
+#[tokio::test]
+async fn a_stream_longer_than_its_length_is_cut_before_its_last_bytes() {
+    let (_, api, _) = served().await;
+
+    // The third chunk is one too many: the second, which brought the bytes to the length, is never sent.
+    let (before, error, log) = cut_short(api.output().sized(3, 16)).await;
+
+    assert!(b"chunk 1\n".starts_with(&before), "{before:?}");
+    assert_eq!(error.status(), None, "{error}");
+    assert!(
+        log.contains(
+            "cut short after its 200: its `ByteStream` gave more than its length, 16 bytes"
+        ),
+        "{log}"
+    );
+
+    // The second chunk goes past the length on its own.
+    let (before, _, log) = cut_short(api.output().sized(2, 12)).await;
+
+    assert!(b"chunk 1\n".starts_with(&before), "{before:?}");
+    assert!(log.contains("gave more than its length, 12 bytes"), "{log}");
+}
+
+#[tokio::test]
+async fn a_stream_shorter_than_its_length_cuts_the_connection() {
+    let (_, api, _) = served().await;
+
+    let (before, error, log) = cut_short(api.output().sized(2, 24)).await;
+
+    assert!(b"chunk 1\nchunk 2\n".starts_with(&before), "{before:?}");
+    assert_eq!(error.status(), None, "{error}");
+    assert!(
+        log.contains("cut short after its 200: its `ByteStream` ended after 16 of its 24 bytes"),
+        "{log}"
+    );
+}
+
+#[tokio::test]
+async fn a_stream_with_a_length_that_fails_cuts_the_connection() {
+    let (_, api, _) = served().await;
+
+    let (before, error, log) = cut_short(api.output().sized_failing()).await;
+
+    assert!(b"chunk 1\n".starts_with(&before), "{before:?}");
+    assert_eq!(error.status(), None, "{error}");
+    assert!(log.contains("the disk went away"), "{log}");
+}
+
+#[tokio::test]
 async fn dropping_the_clients_stream_drops_the_servers() {
     let (_, api, mut signals) = served().await;
 
@@ -330,6 +483,8 @@ fn third_party(
                         Some("text/html"),
                         &[b"<p>a ", b"page"],
                     ),
+                    // A whole body, which axum sends with its `Content-Length`.
+                    "count=4" => ([(CONTENT_TYPE, "text/plain")], "whole").into_response(),
                     _ => answer(StatusCode::OK, None, &[b"no ", b"type"]),
                 }
             }),
@@ -394,6 +549,20 @@ async fn chunks_with_no_content_type_are_octet_stream() {
 
     assert_eq!(output.content_type(), "application/octet-stream");
     assert_eq!(joined(all(output).await), b"no type");
+}
+
+#[tokio::test]
+async fn the_content_length_of_another_api_is_the_length() {
+    let (api, _, _) = third_party_client().await;
+
+    let whole = api.output().chunks(4).await.expect("a body");
+
+    assert_eq!(whole.length(), Some(5));
+    assert_eq!(joined(all(whole).await), b"whole");
+
+    let chunked = api.output().chunks(3).await.expect("chunks");
+
+    assert_eq!(chunked.length(), None);
 }
 
 #[tokio::test]

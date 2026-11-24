@@ -185,7 +185,7 @@ A handler returns a `quoll::Response` of the route's value: `Note` for `-> Note`
   sent.
 - quoll answers 500 for a name or a value that is not valid in a header, and logs it without the value. It does the
   same for a `Content-Type`, a `Content-Length` or a `Transfer-Encoding`, which quoll writes from the route's
-  result.
+  result. A `ByteStream` gives its length with `with_length`: see [A length](contract.md#a-length).
 
 The OpenAPI document describes the contract's status and none of these headers.
 

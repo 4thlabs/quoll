@@ -233,30 +233,40 @@ pub trait IsJsonLines: Streamed {}
 
 impl<T> IsJsonLines for JsonLines<T> {}
 
-/// The crate's [`ByteStream`]: its chunks and their content type, which the server sends and the client reads.
+/// The crate's [`ByteStream`]: its chunks, their content type and their length, which the server sends and the client
+/// reads.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not quoll's `ByteStream`, which a result named `ByteStream` is read as",
     label = "not `quoll::ByteStream`",
     note = "bring quoll's into scope, `use quoll::ByteStream;`, or name a type of your own otherwise"
 )]
 pub trait IsByteStream: Sized {
-    /// The bytes of `chunks`, of `content_type`, as the client reads them.
-    fn from_parts(chunks: Items<Vec<u8>>, content_type: Cow<'static, str>) -> Self;
+    /// The bytes of `chunks`, of `content_type`, `length` bytes in all when it is known, as the client reads them.
+    fn from_parts(
+        chunks: Items<Vec<u8>>,
+        content_type: Cow<'static, str>,
+        length: Option<u64>,
+    ) -> Self;
 
-    /// The chunks and their content type, as the server sends them.
-    fn into_parts(self) -> (Items<Vec<u8>>, Cow<'static, str>);
+    /// The chunks, their content type and their length, as the server sends them.
+    fn into_parts(self) -> (Items<Vec<u8>>, Cow<'static, str>, Option<u64>);
 }
 
 impl IsByteStream for ByteStream {
-    fn from_parts(chunks: Items<Vec<u8>>, content_type: Cow<'static, str>) -> Self {
+    fn from_parts(
+        chunks: Items<Vec<u8>>,
+        content_type: Cow<'static, str>,
+        length: Option<u64>,
+    ) -> Self {
         Self {
             chunks,
             content_type,
+            length,
         }
     }
 
-    fn into_parts(self) -> (Items<Vec<u8>>, Cow<'static, str>) {
-        (self.chunks, self.content_type)
+    fn into_parts(self) -> (Items<Vec<u8>>, Cow<'static, str>, Option<u64>) {
+        (self.chunks, self.content_type, self.length)
     }
 }
 

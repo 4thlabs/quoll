@@ -850,8 +850,8 @@ impl Answer {
     }
 
     /// The body, read as its chunks as they come, of any content type: what a route returning `ByteStream` gives. It
-    /// keeps the answer's content type, or `application/octet-stream`, as [`Answer::bytes`] does, and ends at once on a
-    /// 204 or a 205.
+    /// keeps the answer's content type, or `application/octet-stream`, as [`Answer::bytes`] does, and its
+    /// `Content-Length`, and ends at once on a 204 or a 205.
     ///
     /// # Errors
     ///
@@ -864,11 +864,31 @@ impl Answer {
     /// The body, read as its chunks, as [`Answer::byte_stream`] reads it.
     async fn read_byte_stream<B: IsByteStream>(self) -> Result<B> {
         let content_type = self.content_type();
+        let length = self.content_length();
 
         Ok(B::from_parts(
             stream::chunks(self.response, self.route),
             content_type,
+            length,
         ))
+    }
+
+    /// The answer's `Content-Length`, or `None` when it has none, or when it is a 204 or a 205, whose body is dropped.
+    /// reqwest takes it away from an answer it decodes, whose length is not that of the bytes it gives.
+    fn content_length(&self) -> Option<u64> {
+        if crate::no_content(self.response.status()) {
+            return None;
+        }
+
+        // hyper has refused an answer whose `Content-Length` does not read, or whose values differ.
+        self.response
+            .headers()
+            .get(header::CONTENT_LENGTH)?
+            .to_str()
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
     }
 
     /// The answer's content type, or `application/octet-stream` when it has none, or one that is not a media type, or

@@ -470,11 +470,38 @@ How a stream behaves:
   the answer short, and the client reads an error.
 - A server told to stop ends its `Events` streams cleanly: [Shutdown](server.md#shutdown) says what becomes of each
   stream.
+- A `ByteStream` goes out in chunked encoding, with no length. See [A length](#a-length) for one that has a length.
 - `client::timeout` and `client::retry` treat a stream's answer differently:
   [Retries, deadlines and redirects](client.md#retries-deadlines-and-redirects) says how. `server::compression` leaves
   streams out.
 
 The docs of `quoll::Events`, `JsonLines` and `ByteStream` say what each sends and reads on the wire.
+
+### A length
+
+A `ByteStream` whose size is known, such as a file, says it with `with_length`. The server sends it as
+`Content-Length` rather than in chunked encoding. A browser then shows the size of the download and its progress, and
+a client can tell a cut answer from a whole one.
+
+```rust
+use futures::stream;
+use quoll::ByteStream;
+
+let archive = vec![b"PK\x03\x04".to_vec()];
+let download = ByteStream::new(stream::iter(archive))
+    .with_content_type("application/zip")
+    .with_length(4);
+
+assert_eq!(download.length(), Some(4));
+```
+
+- A stream that gives another number of bytes is never answered as if it were whole. The server holds the chunk that
+  brings the bytes to the length until the stream ends. A stream that gives more bytes, ends too early or fails is
+  logged and cut before its last bytes, and the client reads an error.
+- A length of 0 sends the head alone, and the stream is dropped unread.
+- On the client, `length()` is the `Content-Length` of the answer. It is `None` for an answer in chunked encoding, or
+  a compressed one that the client decodes.
+- A `HEAD` of the route answers its `Content-Length`, with no body.
 
 ## Groups across modules
 
