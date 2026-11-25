@@ -1,6 +1,10 @@
-//! A bound on how long a write of the server waits for its client to take bytes, on the io of each connection, as
+//! A bound on how long a write of the server waits for its connection to take bytes, on the io of each connection, as
 //! nginx's `send_timeout`: past it, the write fails, hyper closes the connection and drops the answer's body, and so
 //! the handler's stream, as when the client disconnects.
+//!
+//! It sees the writes of the io, which is what HTTP/1 and an upgraded connection wait on, and all quoll serves. A
+//! stream of HTTP/2, which an application gets by turning on axum's `http2`, waits on its window of flow control,
+//! not on the socket, while the connection goes on: it is not bounded.
 
 use std::any::Any;
 use std::fmt;
@@ -18,7 +22,8 @@ use tokio::time::{Instant, Sleep};
 /// The bound unless it is set: nginx's `send_timeout`.
 pub(crate) const SEND_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// A listener whose connections are [`SendTimeout`]s, bounded by `bound`, or left as they are with none.
+/// A listener whose connections are [`SendTimeout`]s, bounded by `bound`. With none, each is still wrapped, its
+/// writes passed through after one test of the bound, and its address not formatted.
 pub(crate) struct SendTimeouts<L> {
     listener: L,
     bound: Option<Duration>,
@@ -39,7 +44,12 @@ where
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
         let (io, address) = self.listener.accept().await;
-        let peer = format!("{address:?}");
+
+        // `String::new()` allocates nothing: with no bound there is no cut to log.
+        let peer = match self.bound {
+            Some(_) => format!("{address:?}"),
+            None => String::new(),
+        };
 
         (SendTimeout::new(io, self.bound, peer), address)
     }
@@ -49,12 +59,15 @@ where
     }
 }
 
-/// The io of a connection, whose writes wait at most `bound` for the client to take bytes.
+/// The io of a connection, cut once `bound` has passed with no write the io takes.
 ///
-/// The clock runs only while a write waits: it starts when the io refuses bytes, and stops when it takes any. A reader
-/// that takes some bytes within each `bound`, however few, is never cut. A connection with nothing to send, a quiet
-/// stream between two events, runs no clock. A write takes no allocation and no timer: the first refusal allocates
-/// the deadline, which later ones reset.
+/// The clock counts from the first refusal since the io last took bytes, and stops when it takes any: a write that
+/// waits and is then dropped, as an upgraded io in a `select!`, leaves it running, and the next refused write goes on
+/// from it. The io is the kernel's socket, which tells a refused writer there is room only once a good part of its
+/// send queue has drained, not at each byte its client reads: a reader is kept when it frees a good part of the queue
+/// within each `bound`. A connection with nothing to send, a quiet stream between two events, runs no clock.
+///
+/// A write takes no allocation and no timer: the first refusal allocates the deadline, which later ones reset.
 pub(crate) struct SendTimeout<Io> {
     io: Io,
     bound: Option<Duration>,
@@ -126,12 +139,14 @@ impl<Io: Any> SendTimeout<Io> {
         tracing::info!(
             peer = %self.peer,
             ?bound,
-            "a connection was closed: its client took no bytes of the answer for {bound:?}"
+            "a connection was closed: it took no bytes of the answer for {bound:?}"
         );
     }
 
     /// What a write the io answered does: it stops the clock.
     fn answered<T>(&mut self, answer: io::Result<T>) -> Poll<io::Result<T>> {
+        // The deadline stays registered with the timer, and wakes the connection's task once at its old time, for a
+        // poll that finds nothing to do: once per wait, which costs less than clearing it on every write taken.
         self.is_waiting = false;
 
         Poll::Ready(answer)
@@ -161,7 +176,7 @@ impl<Io: Any> SendTimeout<Io> {
 fn timed_out(bound: Duration) -> io::Error {
     io::Error::new(
         io::ErrorKind::TimedOut,
-        format!("the client took no bytes for {bound:?}"),
+        format!("the connection took no bytes for {bound:?}"),
     )
 }
 
@@ -251,7 +266,7 @@ mod tests {
         let error = ours.write_all(&[0; 128]).await.expect_err("nobody reads");
 
         assert_eq!(error.kind(), ErrorKind::TimedOut);
-        assert_eq!(error.to_string(), "the client took no bytes for 60s");
+        assert_eq!(error.to_string(), "the connection took no bytes for 60s");
         assert_eq!(started.elapsed(), SEND_TIMEOUT);
     }
 
@@ -349,5 +364,58 @@ mod tests {
         assert_eq!(write.kind(), ErrorKind::TimedOut);
         assert_eq!(shutdown.kind(), ErrorKind::TimedOut);
         assert_eq!(cut_at.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_dropped_write_leaves_the_clock_running_for_the_next() {
+        let (mut ours, _theirs) = pipe(Some(SEND_TIMEOUT));
+        let dropped =
+            tokio::time::timeout(Duration::from_secs(10), ours.write_all(&[0; 128])).await;
+
+        assert!(
+            dropped.is_err(),
+            "the pipe takes 64 bytes, then the write waits"
+        );
+
+        // Past the deadline of the first refusal: the next refused write is cut at once.
+        tokio::time::sleep(SEND_TIMEOUT).await;
+
+        let refused_at = Instant::now();
+        let error = tokio::time::timeout(SEND_TIMEOUT, ours.write_all(&[0; 1]))
+            .await
+            .expect("the write is cut before a new bound")
+            .expect_err("nobody reads");
+
+        assert_eq!(error.kind(), ErrorKind::TimedOut);
+        assert_eq!(refused_at.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_write_taken_after_a_dropped_one_gives_the_next_a_fresh_bound() {
+        let (mut ours, mut theirs) = pipe(Some(SEND_TIMEOUT));
+        let dropped =
+            tokio::time::timeout(Duration::from_secs(10), ours.write_all(&[0; 128])).await;
+
+        assert!(
+            dropped.is_err(),
+            "the pipe takes 64 bytes, then the write waits"
+        );
+
+        let mut buffer = [0; 64];
+
+        theirs.read_exact(&mut buffer).await.expect("a read");
+        tokio::time::sleep(2 * SEND_TIMEOUT).await;
+        ours.write_all(&[0; 64])
+            .await
+            .expect("the pipe takes 64 bytes again");
+
+        let refused_at = Instant::now();
+        let error = tokio::time::timeout(2 * SEND_TIMEOUT, ours.write_all(&[0; 1]))
+            .await
+            .expect("the write is cut after one bound")
+            .expect_err("nobody reads");
+
+        assert_eq!(error.kind(), ErrorKind::TimedOut);
+        assert_eq!(refused_at.elapsed(), SEND_TIMEOUT);
     }
 }
