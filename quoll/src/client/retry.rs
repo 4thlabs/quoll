@@ -293,10 +293,10 @@ impl Attempt<'_> {
     }
 
     /// The kind of the attempt, as the call's [`quoll::Error`](crate::Error) would say it: `None` for an answer of a
-    /// success status, and for the `101 Switching Protocols` of a request that asked for an upgrade, the tunnel of a
-    /// route `-> TcpTunnel`, which is its success, [`ErrorKind::Status`] for an answer of any other, and the kind of its [error](Attempt::error)
-    /// for an attempt that got no answer, [`ErrorKind::Middleware`] for a middleware's error, one of a status
-    /// included.
+    /// success status. A `101 Switching Protocols` to a request that asked for an upgrade, a route's `-> TcpTunnel`,
+    /// is its success too: `None`. [`ErrorKind::Status`] for an answer of any other status, and the kind of its
+    /// [error](Attempt::error) for an attempt that got no answer, [`ErrorKind::Middleware`] for a middleware's error,
+    /// one of a status included.
     ///
     /// ```no_run
     /// use http::StatusCode;
