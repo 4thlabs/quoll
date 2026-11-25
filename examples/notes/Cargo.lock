@@ -1474,6 +1474,7 @@ dependencies = [
  "backon",
  "base64",
  "bytes",
+ "fastrand",
  "futures-core",
  "futures-util",
  "http",

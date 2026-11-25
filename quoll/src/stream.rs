@@ -126,8 +126,11 @@ impl<S: Stream> Stream for Oks<S> {
 /// A stream that has ended gives `None`, at once.
 ///
 /// Dropping the stream closes its connection. The client does not reconnect when the stream ends, as an
-/// `EventSource` does: the caller calls the route again. Events carry no `id` and the client keeps none, so a stream
-/// does not resume where the last one ended: that is not supported yet.
+/// `EventSource` does: [`client::follow`] calls the route again. Events carry no `id` and the client keeps none, so a
+/// stream does not resume where the last one ended: that is not supported yet.
+///
+#[cfg_attr(feature = "client", doc = "[`client::follow`]: crate::client::follow")]
+#[cfg_attr(not(feature = "client"), doc = "[`client::follow`]: crate#features")]
 pub struct Events<T> {
     pub(crate) items: Items<T>,
 }
@@ -230,7 +233,11 @@ impl<T> fmt::Debug for Events<T> {
 /// An answer of `application/json` is read so too, line by line: a document written over several lines, as a
 /// pretty-printed array, is read as broken lines, each an item that does not read as a `T`.
 ///
-/// Dropping the stream closes its connection. The client does not call the route again when the stream ends.
+/// Dropping the stream closes its connection. The client does not call the route again when the stream ends:
+/// [`client::follow`] does.
+///
+#[cfg_attr(feature = "client", doc = "[`client::follow`]: crate::client::follow")]
+#[cfg_attr(not(feature = "client"), doc = "[`client::follow`]: crate#features")]
 pub struct JsonLines<T> {
     pub(crate) items: Items<T>,
 }
@@ -337,7 +344,11 @@ impl<T> fmt::Debug for JsonLines<T> {
 /// [`ErrorKind::Timeout`](crate::ErrorKind::Timeout) for a deadline of reqwest's, and the stream ends after it, then
 /// gives `None` at once. No error of a `ByteStream` lets it go on.
 ///
-/// Dropping the stream closes its connection. The client does not call the route again when the stream ends.
+/// Dropping the stream closes its connection. The client does not call the route again when the stream ends:
+/// [`client::follow`] does.
+///
+#[cfg_attr(feature = "client", doc = "[`client::follow`]: crate::client::follow")]
+#[cfg_attr(not(feature = "client"), doc = "[`client::follow`]: crate#features")]
 pub struct ByteStream {
     pub(crate) chunks: Items<Vec<u8>>,
     pub(crate) content_type: Cow<'static, str>,

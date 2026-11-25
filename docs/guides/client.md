@@ -429,6 +429,132 @@ the route takes as an argument. The headers added after `retry` are not: the cre
 in. Whatever the closure decides, a call is tried `times` more at most. A request whose body is a stream that the
 application gives is sent once, without calling the closure.
 
+## Following a stream
+
+A stream route ends when its connection does: the server restarts, a proxy closes an idle connection, the network
+goes down. `client::follow` calls the route again each time its stream ends or fails, after a wait. It takes an async
+closure that makes the call and awaits it:
+
+```rust,no_run
+use futures::StreamExt;
+use quoll::JsonLines;
+use quoll::client::{self, Followed};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Event {
+    #[serde(rename = "Type")]
+    pub kind: String,
+}
+
+quoll::api! {
+    #[server(none)]
+    pub api Docker = "/v1.47";
+
+    pub group System {
+        GET "/events?filters={filters}" => events(filters: &str) -> JsonLines<Event>;
+    }
+}
+
+async fn watch(docker: &DockerClient) -> quoll::Result<()> {
+    let system = docker.system();
+    let filters = r#"{"type":["container"]}"#.to_owned();
+
+    let mut events = client::follow(async move || system.events(&filters).await);
+
+    while let Some(followed) = events.next().await {
+        match followed {
+            Followed::Connected => println!("following: anything may have changed"),
+            Followed::Item(event) => println!("a {} changed", event.kind),
+            Followed::Skipped(error) => eprintln!("an event that does not read: {error}"),
+            Followed::Reconnecting { error, wait } => {
+                eprintln!("following again in {wait:?}: {error:?}");
+            }
+            Followed::Stopped(error) => return Err(error),
+        }
+    }
+
+    Ok(())
+}
+```
+
+The closure is `async move ||`. It owns the group's client and the arguments, and lends them to each call. The stream
+that `follow` gives is then `'static`, and `Send`, so that a task can take it with `tokio::spawn`.
+
+The stream gives a `Followed` for each thing that happens:
+
+- `Connected` when the route answers with its stream. It comes first, and after each reconnection. Items may have
+  been missed in between, so a consumer that keeps a state reloads it there.
+- `Item(T)` for each item.
+- `Skipped(error)` for an item that does not read. The connection goes on.
+- `Reconnecting { error, wait }` when the stream ended, `error` being `None`, or failed. The route is called again
+  after `wait`.
+- `Stopped(error)` when calling again would fail the same way. It is the last one, and the stream ends after it.
+
+There is no `Result` around them, so a `?` on each item does not stop the consumer on an item that does not read.
+
+### What reconnects and what stops
+
+`follow` sorts each error by its [kind](errors.md#the-kind-of-an-error):
+
+- the call answered with a 4xx other than 408 and 429, or with a 3xx, stops: a 404 or a 401 would come back again;
+- the call that the client cannot send, of the kind `Invalid`, stops;
+- any other failure of the call reconnects: no connection, a deadline, a connection closed, a 5xx, a 408, a 429, an
+  answer that is not the route's, such as a proxy's page of HTML;
+- in the stream, an item that does not read, of the kind `Decode`, is skipped;
+- any other error of the stream drops the connection and reconnects, an `event: problem` too, whatever its status.
+
+A 401 that reaches `follow` stops it, as `bearer_from` has already sent the call once more with a new token. A
+`retry` of the client still runs inside each call.
+
+### The waits
+
+The first call is made at once. After it, each wait is drawn at random between half a bound and the bound. The bound
+starts at 1 s and doubles after each wait, up to 30 s. A connection that stays open 10 s has held: the bound after it
+starts again from 1 s. Items do not count, only the time: a server that sends an item and then closes each connection
+is called less and less often.
+
+`client::Reconnect` sets them:
+
+```rust,no_run
+use std::time::Duration;
+
+use quoll::ByteStream;
+use quoll::client::{Followed, Reconnect};
+
+quoll::api! {
+    #[server(none)]
+    pub api Docker = "/v1.47";
+
+    pub group Containers {
+        GET "/containers/{id}/logs?follow={follow}" => logs(id: &str, follow: bool) -> ByteStream;
+    }
+}
+
+fn logs(docker: &DockerClient, id: String) -> impl futures::Stream<Item = Followed<Vec<u8>>> {
+    let containers = docker.containers();
+
+    Reconnect::new()
+        .first(Duration::from_millis(500))
+        .longest(Duration::from_secs(10))
+        .steady(Duration::from_secs(30))
+        .follow(async move || containers.logs(&id, true).await)
+}
+```
+
+`without_jitter()` makes each wait its bound, for a test that checks the times.
+
+### Per call, and in tests
+
+What is set per call goes in the closure: `.timeout(..)` for the head of each call, or `.response()` to read the
+headers of each answer before its stream. The closure may also compute an argument at each call, such as where to
+start from.
+
+`follow` calls the method of the group's trait, so it follows a fake as it follows the client. A fake that answers
+each call in its own way scripts the connections of a test. Under `#[tokio::test(start_paused = true)]`, the waits
+take no time.
+
 ## reqwest's client
 
 `.http(|http| ...)` configures reqwest's own `ClientBuilder`, under the middleware: for example a proxy, TLS or a

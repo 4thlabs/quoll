@@ -1,0 +1,17 @@
+error[E0515]: cannot return value referencing local variable `topic`
+  --> tests/compile_fail_client/follow_async_closure_without_move.rs:18:5
+   |
+18 |     client::follow(async || feed.changes(&topic).await)
+   |     ^^^^^^^^^^^^^^^-----------------------------------^
+   |     |              |
+   |     |              `topic` is borrowed here
+   |     returns a value referencing data owned by the current function
+
+error[E0515]: cannot return value referencing local variable `feed`
+  --> tests/compile_fail_client/follow_async_closure_without_move.rs:18:5
+   |
+18 |     client::follow(async || feed.changes(&topic).await)
+   |     ^^^^^^^^^^^^^^^-----------------------------------^
+   |     |              |
+   |     |              `feed` is borrowed here
+   |     returns a value referencing data owned by the current function

@@ -1,0 +1,16 @@
+error[E0277]: `impl Call<JsonLines<String>>` is not a future
+  --> tests/compile_fail_client/follow_closure_returns_the_call.rs:17:28
+   |
+17 |     let _ = client::follow(move || feed.changes(&topic));
+   |             -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `impl Call<JsonLines<String>>` is not a future
+   |             |
+   |             required by a bound introduced by this call
+   |
+   = help: the trait `Future` is not implemented for `impl Call<JsonLines<String>>`
+note: required by a bound in `follow`
+  --> src/client/follow.rs
+   |
+   | pub fn follow<F, S, T, E>(open: F) -> Following<impl Stream<Item = Followed<T, E>>>
+   | where
+   |     F: AsyncFnMut() -> Result<S, Error<E>>,
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `follow`
