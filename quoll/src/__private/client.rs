@@ -1051,10 +1051,23 @@ impl Answer {
             )));
         }
 
-        let Some(protocol) = response.headers().get(header::UPGRADE) else {
-            return Err(refused(
-                "was answered 101 with no `Upgrade` header".to_owned(),
-            ));
+        // Every value, as two `Upgrade` fields name two protocols as a list in one does.
+        let protocols: Vec<&HeaderValue> =
+            response.headers().get_all(header::UPGRADE).iter().collect();
+
+        let [protocol] = protocols.as_slice() else {
+            if protocols.is_empty() {
+                return Err(refused(
+                    "was answered 101 with no `Upgrade` header".to_owned(),
+                ));
+            }
+
+            let named: Vec<_> = protocols
+                .iter()
+                .map(|protocol| String::from_utf8_lossy(protocol.as_bytes()))
+                .collect();
+
+            return Err(refused(format!("was switched to `{}`", named.join(", "))));
         };
 
         let named = protocol
