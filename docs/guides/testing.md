@@ -7,8 +7,8 @@ takes a fake as well. A snapshot of the OpenAPI document catches a change to the
 
 `quoll::test::spawn(router)` serves a router on a free port of 127.0.0.1, and gives its URL. The server runs on the
 test's tokio runtime. `#[tokio::test]` gives each test its own runtime, which stops the server when the test returns.
-It cuts a client that takes no bytes of an answer for 60 s, as [`serve`](server.md#a-client-that-stops-reading)
-does. A test of that runs under tokio's paused clock, `#[tokio::test(start_paused = true)]`, where the clock jumps to
+It cuts a connection whose socket takes no write of an answer for 60 s, as
+[`serve`](server.md#a-client-that-stops-reading) does. A test of that runs under tokio's paused clock, `#[tokio::test(start_paused = true)]`, where the clock jumps to
 the cut.
 
 ```rust,test_harness

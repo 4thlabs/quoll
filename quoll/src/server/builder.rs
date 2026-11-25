@@ -176,14 +176,16 @@ impl Builder {
         self
     }
 
-    /// Cuts a connection whose client takes no bytes of an answer for `bound`, 60 s unless it is set, as nginx's
-    /// `send_timeout`.
+    /// Cuts a connection once `bound` has passed with no write of an answer that its socket takes, 60 s unless it is
+    /// set, as nginx's `send_timeout`.
     ///
-    /// The clock runs only while a write waits: it starts when the connection refuses bytes, its client's buffers
-    /// full, and stops as soon as the client takes any. A slow client that takes some bytes within each `bound` is
-    /// kept; one that stops reading is cut, after its buffers and the kernel's have filled, then `bound`. A quiet
-    /// stream, with nothing to send, runs no clock: neither do the keep-alive comments of an `Events`, too small to
-    /// fill the buffers.
+    /// The clock runs only while a write waits: it starts when the socket refuses bytes, the kernel's buffers full,
+    /// and stops when the socket takes some again. The kernel says there is room in large steps, once a good part of
+    /// its send queue has drained, not at each byte the client reads: a reader is kept when it frees a good part of
+    /// the queue within each `bound`. On a real link the queue follows the link's rate and stays small; on loopback it
+    /// may grow to several MiB. A client that stops reading is cut once the buffers have filled and `bound` has
+    /// passed. A quiet stream, with nothing to send, runs no clock: neither do the keep-alive comments of an `Events`,
+    /// too small to fill the buffers.
     ///
     /// The cut is the end of the connection, as when the client disconnects: the handler's stream is dropped, at its
     /// next `.await`, and the client reads an error, never a clean end. A connection whose stream is tokio's
@@ -191,9 +193,11 @@ impl Builder {
     /// other, as TLS over TCP, is closed. Each cut is logged once at `INFO`, with the client's address, out of the
     /// request's span.
     ///
-    /// It bounds every write of the connection, the head of an answer, a large body and a stream alike, and what an
-    /// upgrade gives a handler. [`test::spawn`](crate::test::spawn) has the same bound; a router served otherwise,
-    /// from [`into_router`](Self::into_router) by `axum::serve`, has none.
+    /// It bounds every write of an HTTP/1 connection, which is what quoll serves, the head of an answer, a large body
+    /// and a stream alike, and what an upgrade gives a handler. A stream of HTTP/2, which an application gets by
+    /// turning on axum's `http2`, waits on its window of flow control rather than on the socket, and is not bounded.
+    /// [`test::spawn`](crate::test::spawn) has the same bound; a router served otherwise, from
+    /// [`into_router`](Self::into_router) by `axum::serve`, has none.
     ///
     /// ```no_run
     /// use std::time::Duration;
@@ -214,8 +218,8 @@ impl Builder {
         self
     }
 
-    /// Leaves a connection whose client takes no bytes open, in the place of [`send_timeout`](Self::send_timeout):
-    /// a client that stops reading holds its answer, and the handler's stream, until it reads again or disconnects.
+    /// Leaves open a connection whose socket takes no write, in the place of [`send_timeout`](Self::send_timeout): a
+    /// client that stops reading holds its answer, and the handler's stream, until it reads again or disconnects.
     pub fn without_send_timeout(mut self) -> Self {
         self.send_timeout = None;
         self
@@ -299,7 +303,7 @@ impl Builder {
     /// stream wraps a TCP stream, TLS or another wrapper, sets the option itself, as on the accepted `TcpStream`
     /// before it wraps it.
     ///
-    /// A connection whose client takes no bytes of an answer for 60 s is cut, as
+    /// A connection whose socket takes no write of an answer for 60 s is cut, as
     /// [`send_timeout`](Self::send_timeout) says.
     ///
     /// Once told, it accepts no more connections, closes those that wait for a request, and returns `Ok` when the

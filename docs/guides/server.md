@@ -366,15 +366,20 @@ async fn main() -> std::io::Result<()> {
 
 ### A client that stops reading
 
-`serve`, `serve_on` and `test::spawn` cut a connection whose client takes no bytes of an answer for 60 s, as nginx's
-`send_timeout` does. Without it, a client that stops reading, such as a stalled tab or proxy, would hold its
-connection and the handler's stream for ever.
+`serve`, `serve_on` and `test::spawn` cut a connection once 60 s have passed with no write of an answer that its
+socket takes, as nginx's `send_timeout` does. Without it, a client that stops reading, such as a stalled tab or
+proxy, would hold its connection and the handler's stream for ever.
 
-- The clock runs only while a write waits. It starts once the client's buffers and the kernel's are full, a few MiB,
-  and stops as soon as the client takes any bytes. A slow reader is kept.
+- The clock runs only while a write waits. It starts once the kernel's buffers are full, and stops when the socket
+  takes bytes again.
+- The kernel says there is room in large steps, once a good part of its send queue has drained, not at each byte the
+  client reads. A reader is kept when it frees a good part of the queue within the bound. On a real link the queue
+  follows the link's rate and stays small. On loopback it can grow to several MiB.
 - A stream with nothing to send runs no clock. The keep-alive comments of an `Events` are too small to fill the
   buffers.
-- Every answer is bounded: its head, a large body and a stream alike.
+- Every answer of an HTTP/1 connection is bounded, which is what quoll serves: its head, a large body and a stream
+  alike, and an upgraded connection. A stream of HTTP/2, which an application gets by turning on axum's `http2`, is
+  not bounded: it waits on its flow-control window, not on the socket.
 - The cut ends the connection, as a disconnection does. The handler's stream is dropped at its next `.await`, and the
   client reads an error. A tokio `TcpStream` is reset, so that the kernel frees what it holds for the client at once.
 - Each cut is logged once at `INFO`, with the client's address.

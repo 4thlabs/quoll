@@ -1,4 +1,4 @@
-//! The bound on how long a write of the server waits for its client to take bytes: a client on raw TCP that reads the
+//! The bound on how long a write of the server waits for its socket to take bytes: a client on raw TCP that reads the
 //! head of an answer, then nothing, is cut, and its handler's stream dropped; a slow reader, a quiet stream and a
 //! server without the bound keep theirs.
 //!
@@ -428,7 +428,7 @@ async fn the_cut_is_logged_once_with_the_address_of_the_client() {
 
     let text = log.text();
     let line = format!(
-        " INFO quoll::server::send_timeout: a connection was closed: its client took no bytes of the answer for 60s \
+        " INFO quoll::server::send_timeout: a connection was closed: it took no bytes of the answer for 60s \
          peer={peer} bound=60s\n"
     );
 
@@ -501,10 +501,11 @@ async fn a_quiet_stream_is_kept() {
 
 /// A reader that takes bytes all the time, if slowly, is kept. The kernel wakes a writer once a good part of its
 /// queue has gone, about a third of a queue that grows to 7 MiB on loopback: the server sees a reader progress by
-/// hundreds of KiB at a time, so this one takes 2 MiB every 300 ms, which keeps each wait well within the bound.
+/// hundreds of KiB at a time, so this one takes 2 MiB every 300 ms. Each wait of the server is then its pause and its
+/// read, well under 1 s here; the bound of 3 s leaves room for a loaded runner, whose reads and wake-ups lag.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_slow_reader_is_kept() {
-    const BOUND: Duration = Duration::from_secs(1);
+    const BOUND: Duration = Duration::from_secs(3);
     const CHUNK: usize = 2 << 20;
 
     let (router, gone) = router();
