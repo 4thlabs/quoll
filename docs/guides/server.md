@@ -364,6 +364,40 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
+### A client that stops reading
+
+`serve`, `serve_on` and `test::spawn` cut a connection whose client takes no bytes of an answer for 60 s, as nginx's
+`send_timeout` does. Without it, a client that stops reading, such as a stalled tab or proxy, would hold its
+connection and the handler's stream for ever.
+
+- The clock runs only while a write waits. It starts once the client's buffers and the kernel's are full, a few MiB,
+  and stops as soon as the client takes any bytes. A slow reader is kept.
+- A stream with nothing to send runs no clock. The keep-alive comments of an `Events` are too small to fill the
+  buffers.
+- Every answer is bounded: its head, a large body and a stream alike.
+- The cut ends the connection, as a disconnection does. The handler's stream is dropped at its next `.await`, and the
+  client reads an error. A tokio `TcpStream` is reset, so that the kernel frees what it holds for the client at once.
+- Each cut is logged once at `INFO`, with the client's address.
+
+`.send_timeout(duration)` sets the bound, and `.without_send_timeout()` leaves such a connection open. A router served
+with `axum::serve` has no bound.
+
+```rust,no_run
+use std::time::Duration;
+
+use quoll::server;
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let router = axum::Router::new();
+
+    server::builder()
+        .send_timeout(Duration::from_secs(30))
+        .serve("0.0.0.0:8080", router)
+        .await
+}
+```
+
 ## The page
 
 `.page(dir)` serves the page that `cargo quoll build` bundles, from its directory. The page and the api then share

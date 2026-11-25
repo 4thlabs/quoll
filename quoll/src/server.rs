@@ -60,6 +60,7 @@ mod cors;
 pub(crate) mod no_delay;
 mod page;
 mod request_id;
+pub(crate) mod send_timeout;
 mod timeout;
 pub(crate) mod trace;
 
