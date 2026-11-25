@@ -107,6 +107,16 @@ async fn start(seen: Seen, id: String, request: Request) -> Response {
         }
         "empty" => return StatusCode::NO_CONTENT.into_response(),
         "h2c" => Some("h2c"),
+        // Two fields, which name two protocols as `tcp, h2c` does.
+        "fields" => {
+            return Response::builder()
+                .status(StatusCode::SWITCHING_PROTOCOLS)
+                .header(header::CONNECTION, "Upgrade")
+                .header(header::UPGRADE, "tcp")
+                .header(header::UPGRADE, "h2c")
+                .body(Body::empty())
+                .expect("a response");
+        }
         "list" => Some("tcp, h2c"),
         "none" => None,
         "capitals" => Some(" TCP "),
@@ -330,6 +340,10 @@ async fn only_a_101_to_tcp_alone_gives_a_tunnel() {
         ),
         (
             "list",
+            "the call `exec_start` asked for a TCP tunnel and was switched to `tcp, h2c`",
+        ),
+        (
+            "fields",
             "the call `exec_start` asked for a TCP tunnel and was switched to `tcp, h2c`",
         ),
         (
