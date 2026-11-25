@@ -24,6 +24,10 @@ const BOUND: Duration = Duration::from_secs(60);
 const WEB: &str = "c0ffee000000000000000000000000000000000000000000000000000000c0de";
 const JOB: &str = "deadbeef0000000000000000000000000000000000000000000000000000beef";
 const SHELL: &str = "7777777700000000000000000000000000000000000000000000000000007777";
+/// A container whose logs end with an error of the daemon, in a frame of stream 3.
+const FAILING: &str = "fa11fa1100000000000000000000000000000000000000000000000000000fa1";
+/// A container whose logs end with an error the daemon writes as text, where a header should be.
+const UNREAD: &str = "0dd0dd0000000000000000000000000000000000000000000000000000000dd0";
 
 /// What the fake daemon holds, and what it was asked.
 #[derive(Debug)]
@@ -44,6 +48,8 @@ fn daemon() -> Shared {
             (WEB, "web", true, false),
             (JOB, "job", false, false),
             (SHELL, "shell", true, true),
+            (FAILING, "failing", false, false),
+            (UNREAD, "unread", false, false),
         ],
         queries: Vec::new(),
         execs: Vec::new(),
@@ -206,13 +212,13 @@ async fn logs(
 ) -> Response {
     recorded(&daemon, "logs".into(), query);
 
-    let tty = {
+    let (name, tty) = {
         let daemon = daemon.lock().expect("no test panics holding the lock");
         let Some(index) = find(&daemon, &id) else {
             return no_such(&id);
         };
 
-        daemon.containers[index].3
+        (daemon.containers[index].1, daemon.containers[index].3)
     };
 
     if tty {
@@ -223,12 +229,13 @@ async fn logs(
             .into_response();
     }
 
-    let frames = [
-        frame(1, b"hello\n"),
-        frame(2, b"oops\n"),
-        frame(1, b"bye\n"),
-    ]
-    .concat();
+    // Docker ends the logs with its error, after the output before it.
+    let end = match name {
+        "failing" => frame(3, b"the log driver failed\n"),
+        "unread" => b"Error grabbing logs: unexpected EOF\n".to_vec(),
+        _ => frame(1, b"bye\n"),
+    };
+    let frames = [frame(1, b"hello\n"), frame(2, b"oops\n"), end].concat();
 
     (
         [(
@@ -563,6 +570,32 @@ async fn logs_write_each_stream_to_its_own() {
             ("true".to_owned(), "true".to_owned(), "true".to_owned()),
         ]
     );
+}
+
+#[tokio::test]
+async fn logs_that_end_with_an_error_of_the_daemon_say_its_message() {
+    let (host, _) = on_tcp().await;
+
+    for (container, error) in [
+        (
+            "failing",
+            "Error: error from daemon in stream: the log driver failed\n",
+        ),
+        (
+            "unread",
+            "Error: the daemon wrote bytes that are not frames: Error grabbing logs: unexpected EOF\n",
+        ),
+    ] {
+        let output = docker_cli(&host, &["logs", container]).await;
+
+        assert!(!output.status.success(), "{container}");
+        assert_eq!(output.stdout, b"hello\n", "{container}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("oops\n{error}"),
+            "{container}"
+        );
+    }
 }
 
 #[tokio::test]

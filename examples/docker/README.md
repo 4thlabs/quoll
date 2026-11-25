@@ -47,6 +47,9 @@ TLS, `DOCKER_TLS_VERIFY` and `ssh://` are not supported.
   (`application/vnd.docker.multiplexed-stream`). Each frame is a header of 8 bytes, then its bytes. The header holds
   the stream, three zeros and the size. The command line splits the frames, across chunks, and writes stdout and
   stderr each to its own stream. With a TTY (`application/vnd.docker.raw-stream`), it writes the bytes as they come.
+  Docker reports an error inside the logs in two ways, and the command line shows its message after the output
+  before it. One is a frame of stream 3, whose bytes are the message. The other is text where a header should be,
+  such as `Error grabbing logs: ...`, whose first line is the message.
 - **exec.** `docker-cli exec <container> <command>...` makes the command with `POST /containers/{id}/exec`, then
   starts it with `POST /exec/{id}/start`, a route `-> TcpTunnel`. Docker answers `101 Switching Protocols`, and the
   connection carries the command's input and output. The command line copies its own input into the tunnel, and

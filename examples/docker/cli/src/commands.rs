@@ -8,7 +8,7 @@ use reqwest::StatusCode;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::args::Command;
-use crate::frames::{Demux, Output};
+use crate::frames::{Demux, Output, Piece};
 use crate::utils::{error_chain, short_id};
 
 /// The content type of the output of a TTY, the logs of a container or a command run in it: its bytes as they are, in
@@ -116,19 +116,36 @@ async fn logs(docker: &DockerClient, container: String, follow: bool) -> anyhow:
             continue;
         }
 
-        for (output, bytes) in demux.push(&chunk)? {
-            match output {
-                Output::Stdout => stdout.write_all(bytes).await?,
-                Output::Stderr => stderr.write_all(bytes).await?,
-            }
-        }
-
-        // A followed container writes for long: what came is shown at once.
-        stdout.flush().await?;
-        stderr.flush().await?;
+        write(demux.push(&chunk), &mut stdout, &mut stderr).await?;
     }
 
     Ok(demux.finish()?)
+}
+
+/// Writes the output of `pieces` each to its own stream, and shows it at once, as a followed container writes for
+/// long: an error of the daemon comes after the output before it.
+async fn write(
+    pieces: Vec<Piece<'_>>,
+    stdout: &mut tokio::io::Stdout,
+    stderr: &mut tokio::io::Stderr,
+) -> anyhow::Result<()> {
+    let mut failure = None;
+
+    for piece in pieces {
+        match piece {
+            Piece::Output(Output::Stdout, bytes) => stdout.write_all(bytes).await?,
+            Piece::Output(Output::Stderr, bytes) => stderr.write_all(bytes).await?,
+            Piece::Failed(error) => failure = Some(error),
+        }
+    }
+
+    stdout.flush().await?;
+    stderr.flush().await?;
+
+    match failure {
+        Some(error) => Err(error.into()),
+        None => Ok(()),
+    }
 }
 
 async fn exec(
@@ -184,15 +201,7 @@ async fn exec(
             continue;
         }
 
-        for (output, bytes) in demux.push(&chunk[..read])? {
-            match output {
-                Output::Stdout => stdout.write_all(bytes).await?,
-                Output::Stderr => stderr.write_all(bytes).await?,
-            }
-        }
-
-        stdout.flush().await?;
-        stderr.flush().await?;
+        write(demux.push(&chunk[..read]), &mut stdout, &mut stderr).await?;
     }
 
     demux.finish()?;
