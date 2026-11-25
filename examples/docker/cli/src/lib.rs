@@ -8,5 +8,5 @@ mod utils;
 
 pub use args::{Cli, Command};
 pub use commands::run;
-pub use frames::{Demux, FrameError, Output};
+pub use frames::{Demux, FrameError, Output, Piece};
 pub use host::Host;
