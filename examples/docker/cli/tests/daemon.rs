@@ -98,8 +98,8 @@ async fn docker_cli(args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("UTF-8")
 }
 
-/// The command line run with `args`, `input` its standard input, to its end: its standard output.
-async fn docker_cli_with_input(args: &[&str], input: &[u8]) -> String {
+/// The command line run with `args`, `input` its standard input, to its end, whatever its code.
+async fn ran_with_input(args: &[&str], input: &[u8]) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_docker-cli"))
         .args(args)
         .stdin(Stdio::piped())
@@ -113,10 +113,15 @@ async fn docker_cli_with_input(args: &[&str], input: &[u8]) -> String {
     stdin.write_all(input).await.expect("the input");
     drop(stdin);
 
-    let output = tokio::time::timeout(BOUND, child.wait_with_output())
+    tokio::time::timeout(BOUND, child.wait_with_output())
         .await
         .expect("the command line ends")
-        .expect("the command line runs");
+        .expect("the command line runs")
+}
+
+/// The command line run with `args`, `input` its standard input, to its end: its standard output.
+async fn docker_cli_with_input(args: &[&str], input: &[u8]) -> String {
+    let output = ran_with_input(args, input).await;
 
     assert!(
         output.status.success(),
@@ -276,6 +281,11 @@ async fn each_command_works_on_a_real_daemon() {
         docker_cli_with_input(&["exec", &name, "cat"], b"hello\n").await,
         "hello\n"
     );
+
+    // As `docker exec` does, the command line exits with the command's code.
+    let exited = ran_with_input(&["exec", &name, "sh", "-c", "exit 3"], b"").await;
+
+    assert_eq!(exited.status.code(), Some(3), "{exited:?}");
 
     let created = docker
         .exec()

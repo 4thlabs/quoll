@@ -52,8 +52,9 @@ TLS, `DOCKER_TLS_VERIFY` and `ssh://` are not supported.
   connection carries the command's input and output. The command line copies its own input into the tunnel, and
   closes the half it writes when its input ends, which Docker passes on as the end of the command's input, as `cat`
   needs. It reads the output as it reads the logs: frames without a TTY, the bytes as they are with `-t`, as the
-  content type of the 101 says. Its runtime does not wait, at the end, for a read of its own input that may never
-  end. `resize` sets the size of a TTY, which the test against a real daemon checks with `stty size`.
+  content type of the 101 says. Once the output ends, it reads the command's code with `GET /exec/{id}/json` and
+  exits with it, as `docker exec` does. Its runtime does not wait, at the end, for a read of its own input that may
+  never end. `resize` sets the size of a TTY, which the test against a real daemon checks with `stty size`.
 - **The events.** `JsonLines<Event>`. Docker 29 and later send them as `application/jsonl`, and older versions as
   `application/json`, which quoll's client also reads as JSON Lines. quoll's client reads the progress of a pull the
   same way. The command line skips an event of a kind newer than itself, which it does not read, with a warning on

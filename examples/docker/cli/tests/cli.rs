@@ -109,6 +109,7 @@ fn fake(daemon: Shared) -> Router {
         .route("/v1.47/containers/{id}/logs", get(logs))
         .route("/v1.47/containers/{id}/exec", post(create_exec))
         .route("/v1.47/exec/{id}/start", post(start_exec))
+        .route("/v1.47/exec/{id}/json", get(inspect_exec))
         .route("/v1.47/events", get(events))
         .with_state(daemon)
 }
@@ -239,7 +240,7 @@ async fn logs(
         .into_response()
 }
 
-/// Makes a command to run in a running container: its id, `exec-` and the container's name.
+/// Makes a command to run in a running container: its id, `exec-`, the container's name and its number.
 async fn create_exec(
     State(daemon): State<Shared>,
     Path(Id { id }): Path<Id>,
@@ -249,7 +250,7 @@ async fn create_exec(
     let Some(index) = find(&daemon, &id) else {
         return no_such(&id);
     };
-    let exec = format!("exec-{}", daemon.containers[index].1);
+    let exec = format!("exec-{}-{}", daemon.containers[index].1, daemon.execs.len());
 
     daemon.execs.push((exec.clone(), body));
     (
@@ -333,6 +334,21 @@ async fn start_exec(
         .header(header::CONTENT_TYPE, content_type)
         .body(Body::empty())
         .expect("a response")
+}
+
+/// A command made to run, ended: its code 1 for `false`, as the shell's, and 0 for any other.
+async fn inspect_exec(State(daemon): State<Shared>, Path(Id { id }): Path<Id>) -> Response {
+    let daemon = daemon.lock().expect("no test panics holding the lock");
+    let Some((_, body)) = daemon.execs.iter().find(|(exec, _)| *exec == id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let code = if body["Cmd"] == serde_json::json!(["false"]) {
+        1
+    } else {
+        0
+    };
+
+    axum::Json(serde_json::json!({ "ID": id, "Running": false, "ExitCode": code })).into_response()
 }
 
 /// Two events, one between them that is none the command line reads, then the end: Docker before 29 sends them as
@@ -627,6 +643,11 @@ async fn exec_runs_a_command_on_its_input_and_writes_each_stream_to_its_own() {
             }),
         ]
     );
+
+    // The command line exits with the command's code.
+    let failed = docker_cli_with_input(&host, &["exec", "web", "false"], b"").await;
+
+    assert_eq!(failed.status.code(), Some(1), "{failed:?}");
 
     let missing = docker_cli_with_input(&host, &["exec", "nope", "cat"], b"").await;
 

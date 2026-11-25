@@ -1,4 +1,4 @@
-error: a route that returns `TcpTunnel` compiles only in a contract with no server side, as quoll's server does not open a tunnel yet: write `#[server(none)]` on the api
+error: a route that returns `TcpTunnel` needs the client side, and no server side, as quoll's server does not open a tunnel yet: remove `#[client(none)]` and write `#[server(none)]` on the api
  --> tests/compile_fail/tcp_tunnel_served_client_none.rs:7:55
   |
 7 |         POST "/exec/{id}/start" => start(id: &str) -> quoll::TcpTunnel;

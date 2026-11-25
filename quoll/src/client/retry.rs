@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use backon::{BackoffBuilder, ExponentialBuilder};
-use http::header::{AGE, DATE, RETRY_AFTER};
+use http::header::{AGE, DATE, RETRY_AFTER, UPGRADE};
 use http::{Extensions, HeaderMap, Method, StatusCode};
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next};
@@ -293,7 +293,8 @@ impl Attempt<'_> {
     }
 
     /// The kind of the attempt, as the call's [`quoll::Error`](crate::Error) would say it: `None` for an answer of a
-    /// success status, [`ErrorKind::Status`] for an answer of any other, and the kind of its [error](Attempt::error)
+    /// success status, and for the `101 Switching Protocols` of a request that asked for an upgrade, the tunnel of a
+    /// route `-> TcpTunnel`, which is its success, [`ErrorKind::Status`] for an answer of any other, and the kind of its [error](Attempt::error)
     /// for an attempt that got no answer, [`ErrorKind::Middleware`] for a middleware's error, one of a status
     /// included.
     ///
@@ -311,6 +312,13 @@ impl Attempt<'_> {
     pub fn kind(&self) -> Option<ErrorKind> {
         match self.result {
             Ok(response) if response.status().is_success() => None,
+            // The connection a request asked to switch, which a second attempt would drop.
+            Ok(response)
+                if response.status() == StatusCode::SWITCHING_PROTOCOLS
+                    && self.request.headers().contains_key(UPGRADE) =>
+            {
+                None
+            }
             Ok(response) => Some(ErrorKind::Status(response.status())),
             Err(error) => Some(crate::__private::client::kind_of(error)),
         }

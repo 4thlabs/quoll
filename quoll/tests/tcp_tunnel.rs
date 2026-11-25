@@ -174,7 +174,7 @@ fn every_helper() -> client::Builder {
         .with(client::user_agent("tunnel-test"))
         .with(client::request_id())
         .with(client::retry(2))
-        .with(client::timeout(Duration::from_millis(100)))
+        .with(client::timeout(Duration::from_millis(50)))
         .with(client::redirects(3))
         .with(client::bearer("s3cr3t"))
         .with(client::on_request(
@@ -211,9 +211,10 @@ async fn talks(api: &DaemonClient, seen: &Seen) {
     assert_eq!(request[header::CONNECTION], "Upgrade");
     assert_eq!(request[header::UPGRADE], "tcp");
 
-    // A deadline that does not pass is seen only once its time has: `client::timeout` bounds the 101 alone, and
-    // neither it nor reqwest's own deadline cuts the tunnel after it.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The one sleep of the tests: what it checks is that nothing happens, a deadline that cuts nothing, for which
+    // there is no event to await. Past the 50 ms of `client::timeout`, which bounds the 101 alone, neither it nor
+    // reqwest's own deadline cuts the tunnel.
+    tokio::time::sleep(Duration::from_millis(150)).await;
 
     tunnel.write_all(b"hello").await.expect("a write");
 
@@ -358,6 +359,54 @@ async fn only_a_101_to_tcp_alone_gives_a_tunnel() {
 
         assert_eq!(error.kind(), ErrorKind::Decode, "{id}: {error:?}");
     }
+}
+
+#[tokio::test]
+async fn a_rule_of_retry_reads_the_101_of_a_tunnel_as_a_success() {
+    let (url, seen) = on_tcp().await;
+    let kinds = Arc::new(Mutex::new(Vec::new()));
+    let attempts = Arc::clone(&kinds);
+    // Any kind is tried again: an attempt that is no success would send the request once more.
+    let retry = client::retry(3).when(move |attempt: &client::Attempt| {
+        attempts
+            .lock()
+            .expect("no test panics holding the lock")
+            .push(attempt.kind());
+
+        match attempt.kind() {
+            Some(_) => client::Retry::Backoff,
+            None => client::Retry::No,
+        }
+    });
+    let api = client::builder()
+        .with(retry)
+        .build::<Daemon>(&url)
+        .expect("a client");
+
+    let mut tunnel = api
+        .exec()
+        .start("echo", Start { tty: true })
+        .await
+        .expect("a tunnel");
+
+    tunnel.write_all(b"r").await.expect("a write");
+
+    let mut echoed = [0; 1];
+    tunnel.read_exact(&mut echoed).await.expect("the echo");
+
+    assert_eq!(&echoed, b"R");
+    assert_eq!(
+        *kinds.lock().expect("no test panics holding the lock"),
+        [None]
+    );
+    assert_eq!(
+        seen.headers
+            .lock()
+            .expect("no test panics holding the lock")
+            .len(),
+        1,
+        "the request is sent once"
+    );
 }
 
 #[tokio::test]

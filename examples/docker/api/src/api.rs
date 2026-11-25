@@ -2,7 +2,7 @@ use quoll::{ByteStream, JsonLines, TcpTunnel};
 
 use crate::{
     ContainerInspect, ContainerSummary, CreatedContainer, CreatedExec, DockerError, Event,
-    ExecStart, NewContainer, NewExec, PullProgress, Version,
+    ExecInspect, ExecStart, NewContainer, NewExec, PullProgress, Version,
 };
 
 quoll::api! {
@@ -33,6 +33,8 @@ quoll::api! {
         /// output read, as it is with a TTY, `application/vnd.docker.raw-stream`, in Docker's frames without one,
         /// `application/vnd.docker.multiplexed-stream`.
         POST "/exec/{id}/start" => start(id: &str, start: ExecStart) -> TcpTunnel;
+        /// Whether the command runs, and the code it exited with.
+        GET "/exec/{id}/json" => inspect(id: &str) -> ExecInspect;
         /// The size of the TTY of a command that has one, in characters.
         POST "/exec/{id}/resize?h={h}&w={w}" => resize(id: &str, h: u16, w: u16);
     }

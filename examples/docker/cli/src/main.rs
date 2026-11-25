@@ -1,7 +1,9 @@
+use std::process::ExitCode;
+
 use clap::Parser;
 use docker_cli::{Cli, Host};
 
-fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse();
     let runtime = tokio::runtime::Runtime::new()?;
     let ran = runtime.block_on(async {
