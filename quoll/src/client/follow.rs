@@ -7,11 +7,15 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures_core::Stream;
+use futures_core::stream::FusedStream;
 use futures_util::{StreamExt, stream};
 use http::StatusCode;
 use tokio::time::Instant;
 
 use crate::{Error, ErrorKind, Problem};
+
+/// The shortest bound past the first wait, so that a bound of zero still grows.
+const SHORTEST: Duration = Duration::from_millis(1);
 
 /// What a followed stream gives: its items, and what happens to its connection.
 ///
@@ -19,8 +23,9 @@ use crate::{Error, ErrorKind, Problem};
 /// be handled.
 #[derive(Debug)]
 pub enum Followed<T, E = Problem> {
-    /// The route answered with its stream: from now on, no item goes by unseen. It comes first, and after each
-    /// reconnection, when items may have been missed in between.
+    /// The route answered with its stream: from now on, no item goes by unseen. It comes each time a call is answered
+    /// with its stream, so that a first call that fails gives [`Reconnecting`](Self::Reconnecting), or
+    /// [`Stopped`](Self::Stopped), before any `Connected`. Items may have been missed before each one.
     Connected,
     /// An item of the stream.
     Item(T),
@@ -32,7 +37,8 @@ pub enum Followed<T, E = Problem> {
     Reconnecting {
         /// Why the connection is lost, `None` for a stream that ended.
         error: Option<Error<E>>,
-        /// How long until the route is called again.
+        /// How long until the route is called again, counted from when this state is given, however long it takes
+        /// to read the next.
         wait: Duration,
     },
     /// The call failed in a way that calling again would not change: the last state, the stream ends after it.
@@ -49,7 +55,8 @@ pub enum Followed<T, E = Problem> {
 /// A connection holds once its stream has stayed open [`steady`](Self::steady), 10 s: the bound after it starts
 /// again from `first`. Only the time counts, not the items: a server that sends an item then closes each connection
 /// is called less and less often. The stream is read before the deadline is checked, so that a stream that ended
-/// while nobody read it is not taken for one that held.
+/// while nobody read it is not taken for one that held. An item, or one skipped, read once the deadline has passed
+/// holds the connection: a reader that is always behind finds the stream ready each time.
 ///
 /// ```no_run
 /// use std::time::Duration;
@@ -110,19 +117,24 @@ impl Reconnect {
     }
 
     /// The bound of the first wait, and the one the waits start again from once a connection has held.
+    ///
+    /// A zero calls again at once the first time, then the bound doubles from 1 ms. A `first` beyond
+    /// [`longest`](Self::longest) is cut to it.
     #[must_use]
     pub const fn first(self, first: Duration) -> Self {
         Self { first, ..self }
     }
 
-    /// The longest wait: the bound doubles up to it, and a [`first`](Self::first) beyond it is cut to it.
+    /// The longest wait: the bound doubles up to it, and a [`first`](Self::first) beyond it is cut to it. A
+    /// `longest` below 1 ms is raised to 1 ms, so that a zero does not call again in a tight loop.
     #[must_use]
     pub const fn longest(self, longest: Duration) -> Self {
         Self { longest, ..self }
     }
 
     /// How long a connection stays open before it counts as held, and the waits start again from
-    /// [`first`](Self::first).
+    /// [`first`](Self::first). A `steady` past what the clock can count, `Duration::MAX`, never counts a connection
+    /// as held.
     #[must_use]
     pub const fn steady(self, steady: Duration) -> Self {
         Self { steady, ..self }
@@ -149,14 +161,19 @@ impl Reconnect {
             stream: None,
             steady_at: None,
             held: false,
-            bound: self.first.min(self.longest),
-            wait: None,
+            bound: self.first.min(self.longest_wait()),
+            resume: None,
             stopped: false,
         };
 
         Following {
-            inner: Box::pin(stream::unfold(state, State::next)),
+            inner: Some(Box::pin(stream::unfold(state, State::next))),
         }
+    }
+
+    /// The longest wait, 1 ms at least.
+    fn longest_wait(&self) -> Duration {
+        self.longest.max(SHORTEST)
     }
 }
 
@@ -246,21 +263,42 @@ where
 
 /// The stream [`follow`] gives, of [`Followed`] states.
 ///
-/// It is `Unpin`, so that `.next()` reads it with no `pin!`, and `Send` when the closure and its stream are.
+/// It is `Unpin`, so that `.next()` reads it with no `pin!`, and `Send` when the closure and its stream are. Once it
+/// has ended, after [`Followed::Stopped`], it gives `None` each time it is polled, and says so as a
+/// [`FusedStream`], as a `select!` loop reads it.
 #[must_use = "a stream does nothing unless it is polled"]
 pub struct Following<S> {
-    inner: Pin<Box<S>>,
+    /// The states, until they end.
+    inner: Option<Pin<Box<S>>>,
 }
 
 impl<S: Stream> Stream for Following<S> {
     type Item = S::Item;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<S::Item>> {
-        self.inner.as_mut().poll_next(cx)
+        let Some(inner) = self.inner.as_mut() else {
+            return Poll::Ready(None);
+        };
+        let next = std::task::ready!(inner.as_mut().poll_next(cx));
+
+        // The states may not be polled again once they ended.
+        if next.is_none() {
+            self.inner = None;
+        }
+
+        Poll::Ready(next)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
+        self.inner
+            .as_ref()
+            .map_or((0, Some(0)), |inner| inner.size_hint())
+    }
+}
+
+impl<S: Stream> FusedStream for Following<S> {
+    fn is_terminated(&self) -> bool {
+        self.inner.is_none()
     }
 }
 
@@ -276,14 +314,14 @@ struct State<F, S> {
     reconnect: Reconnect,
     /// The stream of the connection, while there is one.
     stream: Option<Pin<Box<S>>>,
-    /// When the connection counts as held, until it does.
+    /// When the connection counts as held, until it does, or none past what the clock can count.
     steady_at: Option<Instant>,
     /// Whether the connection has held.
     held: bool,
     /// The bound of the next wait.
     bound: Duration,
-    /// The wait before the next call, none before the first.
-    wait: Option<Duration>,
+    /// When to call again, none before the first call.
+    resume: Option<Resume>,
     stopped: bool,
 }
 
@@ -315,6 +353,19 @@ where
                         continue;
                     };
 
+                    // A reader that is always behind finds the stream ready each time: an item read past the
+                    // deadline was there while the connection was open. An end read late was not.
+                    let open = match &next {
+                        Some(Ok(_)) => true,
+                        Some(Err(error)) => error.kind() == ErrorKind::Decode,
+                        None => false,
+                    };
+
+                    if open && Instant::now() >= steady_at {
+                        self.held = true;
+                        self.steady_at = None;
+                    }
+
                     next
                 }
                 None => stream.next().await,
@@ -336,14 +387,16 @@ where
 
     /// Calls the route, after the wait unless it is the first call.
     async fn connect(&mut self) -> Followed<T, E> {
-        if let Some(wait) = self.wait.take() {
-            tokio::time::sleep(wait).await;
+        match self.resume.take() {
+            Some(Resume::At(at)) => tokio::time::sleep_until(at).await,
+            Some(Resume::After(wait)) => tokio::time::sleep(wait).await,
+            None => {}
         }
 
         match (self.open)().await {
             Ok(stream) => {
                 self.stream = Some(Box::pin(stream));
-                self.steady_at = Some(Instant::now() + self.reconnect.steady);
+                self.steady_at = Instant::now().checked_add(self.reconnect.steady);
                 self.held = false;
 
                 Followed::Connected
@@ -366,7 +419,7 @@ where
         self.steady_at = None;
 
         if self.held {
-            self.bound = self.reconnect.first.min(self.reconnect.longest);
+            self.bound = self.reconnect.first.min(self.reconnect.longest_wait());
         }
 
         Followed::Reconnecting {
@@ -375,20 +428,40 @@ where
         }
     }
 
-    /// The wait before the next call, drawn unless jitter is off, which doubles the next bound up to the longest.
+    /// The wait before the next call, drawn unless jitter is off, counted from now, which doubles the next bound up
+    /// to the longest.
     fn pause(&mut self) -> Duration {
         let bound = self.bound;
         let wait = if self.reconnect.jitter {
-            bound.mul_f64(0.5 + fastrand::f64() / 2.0)
+            // Half the bound, then up to as much again: `mul_f64` of the whole bound may round past `Duration::MAX`.
+            let half = bound / 2;
+
+            half.saturating_add(half.mul_f64(fastrand::f64()))
+                .min(bound)
         } else {
             bound
         };
 
-        self.bound = bound.saturating_mul(2).min(self.reconnect.longest);
-        self.wait = Some(wait);
+        self.bound = bound
+            .saturating_mul(2)
+            .max(SHORTEST)
+            .min(self.reconnect.longest_wait());
+        self.resume = Some(
+            Instant::now()
+                .checked_add(wait)
+                .map_or(Resume::After(wait), Resume::At),
+        );
 
         wait
     }
+}
+
+/// When to call the route again.
+enum Resume {
+    /// At this instant, the wait counted from when it was given.
+    At(Instant),
+    /// After this wait, counted from now: one past what the clock can count, which tokio's timer bounds itself.
+    After(Duration),
 }
 
 /// Whether a call that failed with `kind` would fail the same if called again: an answer of a 4xx, but 408 and 429,
