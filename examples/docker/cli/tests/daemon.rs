@@ -9,10 +9,12 @@ use std::error::Error as _;
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use docker_api::{Containers, DockerClient, DockerError, Images, NewContainer, System};
+use docker_api::{
+    Containers, DockerClient, DockerError, Exec, ExecStart, Images, NewContainer, NewExec, System,
+};
 use docker_cli::Host;
 use futures::StreamExt;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
 /// A bound, so that a command or a stream that does not end fails the test rather than hang it.
@@ -94,6 +96,60 @@ async fn docker_cli(args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).expect("UTF-8")
+}
+
+/// The command line run with `args`, `input` its standard input, to its end: its standard output.
+async fn docker_cli_with_input(args: &[&str], input: &[u8]) -> String {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_docker-cli"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the command line runs");
+    let mut stdin = child.stdin.take().expect("piped");
+
+    stdin.write_all(input).await.expect("the input");
+    drop(stdin);
+
+    let output = tokio::time::timeout(BOUND, child.wait_with_output())
+        .await
+        .expect("the command line ends")
+        .expect("the command line runs");
+
+    assert!(
+        output.status.success(),
+        "{args:?}, {:?}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("UTF-8")
+}
+
+/// Reads `tunnel` until what it gave holds `wanted`: all it gave.
+async fn read_until(tunnel: &mut quoll::TcpTunnel, wanted: &str) -> String {
+    let read = async {
+        let mut received = Vec::new();
+        let mut chunk = [0; 1024];
+
+        while !String::from_utf8_lossy(&received).contains(wanted) {
+            let read = tunnel.read(&mut chunk).await.expect("a read");
+
+            assert!(
+                read > 0,
+                "the tunnel ended before it gave {wanted:?}: {:?}",
+                String::from_utf8_lossy(&received)
+            );
+            received.extend_from_slice(&chunk[..read]);
+        }
+
+        String::from_utf8_lossy(&received).into_owned()
+    };
+
+    tokio::time::timeout(BOUND, read)
+        .await
+        .unwrap_or_else(|_| panic!("the tunnel never gave {wanted:?}"))
 }
 
 /// The command line run with `args`, left running, its standard output and its error piped.
@@ -214,6 +270,54 @@ async fn each_command_works_on_a_real_daemon() {
             .await
             .contains("\"Running\": true")
     );
+
+    // `cat` ends once the command line's input does: its half-close reaches the command.
+    assert_eq!(
+        docker_cli_with_input(&["exec", &name, "cat"], b"hello\n").await,
+        "hello\n"
+    );
+
+    let created = docker
+        .exec()
+        .create(
+            &name,
+            NewExec {
+                cmd: vec!["sh".into()],
+                attach_stdin: true,
+                attach_stdout: true,
+                attach_stderr: true,
+                tty: true,
+            },
+        )
+        .await
+        .expect("the command is made");
+    let mut shell = docker
+        .exec()
+        .start(
+            &created.id,
+            ExecStart {
+                detach: false,
+                tty: true,
+            },
+        )
+        .await
+        .expect("the shell runs");
+
+    assert!(
+        shell.has_type("application/vnd.docker.raw-stream"),
+        "{shell:?}"
+    );
+
+    // Its answer, which its echo does not hold, says the shell reads: its TTY can be resized.
+    shell.write_all(b"echo $((6 * 7))\n").await.expect("a line");
+    read_until(&mut shell, "42").await;
+    docker
+        .exec()
+        .resize(&created.id, 33, 77)
+        .await
+        .expect("the TTY is resized");
+    shell.write_all(b"stty size; exit\n").await.expect("a line");
+    read_until(&mut shell, "33 77").await;
     assert_eq!(
         docker_cli(&["stop", &name, "-t", "1"]).await,
         format!("{name}\n")

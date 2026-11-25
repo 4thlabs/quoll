@@ -6,9 +6,11 @@
 //!   `error_kind_*`: a match with no `_`, a status written as a number, the text of `as_str` kept past its kind, and
 //!   an `Error::failed` with no kind or no shape; those of `#[server(...)]` and `#[client(...)]`, a contract with no
 //!   side, a word other than `none`, one twice, one on a scheme, a group of the api's block or a route,
-//!   an `#[openapi(...)]` beside `#[server(none)]` and an `#[error(...)]` in a contract with `#[client(none)]`; and a
-//!   `quoll::group!` listed without a side its api has, its server, its client or its document, one error whatever the
-//!   features, as the api reaches its groups by their descriptors alone.
+//!   an `#[openapi(...)]` beside `#[server(none)]` and an `#[error(...)]` in a contract with `#[client(none)]`; a
+//!   route `-> TcpTunnel` in a contract with a server side, in the files `tcp_tunnel_*`, with the tunnel as a body, a
+//!   parameter or the `T` of a `Created<T>`, or on `HEAD`; and a `quoll::group!` listed without a side its api has,
+//!   its server, its client or its document, one error whatever the features, as the api reaches its groups by their
+//!   descriptors alone.
 //! - `tests/compile_fail_server/`, built with the feature `server`: what only the server's code checks, a route left
 //!   out of a service, a handler of the wrong signature, a status of no content on a route of a value or one that is
 //!   not a status, a body that is not `Deserialize`, a service that does not authenticate, and an argument the server
@@ -25,8 +27,8 @@
 //!   `#[client(none)]` built, in `client_none_has_no_client`, or its trait faked, in `client_none_has_no_fake`, each
 //!   rustc's own error, as the contract writes none.
 //! - `tests/compile_fail_neither/`, built with neither feature: what each side would repeat a message of its own for.
-//!   A type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines` or `ByteStream` that is not
-//!   quoll's; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to
+//!   A type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines`, `ByteStream` or
+//!   `TcpTunnel` that is not quoll's; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to
 //!   the document of a contract that has none; and the mistakes of a group of another block: a group listed and not in
 //!   scope, or not a group, a group or a scheme less visible than what names it, and a scheme twice in an alternative.
 //!

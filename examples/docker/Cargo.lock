@@ -344,6 +344,8 @@ dependencies = [
  "clap",
  "docker-api",
  "futures",
+ "hyper",
+ "hyper-util",
  "quoll",
  "reqwest",
  "serde",

@@ -2,18 +2,20 @@
 //! contract, which answers as Docker does, its quirks included.
 
 use std::collections::HashMap;
-use std::process::Output;
+use std::process::{Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use futures::stream;
+use hyper_util::rt::TokioIo;
 use serde::Deserialize;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 /// A bound, so that a command that does not end fails the test rather than hang it.
@@ -30,6 +32,8 @@ struct Daemon {
     containers: Vec<(&'static str, &'static str, bool, bool)>,
     /// The query of each call, by its path.
     queries: Vec<(String, HashMap<String, String>)>,
+    /// Each command made to run: its id, and the body of its creation.
+    execs: Vec<(String, serde_json::Value)>,
 }
 
 type Shared = Arc<Mutex<Daemon>>;
@@ -42,6 +46,7 @@ fn daemon() -> Shared {
             (SHELL, "shell", true, true),
         ],
         queries: Vec::new(),
+        execs: Vec::new(),
     }))
 }
 
@@ -102,6 +107,8 @@ fn fake(daemon: Shared) -> Router {
         .route("/v1.47/containers/{id}/start", post(start))
         .route("/v1.47/containers/{id}/stop", post(stop))
         .route("/v1.47/containers/{id}/logs", get(logs))
+        .route("/v1.47/containers/{id}/exec", post(create_exec))
+        .route("/v1.47/exec/{id}/start", post(start_exec))
         .route("/v1.47/events", get(events))
         .with_state(daemon)
 }
@@ -232,6 +239,102 @@ async fn logs(
         .into_response()
 }
 
+/// Makes a command to run in a running container: its id, `exec-` and the container's name.
+async fn create_exec(
+    State(daemon): State<Shared>,
+    Path(Id { id }): Path<Id>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    let mut daemon = daemon.lock().expect("no test panics holding the lock");
+    let Some(index) = find(&daemon, &id) else {
+        return no_such(&id);
+    };
+    let exec = format!("exec-{}", daemon.containers[index].1);
+
+    daemon.execs.push((exec.clone(), body));
+    (
+        StatusCode::CREATED,
+        axum::Json(serde_json::json!({ "Id": exec })),
+    )
+        .into_response()
+}
+
+/// Runs a command as Docker does: a 101 to `tcp`, then a `cat` on the connection, which echoes its input until its
+/// end, in frames on stdout without a TTY, then says `bye` on stderr; with a TTY, as it is.
+async fn start_exec(
+    State(daemon): State<Shared>,
+    Path(Id { id }): Path<Id>,
+    request: Request,
+) -> Response {
+    let (mut parts, _body) = request.into_parts();
+    let tty = {
+        let daemon = daemon.lock().expect("no test panics holding the lock");
+        let Some((_, body)) = daemon.execs.iter().find(|(exec, _)| *exec == id) else {
+            let body = format!(r#"{{"message":"No such exec instance: {id}"}}"#);
+
+            return (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "application/json")],
+                body,
+            )
+                .into_response();
+        };
+
+        body["Tty"] == true
+    };
+    let asks_tcp = parts
+        .headers
+        .get(header::UPGRADE)
+        .is_some_and(|upgrade| upgrade == "tcp");
+
+    // Docker answers a request that asks for no upgrade with a 200, then takes the connection: the client refuses it.
+    if !asks_tcp {
+        return StatusCode::OK.into_response();
+    }
+
+    let upgrade = parts
+        .extensions
+        .remove::<hyper::upgrade::OnUpgrade>()
+        .expect("a connection that may be upgraded");
+
+    tokio::spawn(async move {
+        let mut io = TokioIo::new(upgrade.await.expect("the connection upgraded"));
+        let mut buffer = [0; 1024];
+
+        while let Ok(read @ 1..) = io.read(&mut buffer).await {
+            let echoed = if tty {
+                buffer[..read].to_vec()
+            } else {
+                frame(1, &buffer[..read])
+            };
+
+            if io.write_all(&echoed).await.is_err() {
+                return;
+            }
+        }
+
+        if !tty {
+            let _ = io.write_all(&frame(2, b"bye\n")).await;
+        }
+
+        let _ = io.shutdown().await;
+    });
+
+    let content_type = if tty {
+        "application/vnd.docker.raw-stream"
+    } else {
+        "application/vnd.docker.multiplexed-stream"
+    };
+
+    Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(header::CONNECTION, "Upgrade")
+        .header(header::UPGRADE, "tcp")
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::empty())
+        .expect("a response")
+}
+
 /// Two events, one between them that is none the command line reads, then the end: Docker before 29 sends them as
 /// `application/json`, one a line.
 async fn events(
@@ -279,6 +382,29 @@ async fn docker_cli(docker_host: &str, args: &[&str]) -> Output {
         .output();
 
     tokio::time::timeout(BOUND, run)
+        .await
+        .expect("the command line ends")
+        .expect("the command line runs")
+}
+
+/// The command line run with `args` against the daemon at `docker_host`, `input` its standard input, to its end.
+async fn docker_cli_with_input(docker_host: &str, args: &[&str], input: &[u8]) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_docker-cli"))
+        .args(args)
+        .env("DOCKER_HOST", docker_host)
+        .env_remove("DOCKER_TLS_VERIFY")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the command line runs");
+    let mut stdin = child.stdin.take().expect("piped");
+
+    stdin.write_all(input).await.expect("the input");
+    drop(stdin);
+
+    tokio::time::timeout(BOUND, child.wait_with_output())
         .await
         .expect("the command line ends")
         .expect("the command line runs")
@@ -458,6 +584,58 @@ async fn events_are_written_one_a_line_and_one_not_read_is_skipped() {
         .collect();
 
     assert_eq!(since, [None, Some("1763632700".to_owned())]);
+}
+
+#[tokio::test]
+async fn exec_runs_a_command_on_its_input_and_writes_each_stream_to_its_own() {
+    let (host, daemon) = on_tcp().await;
+
+    let output = docker_cli_with_input(&host, &["exec", "web", "cat", "-u"], b"hello\n").await;
+
+    assert_eq!(succeeded(&output), "hello\n");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "bye\n");
+
+    let tty = docker_cli_with_input(&host, &["exec", "-t", "shell", "sh"], b"ls\n").await;
+
+    assert_eq!(succeeded(&tty), "ls\n");
+    assert!(tty.stderr.is_empty());
+
+    let made: Vec<_> = daemon
+        .lock()
+        .expect("no test panics holding the lock")
+        .execs
+        .iter()
+        .map(|(_, body)| body.clone())
+        .collect();
+
+    assert_eq!(
+        made,
+        [
+            serde_json::json!({
+                "Cmd": ["cat", "-u"],
+                "AttachStdin": true,
+                "AttachStdout": true,
+                "AttachStderr": true,
+                "Tty": false,
+            }),
+            serde_json::json!({
+                "Cmd": ["sh"],
+                "AttachStdin": true,
+                "AttachStdout": true,
+                "AttachStderr": true,
+                "Tty": true,
+            }),
+        ]
+    );
+
+    let missing = docker_cli_with_input(&host, &["exec", "nope", "cat"], b"").await;
+
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing.stderr)
+            .contains("Error: another api answered 404: No such container: nope"),
+        "{missing:?}"
+    );
 }
 
 #[cfg(unix)]

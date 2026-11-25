@@ -54,6 +54,15 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
   taking a type parameter for its service; their docs link `notes::NotesClient` and `notes::NotesServer`. The groups
   of the api's block are named as before. The guides' contracts of other APIs and the Docker example say `#[server(none)]`
   ([#129](https://github.com/4thlabs/quoll/issues/129)).
+- A route `-> quoll::TcpTunnel` opens a raw tunnel on its connection, as the Docker Engine API does for `exec` and
+  `attach` ([#124](https://github.com/4thlabs/quoll/issues/124)). Its request sends `Connection: Upgrade` and
+  `Upgrade: tcp`, through every middleware of the client, and the call gives the connection once the other api has
+  answered `101 Switching Protocols` with `Upgrade: tcp`, over TCP or a Unix socket. The tunnel reads and writes with
+  tokio's `AsyncRead` and `AsyncWrite`, `shutdown()` closes the half it writes, and `content_type()` gives the
+  content type of the 101. The route compiles only in a contract with `#[server(none)]`: quoll's server does not open
+  a tunnel yet. A 2xx in place of the 101, or a 101 to another protocol, is an error of the kind `Decode`, a 101 whose
+  connection cannot be taken `Closed`, and an answer in HTTP/2 `Invalid`. A fake returns `TcpTunnel::new(io)`. The
+  Docker example runs a command in a container with `docker-cli exec`.
 
 ### Changed
 

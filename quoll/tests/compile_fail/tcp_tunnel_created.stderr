@@ -1,0 +1,13 @@
+error: a `Created<T>` answers the JSON of its `T`, which a `TcpTunnel` is not: a tunnel is opened by a 101, so return `-> TcpTunnel`
+ --> tests/compile_fail/tcp_tunnel_created.rs:8:63
+  |
+8 |         POST "/exec/{id}/start" => start(id: &str) -> Created<TcpTunnel>;
+  |                                                               ^^^^^^^^^
+
+warning: unused imports: `Created` and `TcpTunnel`
+ --> tests/compile_fail/tcp_tunnel_created.rs:1:13
+  |
+1 | use quoll::{Created, TcpTunnel};
+  |             ^^^^^^^  ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

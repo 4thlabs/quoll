@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 
-use quoll::ByteStream;
+use quoll::{ByteStream, TcpTunnel};
 use serde::{Deserialize, Serialize};
 
 // The types need no schema, nor what only a server would read or write: a body `Serialize` alone, a result
@@ -29,6 +29,8 @@ mod issues {
             GET "/repos/{owner}/{repo}/issues" => list(owner: &str, repo: &str) -> Vec<String>;
             // The path of `Repos::get`, its parameters named otherwise: only a router takes them for one.
             PUT "/repos/{user}/{name}" => rename(user: &str, name: &str);
+            // A tunnel in a group with no server side, which an api with none lists.
+            POST "/repos/{owner}/{repo}/attach" => attach(owner: &str, repo: &str) -> quoll::TcpTunnel;
         }
     }
 }
@@ -53,6 +55,7 @@ quoll::api! {
         POST "/user/repos" => create(repo: &NewRepo) -> Repo;
         GET "/repos/{owner}/{repo}/labels" => labels(owner: &str, repo: &str) -> BTreeMap<String, String>;
         GET "/meta/{ip}" => meta(ip: IpAddr) -> ByteStream;
+        POST "/repos/{owner}/{repo}/shell" => shell(owner: &str, repo: &str, command: &[String]) -> TcpTunnel;
     }
 }
 

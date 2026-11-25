@@ -10,7 +10,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use http::{HeaderMap, HeaderValue, StatusCode, header};
+use http::{HeaderMap, HeaderValue, StatusCode, Version, header};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::Url;
 use reqwest_middleware::ClientWithMiddleware;
@@ -24,7 +24,9 @@ use crate::__private::content_type::{
 use crate::__private::fields::{Field, With};
 use crate::__private::headers::{Fixed, RouteHeaders};
 use crate::__private::join::{self, Join};
-use crate::__private::known::{IsByteStream, IsBytes, IsEvents, IsForm, IsJsonLines, IsText};
+use crate::__private::known::{
+    IsByteStream, IsBytes, IsEvents, IsForm, IsJsonLines, IsTcpTunnel, IsText,
+};
 use crate::__private::read::{Deserialized, Read};
 use crate::__private::text;
 use crate::client::{CallTimeout, KeepsDeadline};
@@ -55,6 +57,22 @@ const JSON_LINES_READ: &[&str] = &[
 
 /// What a route returning `JsonLines` asks for: JSON Lines by its own name first, and JSON last.
 pub const ANY_JSON_LINES: &str = "application/jsonl, application/x-ndjson;q=0.9, application/x-jsonlines;q=0.9, application/json;q=0.5";
+
+/// A protocol a route switches its connection to, by a `101 Switching Protocols` its request asks for: the token of
+/// its `Upgrade` header, and what the protocol gives, which the errors of its handshake name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Upgrade {
+    /// The token the request's `Upgrade` sends, and the 101's must name alone, its case ignored.
+    token: &'static str,
+    /// What the 101 gives, in the messages of its errors: `TCP tunnel`.
+    gives: &'static str,
+}
+
+/// What a route `-> TcpTunnel` asks for: `Upgrade: tcp`, as the Docker Engine API and Podman read it.
+pub const TCP: Upgrade = Upgrade {
+    token: "tcp",
+    gives: "TCP tunnel",
+};
 
 /// What a path parameter keeps as it is: the unreserved characters of RFC 3986. Every other byte is escaped, `/`, `?`
 /// and `%` included, so that a value is one segment and reads back as it was written.
@@ -159,6 +177,7 @@ pub struct Request<'a> {
     headers: HeaderMap,
     body: Option<Body>,
     timeout: Option<Duration>,
+    upgrade: Option<Upgrade>,
 }
 
 /// A body, with its content type.
@@ -179,6 +198,7 @@ impl<'a> Request<'a> {
             headers: HeaderMap::new(),
             body: None,
             timeout: None,
+            upgrade: None,
         }
     }
 
@@ -520,7 +540,21 @@ impl<'a> Request<'a> {
         self
     }
 
-    /// Sends the request, with the route in its extensions, and keeps an answer with a success status.
+    /// Asks for `upgrade`, the protocol a route's result switches its connection to: `Connection: Upgrade`, and its
+    /// token in `Upgrade`, which no argument and no fixed header write, as HTTP's own. The answer read is then its
+    /// `101`, which [`Answer::tcp_tunnel`] checks.
+    #[must_use]
+    pub fn upgrade(mut self, upgrade: Upgrade) -> Self {
+        self.headers
+            .insert(header::CONNECTION, HeaderValue::from_static("Upgrade"));
+        self.headers
+            .insert(header::UPGRADE, HeaderValue::from_static(upgrade.token));
+        self.upgrade = Some(upgrade);
+        self
+    }
+
+    /// Sends the request, with the route in its extensions, and keeps an answer with a success status, or the `101` of
+    /// an upgrade it asks for.
     ///
     /// # Errors
     ///
@@ -529,9 +563,10 @@ impl<'a> Request<'a> {
     /// read.
     async fn send<E>(self, shape: Shaped<E>) -> Result<Answer, E> {
         let route = self.route;
+        let upgrade = self.upgrade;
         let response = self.dispatch().await.map_err(Error::cast)?;
 
-        if response.status().is_success() {
+        if is_read(response.status(), upgrade) {
             return Ok(Answer { response, route });
         }
 
@@ -560,6 +595,7 @@ impl<'a> Request<'a> {
             headers,
             body,
             timeout,
+            upgrade: _,
         } = self;
         let Inner { http, base, origin } = &*client.0;
         let mut url = base.clone();
@@ -766,12 +802,13 @@ impl<T: Send + 'static, E: Send + 'static> crate::Call<T, E> for Pending<'_, T, 
         } = self;
         let request = request.map_err(Error::cast)?;
         let route = request.route;
+        let upgrade = request.upgrade;
         let response = request.dispatch().await.map_err(Error::cast)?;
         let status = response.status();
         let version = response.version();
         let headers = response.headers().clone();
 
-        let body = if status.is_success() {
+        let body = if is_read(status, upgrade) {
             match read(Answer { response, route }).await {
                 Ok(value) => Ok(value),
                 // An answer of no content that is not the route's result keeps its status and its headers.
@@ -792,6 +829,12 @@ impl<T: Send + 'static, E: Send + 'static> crate::Call<T, E> for Pending<'_, T, 
 
         self
     }
+}
+
+/// Whether an answer of `status` is read as the route's result: a success, or the `101` of the `upgrade` the request
+/// asks for. Any other is the error of the answer, a `101` among them for a request that asks for none.
+fn is_read(status: StatusCode, upgrade: Option<Upgrade>) -> bool {
+    status.is_success() || (upgrade.is_some() && status == StatusCode::SWITCHING_PROTOCOLS)
 }
 
 /// The error of a call that got no answer to read, of the kind of `error`, a failure of reqwest or of the chain. One
@@ -949,6 +992,90 @@ impl Answer {
             content_type,
             length,
         ))
+    }
+
+    /// The connection, switched to `tcp` by the `101` of the answer: what a route returning `TcpTunnel` gives, of the
+    /// content type of the 101, or `application/octet-stream` when it has none.
+    ///
+    /// # Errors
+    ///
+    /// The read resolves to an error of [`ErrorKind::Decode`] for an answer of a success status rather than the 101,
+    /// and for a 101 whose `Upgrade` does not name `tcp` alone, or that has none: the other api answered, with no
+    /// tunnel. An error of [`ErrorKind::Closed`] when the 101 came and its connection could not be taken, as when a
+    /// middleware of the application's gave a response of its own making rather than reqwest's. An error of
+    /// [`ErrorKind::Invalid`] for an answer in HTTP/2, which has no upgrade: a client that negotiates it over TLS,
+    /// with reqwest's feature `http2`, opens no tunnel, and is built with `http1_only()`.
+    pub fn tcp_tunnel<T: IsTcpTunnel + Send + 'static>(self) -> Read<T> {
+        Read::new(self.read_tcp_tunnel())
+    }
+
+    /// The connection of the answer, as [`Answer::tcp_tunnel`] takes it.
+    async fn read_tcp_tunnel<T: IsTcpTunnel>(self) -> Result<T> {
+        let content_type = self.content_type();
+        let upgraded = self.upgraded(TCP).await?;
+
+        Ok(T::from_upgraded(upgraded, content_type))
+    }
+
+    /// The connection the `101` of the answer switched to `upgrade`, checked strictly: a 101 whose `Upgrade` names
+    /// its token alone, its case and the blanks around it ignored. An answer that is not that 101 is dropped, which
+    /// closes its connection.
+    async fn upgraded(self, upgrade: Upgrade) -> Result<reqwest::Upgraded> {
+        let Self { response, route } = self;
+        let Upgrade { token, gives } = upgrade;
+        let id = route.operation_id;
+        let refused = |what: String| {
+            Error::failed_from(
+                ErrorKind::Decode,
+                format!("the call `{id}` asked for a {gives} and {what}"),
+                None,
+            )
+        };
+
+        // HTTP/2 has no upgrade, and so no 101: whatever its status, the answer is no tunnel.
+        if response.version() == Version::HTTP_2 {
+            return Err(Error::failed_from(
+                ErrorKind::Invalid,
+                format!(
+                    "the call `{id}` asks for a {gives}, which HTTP/2 cannot open: build its client with `.http(|http| http.http1_only())`"
+                ),
+                None,
+            ));
+        }
+
+        let status = response.status();
+
+        if status != StatusCode::SWITCHING_PROTOCOLS {
+            return Err(refused(format!(
+                "was answered {status}, not 101 Switching Protocols"
+            )));
+        }
+
+        let Some(protocol) = response.headers().get(header::UPGRADE) else {
+            return Err(refused(
+                "was answered 101 with no `Upgrade` header".to_owned(),
+            ));
+        };
+
+        let named = protocol
+            .to_str()
+            .is_ok_and(|protocol| protocol.trim().eq_ignore_ascii_case(token));
+
+        if !named {
+            return Err(refused(format!(
+                "was switched to `{}`",
+                String::from_utf8_lossy(protocol.as_bytes())
+            )));
+        }
+
+        response.upgrade().await.map_err(|error| {
+            no_answer(
+                route,
+                &format!("could not take its {gives}"),
+                ErrorKind::Closed,
+                error,
+            )
+        })
     }
 
     /// The length of the body as hyper frames it, its `Content-Length`: `None` for a body in chunked encoding, one
@@ -1414,6 +1541,54 @@ mod tests {
         )));
         assert!(!is_problem(&headers("application/json")));
         assert!(!is_problem(&HeaderMap::new()));
+    }
+
+    /// The tunnel read from `answer`, an `http::Response` as hyper would give it to reqwest.
+    async fn tunnel_of(answer: http::Response<&'static str>) -> Result<crate::TcpTunnel> {
+        let response = reqwest::Response::from(answer);
+
+        Answer {
+            response,
+            route: &ROUTE,
+        }
+        .tcp_tunnel::<crate::TcpTunnel>()
+        .await
+    }
+
+    #[tokio::test]
+    async fn an_answer_in_http2_opens_no_tunnel_and_says_how_to_build_the_client() {
+        // HTTP/2 has no 101: a client that negotiates it over TLS gets the 200 of the route, or any other status.
+        for status in [StatusCode::OK, StatusCode::SWITCHING_PROTOCOLS] {
+            let answer = http::Response::builder()
+                .status(status)
+                .version(Version::HTTP_2)
+                .header(header::UPGRADE, "tcp")
+                .body("")
+                .expect("a response");
+
+            let error = tunnel_of(answer).await.expect_err("no tunnel in HTTP/2");
+
+            assert_eq!(error.kind(), ErrorKind::Invalid, "{status}");
+            assert_eq!(
+                error.to_string(),
+                "the call `notes_get` asks for a TCP tunnel, which HTTP/2 cannot open: build its client with `.http(|http| http.http1_only())`"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_101_that_hyper_did_not_switch_gives_no_connection() {
+        // A 101 of `tcp` whose response holds no connection to take: hyper's own `NoUpgrade`.
+        let answer = http::Response::builder()
+            .status(StatusCode::SWITCHING_PROTOCOLS)
+            .header(header::UPGRADE, "tcp")
+            .body("")
+            .expect("a response");
+
+        let error = tunnel_of(answer).await.expect_err("no connection");
+
+        assert_eq!(error.kind(), ErrorKind::Closed);
+        assert!(StdError::source(&error).is_some(), "{error:?}");
     }
 
     /// A shape of another API's whose `Display` is its `message`.

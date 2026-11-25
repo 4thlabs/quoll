@@ -1,0 +1,13 @@
+error: a route that returns `TcpTunnel` compiles only in a contract with no server side, as quoll's server does not open a tunnel yet: write `#[server(none)]` on the group
+ --> tests/compile_fail/tcp_tunnel_group_served.rs:6:55
+  |
+6 |         POST "/exec/{id}/start" => start(id: &str) -> TcpTunnel;
+  |                                                       ^^^^^^^^^
+
+warning: unused import: `quoll::TcpTunnel`
+ --> tests/compile_fail/tcp_tunnel_group_served.rs:1:5
+  |
+1 | use quoll::TcpTunnel;
+  |     ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

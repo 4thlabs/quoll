@@ -1,0 +1,5 @@
+error: a HEAD answer has no body, so a HEAD route returns nothing: remove the `->` and its type
+ --> tests/compile_fail/tcp_tunnel_on_head.rs:6:55
+  |
+6 |         HEAD "/exec/{id}/start" => start(id: &str) -> quoll::TcpTunnel;
+  |                                                       ^^^^^^^^^^^^^^^^

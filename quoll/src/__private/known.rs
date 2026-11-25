@@ -1,11 +1,11 @@
-//! The types a contract names that the macro recognizes by their name: `Created`, `Accepted`, `Events`, `JsonLines`
-//! and `ByteStream` as a result, `Form` as a body, `Text` and `Bytes` as either.
+//! The types a contract names that the macro recognizes by their name: `Created`, `Accepted`, `Events`, `JsonLines`,
+//! `ByteStream` and `TcpTunnel` as a result, `Form` as a body, `Text` and `Bytes` as either.
 //!
 //! The macro writes them with the contract's own tokens, so that the user's import is the one that names them. Each
 //! trait here is implemented by the crate's type alone: a type of another crate, or of the user's, that has one of
 //! these names fails on it, with a message that says so. The checks of [`created`], [`accepted`], [`form`], [`text`],
-//! [`bytes`], [`events`], [`json_lines`] and [`byte_stream`] are written whatever the features of `quoll`, so that a contract crate
-//! built with neither feature checks them too.
+//! [`bytes`], [`events`], [`json_lines`], [`byte_stream`] and [`tcp_tunnel`] are written whatever the features of
+//! `quoll`, so that a contract crate built with neither feature checks them too.
 //!
 //! [`sized`] checks the type an argument borrows, the `X` of a `&X`, so that the server receives it owned.
 //!
@@ -19,7 +19,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{
     Accepted, Allows, ByteStream, Bytes, Created, Error, Events, Form, JsonLines, NoBody, Result,
-    Text,
+    TcpTunnel, Text,
 };
 
 pub use crate::stream::Items;
@@ -303,6 +303,25 @@ impl IsByteStream for ByteStream {
     }
 }
 
+/// The crate's [`TcpTunnel`]: the connection a 101 switched to `tcp`, which the client gives.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not quoll's `TcpTunnel`, which a result named `TcpTunnel` is read as",
+    label = "not `quoll::TcpTunnel`",
+    note = "bring quoll's into scope, `use quoll::TcpTunnel;`, or name a type of your own otherwise"
+)]
+pub trait IsTcpTunnel: Sized {
+    /// The tunnel of the connection reqwest gave back, of the content type of its 101.
+    #[cfg(feature = "client")]
+    fn from_upgraded(upgraded: reqwest::Upgraded, content_type: Cow<'static, str>) -> Self;
+}
+
+impl IsTcpTunnel for TcpTunnel {
+    #[cfg(feature = "client")]
+    fn from_upgraded(upgraded: reqwest::Upgraded, content_type: Cow<'static, str>) -> Self {
+        Self::upgraded(upgraded, content_type)
+    }
+}
+
 /// Checks that `T`, a result named `Created`, is the crate's.
 pub const fn created<T: IsCreated>() {}
 
@@ -329,6 +348,9 @@ pub const fn json_lines<T: IsJsonLines>() {}
 
 /// Checks that `T`, a result named `ByteStream`, is the crate's.
 pub const fn byte_stream<T: IsByteStream>() {}
+
+/// Checks that `T`, a result named `TcpTunnel`, is the crate's.
+pub const fn tcp_tunnel<T: IsTcpTunnel>() {}
 
 #[cfg(test)]
 mod tests {

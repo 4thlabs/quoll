@@ -316,6 +316,8 @@ A route returns what the API answers on a success. Two cases are special:
   headers.
 - A route that an API answers in two shapes, JSON or a stream, depending on a field of its body, is two routes of one
   method and path: [Two answers on one path](#two-answers-on-one-path) says how.
+- A route that an API answers with a `101 Switching Protocols`, to give the connection over to raw bytes, as Docker's
+  `exec` does, returns a `TcpTunnel`: [A tunnel](contract.md#a-tunnel) says how.
 
 ```rust
 use std::fmt;

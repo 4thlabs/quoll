@@ -67,6 +67,9 @@ pub enum ErrorKind {
     /// streaming body, and a request sent through the chain otherwise gets this. It may pass: [`client::retry`] tries
     /// an idempotent request again after it, up to its number of times.
     ///
+    /// A route `-> TcpTunnel` whose 101 came, and whose connection could not be taken, gets it too: hyper gives no
+    /// connection back from a response a middleware of the application's made itself, as a cache does.
+    ///
     #[cfg_attr(feature = "client", doc = "[`client::retry`]: crate::client::retry")]
     #[cfg_attr(not(feature = "client"), doc = "[`client::retry`]: crate#features")]
     Closed,
@@ -77,8 +80,9 @@ pub enum ErrorKind {
     Body,
     /// The answer does not read, which quoll finds itself: it came whole, with a success status, and is not the
     /// route's result, a content type that is not the route's, a text that is not UTF-8, JSON that is not the result.
-    /// In a stream, an item that does not read as the route's item, after which the stream goes on. The other api
-    /// answered: the connection works, and the call fails again.
+    /// In a stream, an item that does not read as the route's item, after which the stream goes on. For a route
+    /// `-> TcpTunnel`, a 2xx in place of its 101, and a 101 to another protocol than `tcp` or with no `Upgrade`. The
+    /// other api answered: the connection works, and the call fails again.
     Decode,
     /// A middleware failed the call itself: a credential that cannot be sent, a token that could not be had, a redirect
     /// to a request sent already or past its limit, or a middleware of the application's that fails with an error type
@@ -99,8 +103,9 @@ pub enum ErrorKind {
     #[cfg_attr(not(feature = "client"), doc = "[`client::retry`]: crate#features")]
     Middleware,
     /// The call could not be sent as it was written, what reqwest reports as `is_builder`, or what quoll finds before
-    /// it sends: a client given a URL that is not one, a path parameter that is `None`, a header with a line break. It
-    /// is the mistake of the code that called it, and fails again.
+    /// it sends: a client given a URL that is not one, a path parameter that is `None`, a header with a line break; a
+    /// route `-> TcpTunnel` answered in HTTP/2, which has no 101, by a client that negotiates it over TLS and that is
+    /// built with `http1_only()` instead. It is the mistake of the code that called it, and fails again.
     Invalid,
 }
 

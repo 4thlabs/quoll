@@ -10,7 +10,7 @@ In reading order:
 | Guide                                        | What it covers                                                                           |
 | -------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | [Getting started](guides/getting-started.md) | quoll from git, a first contract, its server and its client, and running them            |
-| [The contract](guides/contract.md)           | methods and paths, parameters, bodies, results, streams, groups across modules, mistakes |
+| [The contract](guides/contract.md)           | methods and paths, parameters, bodies, results, streams, groups, a tunnel, mistakes      |
 | [The server](guides/server.md)               | services, `ApiServices`, the builder and its layers, serving, the page and shutdown      |
 | [The client](guides/client.md)               | the builder, its middleware, credentials, retries and redirects, a Unix socket           |
 | [Authentication](guides/authentication.md)   | schemes, alternatives, optional credentials, scopes, cookies and their origin            |

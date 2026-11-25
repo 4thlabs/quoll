@@ -127,6 +127,7 @@ fn read_group(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
 
     let api = Api::alone(group, sides).map_err(|error| fold(errors, error))?;
     refuse_unread_errors(&api, errors);
+    refuse_served_tunnels(&api, "the group", errors);
     headers::check(&api.groups, None, errors);
     fields::check_document(&api, "the group", errors);
 
@@ -261,6 +262,7 @@ fn read_items(input: ParseStream, errors: &mut ErrorList) -> Result<Api> {
     api.error = error;
     api.headers = api_headers;
     refuse_unread_errors(&api, errors);
+    refuse_served_tunnels(&api, "the api", errors);
     headers::check(&api.groups, Some((&api, &api.headers)), errors);
     fields::check_document(&api, "the api", errors);
 
@@ -342,6 +344,33 @@ fn refuse_unread_errors(api: &Api, errors: &mut ErrorList) {
         errors.push(Error::new_spanned(
             ty,
             "a contract with `#[client(none)]` takes no `#[error(...)]`: only its client would read the shape of its errors, so remove it",
+        ));
+    }
+}
+
+/// Refuses each route that returns a `TcpTunnel` in a contract with a server side, which `what` would leave out with
+/// `#[server(none)]`, the api or the group of a `quoll::group!`: quoll's server does not open a tunnel yet. The rule
+/// is read from the contract, whatever the features, so that a contract compiles alike with any of them.
+fn refuse_served_tunnels(api: &Api, what: &str, errors: &mut ErrorList) {
+    if !api.server {
+        return;
+    }
+
+    let tunnels = api
+        .groups
+        .iter()
+        .flat_map(|group| &group.routes)
+        .filter_map(|route| route.reply.as_deref())
+        .filter(|returned| returned.kind().upgrade.is_some());
+
+    for returned in tunnels {
+        let name = returned.known.map_or("TcpTunnel", |known| known.name);
+
+        errors.push(Error::new_spanned(
+            &returned.served,
+            format!(
+                "a route that returns `{name}` compiles only in a contract with no server side, as quoll's server does not open a tunnel yet: write `#[server(none)]` on {what}"
+            ),
         ));
     }
 }

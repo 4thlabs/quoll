@@ -1,0 +1,22 @@
+error[E0277]: `tunnel::TcpTunnel` is not quoll's `TcpTunnel`, which a result named `TcpTunnel` is read as
+  --> tests/compile_fail_neither/foreign_tcp_tunnel.rs:12:55
+   |
+12 |         POST "/exec/{id}/start" => start(id: &str) -> tunnel::TcpTunnel;
+   |                                                       ^^^^^^^^^^^^^^^^^ not `quoll::TcpTunnel`
+   |
+help: the trait `quoll::__private::known::IsTcpTunnel` is not implemented for `tunnel::TcpTunnel`
+  --> tests/compile_fail_neither/foreign_tcp_tunnel.rs:4:5
+   |
+ 4 |     pub struct TcpTunnel;
+   |     ^^^^^^^^^^^^^^^^^^^^
+   = note: bring quoll's into scope, `use quoll::TcpTunnel;`, or name a type of your own otherwise
+help: the trait `quoll::__private::known::IsTcpTunnel` is implemented for `quoll::TcpTunnel`
+  --> src/__private/known.rs
+   |
+   | impl IsTcpTunnel for TcpTunnel {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `quoll::__private::known::tcp_tunnel`
+  --> src/__private/known.rs
+   |
+   | pub const fn tcp_tunnel<T: IsTcpTunnel>() {}
+   |                            ^^^^^^^^^^^ required by this bound in `tcp_tunnel`

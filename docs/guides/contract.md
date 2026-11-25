@@ -386,6 +386,7 @@ quoll::api! {
 | `Events<T>`       | 200, server-sent events, or 204                                  | a stream of `T`    |
 | `JsonLines<T>`    | 200, one JSON value per line, or 204                             | a stream of `T`    |
 | `ByteStream`      | 200, bytes as they come, or 204                                  | a stream of bytes  |
+| `TcpTunnel`       | no server: the other api answers 101, the connection switched    | the connection     |
 
 A handler may answer a 204 or a 205, with `Status::NO_CONTENT` or `Status::RESET_CONTENT`. It may do so only for a
 value that may be empty:
@@ -419,7 +420,8 @@ A contract names these types of quoll:
 
 - `Created` and `Accepted`;
 - `Form`, `Text` and `Bytes`;
-- `Events`, `JsonLines` and `ByteStream`.
+- `Events`, `JsonLines` and `ByteStream`;
+- `TcpTunnel`, in a contract with `#[server(none)]` (see [A tunnel](#a-tunnel)).
 
 They are imported like any other type, `use quoll::Created;`, or named by their path, `quoll::Bytes`.
 
@@ -662,6 +664,88 @@ mod hooks {
   side that the api does not: that api leaves it out, and another api that lists the group may use it.
 - These do not compile: both on one contract, which would have no side, and an `#[openapi(...)]` beside
   `#[server(none)]`, which already leaves out the document.
+
+### A tunnel
+
+A route `-> TcpTunnel` asks the other api to switch its connection to `tcp`, as the Docker Engine API does for `exec`
+and `attach`. Its answer is a `101 Switching Protocols`, and then the connection carries the bytes both ways, raw.
+quoll's server does not open a tunnel yet, so the route compiles only in a contract with `#[server(none)]`:
+
+```rust,no_run
+use quoll::{TcpTunnel, client};
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ExecStart {
+    pub detach: bool,
+    pub tty: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DockerError {
+    pub message: String,
+}
+
+impl std::fmt::Display for DockerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+quoll::api! {
+    #[server(none)]
+    #[error(DockerError)]
+    pub api Docker = "/v1.47";
+
+    pub group Exec {
+        /// The command's input and output, on the connection.
+        POST "/exec/{id}/start" => start(id: &str, start: ExecStart) -> TcpTunnel;
+    }
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let docker = client::builder()
+        .http(|http| http.unix_socket("/var/run/docker.sock"))
+        .build::<Docker>("http://localhost")?;
+
+    let mut shell = docker
+        .exec()
+        .start("8f1c", ExecStart { detach: false, tty: true })
+        .await?;
+
+    shell.write_all(b"ls; exit\n").await?;
+
+    let mut output = Vec::new();
+    shell.read_to_end(&mut output).await?;
+
+    println!("{}", String::from_utf8_lossy(&output));
+    Ok(())
+}
+```
+
+- The request always sends `Connection: Upgrade` and `Upgrade: tcp`. The client's middlewares run on it as on any
+  call: its credentials, its `User-Agent`, its retries. It works over TCP and over a Unix socket.
+- The call gives a `TcpTunnel` once the other api has answered `101` with `Upgrade: tcp`, the case ignored. It reads
+  with tokio's `AsyncRead` and writes with its `AsyncWrite`, so `tokio::io::split` and `tokio::io::copy` take it.
+  `content_type()` gives the content type of the 101: Docker sends `application/vnd.docker.raw-stream` with a TTY,
+  and its frames, `application/vnd.docker.multiplexed-stream`, without one.
+- `shutdown()` closes the half the client writes: the other end sees the end of its input, as `cat` does, and the
+  other half stays open. Dropping the tunnel closes the connection.
+- `.timeout(d)` and `client::timeout` bound the wait for the 101 alone, as for the head of a stream. The tunnel has no
+  deadline, and after the 101 its failures are the `std::io::Error` of a read or a write.
+- An error answer, a 404 of an unknown exec, is read as on any route: `another api answered 404: No such exec
+  instance: 8f1c`. A 2xx in place of the 101, or a 101 to another protocol, is an error of the kind
+  `ErrorKind::Decode`. A 101 whose connection cannot be taken, because a middleware of the application's made a
+  response of its own, is `ErrorKind::Closed`. An answer in HTTP/2, which has no 101, is `ErrorKind::Invalid`: a
+  client that negotiates HTTP/2 over TLS is built with `.http(|http| http.http1_only())`.
+- `.response()` gives the whole 101, its status and its headers, and the tunnel as its body.
+- A fake returns `TcpTunnel::new(io)`, on one half of a `tokio::io::duplex`, with `with_content_type(..)` when the
+  content type matters.
+- The route has no server trait and no document, as every route of its contract. `TcpTunnel` is no body, no
+  parameter, and no `T` of a `Created<T>` or an `Accepted<T>`.
 
 ## Mistakes
 

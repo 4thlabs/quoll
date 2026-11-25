@@ -288,6 +288,16 @@ fn method(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
 
         quote! { .accept(::quoll::__private::client::#media_type) }
     });
+    // After the fixed headers, which HTTP's own `Connection` and `Upgrade` are never among.
+    let upgrade = route
+        .reply
+        .as_deref()
+        .and_then(|returned| returned.kind().upgrade)
+        .map(|upgrade| {
+            let upgrade = Ident::new(upgrade, Span::call_site());
+
+            quote! { .upgrade(::quoll::__private::client::#upgrade) }
+        });
     let answer = Ident::new("answer", Span::mixed_site());
     let read = match route.reply.as_deref() {
         None => quote_spanned! {route.span=> #answer.none() },
@@ -329,6 +339,7 @@ fn method(cx: &Cx, index: usize, route: &Route, shape: &Ident) -> TokenStream {
                         #body
                         .fixed(self.headers, &const { #fixed })
                         #accept
+                        #upgrade
                 ),
             );
 

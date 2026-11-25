@@ -35,6 +35,17 @@ pub enum Command {
         #[arg(short, long)]
         follow: bool,
     },
+    /// Runs a command in a container that runs: the command line's input is the command's, and its output each to
+    /// the command line's own, until the command ends.
+    Exec {
+        /// Runs the command in a TTY, whose output comes as it is, its errors with it.
+        #[arg(short, long)]
+        tty: bool,
+        container: String,
+        /// The command and its arguments.
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
     /// Writes the daemon's events as they happen, one a line.
     Events {
         /// Writes the events since this time first, in seconds since the Unix epoch.

@@ -17,6 +17,9 @@ tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-th
 
 [dev-dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+# The connection the fake daemon takes back from axum after its 101, as Docker does for `exec`.
+hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["io-util", "net", "process", "time"] }
 

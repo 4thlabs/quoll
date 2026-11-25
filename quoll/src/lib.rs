@@ -347,6 +347,7 @@
 //! | [`Accepted<T>`]   | 202, the JSON of `T`                                    | `T`                |
 //! | [`Text`]          | 200, `text/plain; charset=utf-8`                        | [`Text`]           |
 //! | [`Bytes`]         | 200, their content type                                 | [`Bytes`]          |
+//! | [`TcpTunnel`]     | none; the other api answers 101, switched to `tcp`      | the connection     |
 //!
 //! ```
 //! use quoll::{Accepted, Bytes, Created, Text};
@@ -389,11 +390,31 @@
 //! }
 //! ```
 //!
+//! # A tunnel
+//!
+//! A route of another API that switches its connection to raw bytes with a `101 Switching Protocols`, as Docker's
+//! `exec` does, returns a [`TcpTunnel`]: the client gives the connection, which reads and writes both ways. quoll's
+//! server does not open a tunnel yet, so such a route is in a contract with `#[server(none)]`.
+//!
+//! ```
+//! use quoll::TcpTunnel;
+//!
+//! quoll::api! {
+//!     #[server(none)]
+//!     pub api Docker = "/v1.47";
+//!
+//!     pub group Exec {
+//!         POST "/exec/{id}/start" => start(id: &str) -> TcpTunnel;
+//!     }
+//! }
+//! ```
+//!
 //! # The types a contract names
 //!
-//! The contract names [`Created`], [`Accepted`], [`Form`], [`Text`], [`Bytes`], [`Events`], [`JsonLines`] and
-//! [`ByteStream`] as it names any type: the module that writes it imports them, `use quoll::{Created, Form};`, or
-//! names them by their path, `quoll::Bytes`. A type of another crate with one of these names does not compile there.
+//! The contract names [`Created`], [`Accepted`], [`Form`], [`Text`], [`Bytes`], [`Events`], [`JsonLines`],
+//! [`ByteStream`] and [`TcpTunnel`] as it names any type: the module that writes it imports them,
+//! `use quoll::{Created, Form};`, or names them by their path, `quoll::Bytes`. A type of another crate with one of
+//! these names does not compile there.
 //!
 //! # Authentication
 //!
@@ -712,6 +733,7 @@ mod route;
 #[cfg(feature = "server")]
 pub mod server;
 pub(crate) mod stream;
+mod tcp_tunnel;
 #[cfg(feature = "server")]
 pub mod test;
 
@@ -733,3 +755,4 @@ pub(crate) use response::sealed::NoBody;
 pub use response::{Allows, IntoStatus, InvalidStatus, NoContent, Response, Status};
 pub use route::Route;
 pub use stream::{ByteStream, Events, JsonLines};
+pub use tcp_tunnel::TcpTunnel;

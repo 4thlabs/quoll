@@ -1,0 +1,13 @@
+error: the path parameter `tunnel` is read from text, which this type is not: use an integer, a `String`, a UUID or an enum of unit variants
+ --> tests/compile_fail/tcp_tunnel_path.rs:8:54
+  |
+8 |         GET "/exec/{tunnel}/json" => inspect(tunnel: TcpTunnel);
+  |                                                      ^^^^^^^^^
+
+warning: unused import: `quoll::TcpTunnel`
+ --> tests/compile_fail/tcp_tunnel_path.rs:1:5
+  |
+1 | use quoll::TcpTunnel;
+  |     ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
