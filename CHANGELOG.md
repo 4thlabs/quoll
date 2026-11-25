@@ -12,10 +12,12 @@ quoll is used from git, at a version's tag:
 
 ```toml
 [dependencies]
-quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
+quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.10.0" }
 ```
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-25
 
 ### Added
 
@@ -51,7 +53,6 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
   for `Invalid`.
 - `client::Attempt::kind()` gives the kind of an attempt to a rule of `retry(..).when`: `None` for an answer of a
   success status, `Status(status)` for any other answer.
-
 - `#[server(none)]` and `#[client(none)]` on an api, or on the group of a `quoll::group!`, say which side a contract
   does not have, whatever the features of `quoll`. Cargo builds `quoll` once per binary, with every feature its
   dependents ask for, so an application that serves its own api and calls another compiled the other's contract with a
@@ -72,7 +73,6 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
   a tunnel yet. A 2xx in place of the 101, or a 101 to another protocol, is an error of the kind `Decode`, a 101 whose
   connection cannot be taken `Closed`, and an answer in HTTP/2 `Invalid`. A fake returns `TcpTunnel::new(io)`. The
   Docker example runs a command in a container with `docker-cli exec`.
-
 - `server::Builder::send_timeout(duration)` and `without_send_timeout()`: a connection is cut once the bound, 60 s
   unless it is set, has passed with no write of an answer that its socket takes, as nginx's `send_timeout`
   ([#128](https://github.com/4thlabs/quoll/issues/128)). The clock runs only while a write waits, and stops when the
@@ -177,7 +177,8 @@ keeps a frontend in sync with it. It needs Rust 1.91 or later.
 - **Serving the page**: `server::builder().page(dir)` serves a built page beside the api, on one origin. A page's
   router gets `index.html` for its paths, and the files Vite names by their hash are cached for a year.
 
-[Unreleased]: https://github.com/4thlabs/quoll/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/4thlabs/quoll/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/4thlabs/quoll/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/4thlabs/quoll/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/4thlabs/quoll/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/4thlabs/quoll/releases/tag/v0.9.0

@@ -6,7 +6,7 @@ exclude = ["examples/notes", "examples/docker", "quoll-cli/tests/fixture"]
 resolver = "3"
 
 [workspace.package]
-version = "0.9.2"
+version = "0.10.0"
 edition = "2024"
 # The oldest Rust that builds and tests the crates. quoll-cli's watcher, notify-types, needs 1.91, and so does the
 # code the macro writes, which calls `TypeId::of` in a constant. It is raised only in a minor version.
