@@ -365,13 +365,18 @@ fn refuse_served_tunnels(api: &Api, what: &str, errors: &mut ErrorList) {
 
     for returned in tunnels {
         let name = returned.known.map_or("TcpTunnel", |known| known.name);
-
-        errors.push(Error::new_spanned(
-            &returned.served,
+        // A contract with no client would then have no side: the tunnel needs the client, and the client alone.
+        let message = if api.client {
             format!(
                 "a route that returns `{name}` compiles only in a contract with no server side, as quoll's server does not open a tunnel yet: write `#[server(none)]` on {what}"
-            ),
-        ));
+            )
+        } else {
+            format!(
+                "a route that returns `{name}` needs the client side, and no server side, as quoll's server does not open a tunnel yet: remove `#[client(none)]` and write `#[server(none)]` on {what}"
+            )
+        };
+
+        errors.push(Error::new_spanned(&returned.served, message));
     }
 }
 

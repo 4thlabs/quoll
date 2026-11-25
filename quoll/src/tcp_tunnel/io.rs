@@ -49,16 +49,19 @@ impl TcpTunnel {
     /// The same tunnel, of `content_type`, a media type as `Content-Type` writes it: what a fake says of its bytes,
     /// as `application/vnd.docker.raw-stream`.
     #[must_use]
-    pub fn with_content_type(self, content_type: impl Into<Cow<'static, str>>) -> Self {
+    pub fn with_content_type(self, content_type: impl Into<String>) -> Self {
         Self {
-            content_type: content_type.into(),
+            content_type: Cow::Owned(content_type.into()),
             ..self
         }
     }
 
     /// The tunnel of a connection reqwest gave back, of the content type of its 101.
     pub(crate) fn upgraded(upgraded: reqwest::Upgraded, content_type: Cow<'static, str>) -> Self {
-        Self::new(upgraded).with_content_type(content_type)
+        Self {
+            content_type,
+            ..Self::new(upgraded)
+        }
     }
 }
 

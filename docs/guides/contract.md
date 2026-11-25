@@ -727,7 +727,8 @@ async fn main() -> anyhow::Result<()> {
 ```
 
 - The request always sends `Connection: Upgrade` and `Upgrade: tcp`. The client's middlewares run on it as on any
-  call: its credentials, its `User-Agent`, its retries. It works over TCP and over a Unix socket.
+  call: its credentials, its `User-Agent`, its retries. For a rule of `client::retry(..).when`, the 101 is a success:
+  `attempt.kind()` is `None`. It works over TCP and over a Unix socket.
 - The call gives a `TcpTunnel` once the other api has answered `101` with `Upgrade: tcp`, the case ignored. It reads
   with tokio's `AsyncRead` and writes with its `AsyncWrite`, so `tokio::io::split` and `tokio::io::copy` take it.
   `content_type()` gives the content type of the 101: Docker sends `application/vnd.docker.raw-stream` with a TTY,

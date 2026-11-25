@@ -1,3 +1,6 @@
+use std::process::ExitCode;
+
+use anyhow::bail;
 use docker_api::{Containers, DockerClient, Exec, ExecStart, NewExec, System};
 use futures::StreamExt;
 use quoll::ErrorKind;
@@ -12,20 +15,23 @@ use crate::utils::{error_chain, short_id};
 /// no frame.
 const RAW_STREAM: &str = "application/vnd.docker.raw-stream";
 
-pub async fn run(docker: &DockerClient, command: Command) -> anyhow::Result<()> {
+/// Runs `command`: the code the command line exits with, the one of the command it ran for `exec`.
+pub async fn run(docker: &DockerClient, command: Command) -> anyhow::Result<ExitCode> {
     match command {
-        Command::Ps { all } => ps(docker, all).await,
-        Command::Inspect { container } => inspect(docker, container).await,
-        Command::Start { container } => start(docker, container).await,
-        Command::Stop { container, timeout } => stop(docker, container, timeout).await,
-        Command::Logs { container, follow } => logs(docker, container, follow).await,
+        Command::Ps { all } => ps(docker, all).await?,
+        Command::Inspect { container } => inspect(docker, container).await?,
+        Command::Start { container } => start(docker, container).await?,
+        Command::Stop { container, timeout } => stop(docker, container, timeout).await?,
+        Command::Logs { container, follow } => logs(docker, container, follow).await?,
         Command::Exec {
             tty,
             container,
             command,
-        } => exec(docker, container, tty, command).await,
-        Command::Events { since } => events(docker, since).await,
+        } => return exec(docker, container, tty, command).await,
+        Command::Events { since } => events(docker, since).await?,
     }
+
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn ps(docker: &DockerClient, all: bool) -> anyhow::Result<()> {
@@ -130,7 +136,7 @@ async fn exec(
     container: String,
     tty: bool,
     command: Vec<String>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ExitCode> {
     let created = docker
         .exec()
         .create(
@@ -151,10 +157,13 @@ async fn exec(
     let framed = !tunnel.has_type(RAW_STREAM);
     let (mut from_command, mut to_command) = tokio::io::split(tunnel);
 
-    // The command's input, until the command line's own ends: the half-close tells Docker, which closes the command's.
+    // The command's input, until the command line's own ends. The half-close tells Docker, which closes the command's:
+    // it comes whatever the copy gave, so that a command such as `cat` never waits for an input that has stopped.
     let sending = tokio::spawn(async move {
-        tokio::io::copy(&mut tokio::io::stdin(), &mut to_command).await?;
-        to_command.shutdown().await
+        let copied = tokio::io::copy(&mut tokio::io::stdin(), &mut to_command).await;
+        let closed = to_command.shutdown().await;
+
+        copied.map(drop).and(closed)
     });
 
     let mut demux = Demux::default();
@@ -186,9 +195,25 @@ async fn exec(
         stderr.flush().await?;
     }
 
-    // The command has ended: what is left of the input goes nowhere.
-    sending.abort();
-    Ok(demux.finish()?)
+    demux.finish()?;
+
+    // The command has ended: what is left of the input goes nowhere. An input that failed is said, the command's own
+    // code still the one the command line exits with.
+    if sending.is_finished() {
+        if let Ok(Err(error)) = sending.await {
+            eprintln!("warning: the command's input was not all sent: {error}");
+        }
+    } else {
+        sending.abort();
+    }
+
+    // Docker sets the code before it closes the command's streams.
+    let Some(code) = docker.exec().inspect(&created.id).await?.exit_code else {
+        bail!("the command's streams ended, and Docker gives no exit code for it");
+    };
+
+    // A code that no process exits with, outside 0 to 255, is a failure all the same.
+    Ok(u8::try_from(code).map_or(ExitCode::FAILURE, ExitCode::from))
 }
 
 async fn events(docker: &DockerClient, since: Option<i64>) -> anyhow::Result<()> {
