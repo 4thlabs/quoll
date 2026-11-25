@@ -44,8 +44,9 @@ note: required because it's used within this `async` fn body
    |
    |       async fn connect(&mut self) -> Followed<T, E> {
    |  ___________________________________________________^
-   | |         if let Some(wait) = self.wait.take() {
-   | |             tokio::time::sleep(wait).await;
+   | |         match self.resume.take() {
+   | |             Some(Resume::At(at)) => tokio::time::sleep_until(at).await,
+   | |             Some(Resume::After(wait)) => tokio::time::sleep(wait).await,
 ...  |
    | |     }
    | |_____^
@@ -84,6 +85,8 @@ note: required because it appears within the type `Box<impl Stream<Item = Follow
   --> $RUST/alloc/src/boxed.rs
 note: required because it appears within the type `Pin<Box<impl Stream<Item = Followed<String>>>>`
   --> $RUST/core/src/pin.rs
+note: required because it appears within the type `Option<Pin<Box<impl Stream<Item = Followed<String>>>>>`
+  --> $RUST/core/src/option.rs
 note: required because it appears within the type `Following<impl Stream<Item = Followed<String>>>`
   --> src/client/follow.rs
    |

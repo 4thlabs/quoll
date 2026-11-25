@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use futures_util::stream::FusedStream;
 use futures_util::{Stream, StreamExt, future, stream};
 use http::StatusCode;
 use quoll::client::{self, Followed, Reconnect};
@@ -128,7 +129,9 @@ fn name(followed: &Followed<Change>) -> String {
 }
 
 /// The fake followed with no jitter.
-fn followed(fake: &'static Fake) -> impl Stream<Item = Followed<Change>> + Send + Unpin + 'static {
+fn followed(
+    fake: &'static Fake,
+) -> impl FusedStream<Item = Followed<Change>> + Send + Unpin + 'static {
     Reconnect::new()
         .without_jitter()
         .follow(async move || fake.changes().await)
@@ -653,4 +656,173 @@ async fn a_spawned_follow_runs_on_its_own_task() {
     });
 
     assert_eq!(receiver.recv().await.as_deref(), Some("note"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn gives_none_again_when_polled_after_its_end() {
+    let fake = Fake::leak([answered(StatusCode::NOT_FOUND)]);
+    let mut followed = followed(fake);
+
+    assert!(matches!(followed.next().await, Some(Followed::Stopped(_))));
+    assert!(!followed.is_terminated());
+    assert!(followed.next().await.is_none());
+    assert!(followed.is_terminated());
+
+    // As a `select!` loop polls it, once more after its end.
+    assert!(followed.next().await.is_none());
+    assert!(followed.is_terminated());
+    assert_eq!(fake.calls(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_steady_past_what_the_clock_counts_never_holds_a_connection() {
+    let fake = Fake::leak([
+        Connection::Sends(Vec::new()),
+        Connection::Opens(Duration::from_secs(3600)),
+        Connection::Sends(Vec::new()),
+    ]);
+    let reconnect = Reconnect::new().without_jitter().steady(Duration::MAX);
+
+    let followed: Vec<_> = reconnect
+        .follow(async move || fake.changes().await)
+        .take(5)
+        .map(|followed| name(&followed))
+        .collect()
+        .await;
+
+    assert_eq!(
+        followed,
+        [
+            "connected",
+            "ended, again in 1s",
+            "connected",
+            "ended, again in 2s",
+            "connected"
+        ]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_wait_past_what_the_clock_counts_is_waited() {
+    for reconnect in [Reconnect::new(), Reconnect::new().without_jitter()] {
+        let fake = Fake::leak([failed(ErrorKind::Connect), Connection::Sends(Vec::new())]);
+        let mut followed = reconnect
+            .first(Duration::MAX)
+            .longest(Duration::MAX)
+            .follow(async move || fake.changes().await);
+
+        let Some(Followed::Reconnecting { wait, .. }) = followed.next().await else {
+            panic!("a failure");
+        };
+
+        assert!(wait >= Duration::MAX / 2, "{wait:?}");
+
+        // The route is not called again within a year.
+        let year = Duration::from_secs(365 * 24 * 3600);
+
+        assert!(tokio::time::timeout(year, followed.next()).await.is_err());
+        assert_eq!(fake.calls(), 1);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn draws_a_wait_of_the_longest_bound_within_it() {
+    for _ in 0..100 {
+        let fake = Fake::leak([failed(ErrorKind::Connect)]);
+        let mut followed = Reconnect::new()
+            .first(Duration::MAX)
+            .follow(async move || fake.changes().await);
+
+        let Some(Followed::Reconnecting { wait, .. }) = followed.next().await else {
+            panic!("a failure");
+        };
+
+        // `first` is cut to the longest, 30 s.
+        assert!(wait >= Duration::from_secs(15) && wait <= Duration::from_secs(30));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn waits_grow_after_a_first_of_zero() {
+    let fake = Fake::leak((0..4).map(|_| failed(ErrorKind::Connect)));
+    let reconnect = Reconnect::new().without_jitter().first(Duration::ZERO);
+
+    let waits = waits(reconnect.follow(async move || fake.changes().await).take(4)).await;
+
+    assert_eq!(waits, [0, 1, 2, 4].map(Duration::from_millis));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_longest_of_zero_is_raised_to_a_millisecond() {
+    let fake = Fake::leak((0..3).map(|_| failed(ErrorKind::Connect)));
+    let reconnect = Reconnect::new().without_jitter().longest(Duration::ZERO);
+
+    let waits = waits(reconnect.follow(async move || fake.changes().await).take(3)).await;
+
+    assert_eq!(waits, [1, 1, 1].map(Duration::from_millis));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_reader_always_behind_holds_a_connection_that_stays_open() {
+    let fake = Fake::leak([
+        Connection::Sends(Vec::new()),
+        Connection::Sends(vec![Ok(change("a")), Ok(change("b")), Ok(change("c"))]),
+        Connection::Sends(Vec::new()),
+    ]);
+    let mut followed = followed(fake);
+    let mut seen = Vec::new();
+
+    for _ in 0..3 {
+        seen.push(name(&followed.next().await.expect("a state")));
+    }
+
+    // The stream is ready each time the reader comes back: the deadline passes between two items.
+    for _ in 0..4 {
+        tokio::time::sleep(STEADY * 6 / 10).await;
+        seen.push(name(&followed.next().await.expect("a state")));
+    }
+
+    assert_eq!(
+        seen,
+        [
+            "connected",
+            "ended, again in 1s",
+            "connected",
+            "item a",
+            "item b",
+            "item c",
+            "ended, again in 1s"
+        ]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn counts_a_wait_from_when_it_is_given() {
+    let fake = Fake::leak([failed(ErrorKind::Connect), Connection::Sends(Vec::new())]);
+    let mut followed = followed(fake);
+    let started = Instant::now();
+
+    assert_eq!(
+        name(&followed.next().await.expect("a state")),
+        "failed connect, again in 1s"
+    );
+
+    // The consumer takes longer than the wait to handle it: the route is called as soon as it reads again.
+    tokio::time::sleep(Duration::from_secs(20)).await;
+
+    assert!(matches!(followed.next().await, Some(Followed::Connected)));
+    assert_eq!(started.elapsed(), Duration::from_secs(20));
+}
+
+/// The waits of the states that `followed` gives.
+async fn waits(followed: impl Stream<Item = Followed<Change>>) -> Vec<Duration> {
+    followed
+        .filter_map(|followed| async move {
+            match followed {
+                Followed::Reconnecting { wait, .. } => Some(wait),
+                _ => None,
+            }
+        })
+        .collect()
+        .await
 }

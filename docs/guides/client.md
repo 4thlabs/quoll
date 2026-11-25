@@ -484,12 +484,13 @@ that `follow` gives is then `'static`, and `Send`, so that a task can take it wi
 
 The stream gives a `Followed` for each thing that happens:
 
-- `Connected` when the route answers with its stream. It comes first, and after each reconnection. Items may have
-  been missed in between, so a consumer that keeps a state reloads it there.
+- `Connected` each time a call is answered with its stream. A first call that fails gives `Reconnecting`, or
+  `Stopped`, before any `Connected`. Items may have been missed before each one, so a consumer that keeps a state
+  reloads it there.
 - `Item(T)` for each item.
 - `Skipped(error)` for an item that does not read. The connection goes on.
 - `Reconnecting { error, wait }` when the stream ended, `error` being `None`, or failed. The route is called again
-  after `wait`.
+  `wait` after this state is given, even if the consumer takes a while to read the next one.
 - `Stopped(error)` when calling again would fail the same way. It is the last one, and the stream ends after it.
 
 There is no `Result` around them, so a `?` on each item does not stop the consumer on an item that does not read.
@@ -513,7 +514,10 @@ A 401 that reaches `follow` stops it, as `bearer_from` has already sent the call
 The first call is made at once. After it, each wait is drawn at random between half a bound and the bound. The bound
 starts at 1 s and doubles after each wait, up to 30 s. A connection that stays open 10 s has held: the bound after it
 starts again from 1 s. Items do not count, only the time: a server that sends an item and then closes each connection
-is called less and less often.
+is called less and less often. An item read after the 10 s holds the connection, even when the consumer is behind.
+
+A zero `first` calls again at once the first time, then the bound doubles from 1 ms. A `longest` below 1 ms is raised
+to 1 ms, and a `first` above `longest` is cut to it. A `steady` of `Duration::MAX` never counts a connection as held.
 
 `client::Reconnect` sets them:
 
