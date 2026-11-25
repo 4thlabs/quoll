@@ -32,7 +32,7 @@ the page                       Vite here, Next.js or any other bundler
 `cargo quoll` is installed from git, at the tag of the version of quoll that the contract uses:
 
 ```bash
-cargo install --git https://github.com/4thlabs/quoll --tag v0.9.2 quoll-cli
+cargo install --git https://github.com/4thlabs/quoll --tag v0.10.0 quoll-cli
 ```
 
 ## The config
@@ -910,7 +910,7 @@ web:
         cache-dependency-path: web/package-lock.json
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
-    - run: cargo install --git https://github.com/4thlabs/quoll --tag v0.9.2 quoll-cli --locked
+    - run: cargo install --git https://github.com/4thlabs/quoll --tag v0.10.0 quoll-cli --locked
     - run: npm ci
       working-directory: web
     - run: cargo quoll build
