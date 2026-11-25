@@ -1592,6 +1592,8 @@ dependencies = [
  "futures-util",
  "http",
  "httpdate",
+ "hyper",
+ "hyper-util",
  "jsonschema",
  "percent-encoding",
  "pin-project-lite",

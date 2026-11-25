@@ -1,14 +1,15 @@
-use docker_api::{Containers, DockerClient, System};
+use docker_api::{Containers, DockerClient, Exec, ExecStart, NewExec, System};
 use futures::StreamExt;
 use quoll::ErrorKind;
 use reqwest::StatusCode;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::args::Command;
 use crate::frames::{Demux, Output};
 use crate::utils::{error_chain, short_id};
 
-/// The content type of the logs of a container with a TTY: its bytes as they are, in no frame.
+/// The content type of the output of a TTY, the logs of a container or a command run in it: its bytes as they are, in
+/// no frame.
 const RAW_STREAM: &str = "application/vnd.docker.raw-stream";
 
 pub async fn run(docker: &DockerClient, command: Command) -> anyhow::Result<()> {
@@ -18,6 +19,11 @@ pub async fn run(docker: &DockerClient, command: Command) -> anyhow::Result<()> 
         Command::Start { container } => start(docker, container).await,
         Command::Stop { container, timeout } => stop(docker, container, timeout).await,
         Command::Logs { container, follow } => logs(docker, container, follow).await,
+        Command::Exec {
+            tty,
+            container,
+            command,
+        } => exec(docker, container, tty, command).await,
         Command::Events { since } => events(docker, since).await,
     }
 }
@@ -116,6 +122,72 @@ async fn logs(docker: &DockerClient, container: String, follow: bool) -> anyhow:
         stderr.flush().await?;
     }
 
+    Ok(demux.finish()?)
+}
+
+async fn exec(
+    docker: &DockerClient,
+    container: String,
+    tty: bool,
+    command: Vec<String>,
+) -> anyhow::Result<()> {
+    let created = docker
+        .exec()
+        .create(
+            &container,
+            NewExec {
+                cmd: command,
+                attach_stdin: true,
+                attach_stdout: true,
+                attach_stderr: true,
+                tty,
+            },
+        )
+        .await?;
+    let tunnel = docker
+        .exec()
+        .start(&created.id, ExecStart { detach: false, tty })
+        .await?;
+    let framed = !tunnel.has_type(RAW_STREAM);
+    let (mut from_command, mut to_command) = tokio::io::split(tunnel);
+
+    // The command's input, until the command line's own ends: the half-close tells Docker, which closes the command's.
+    let sending = tokio::spawn(async move {
+        tokio::io::copy(&mut tokio::io::stdin(), &mut to_command).await?;
+        to_command.shutdown().await
+    });
+
+    let mut demux = Demux::default();
+    let mut stdout = tokio::io::stdout();
+    let mut stderr = tokio::io::stderr();
+    let mut chunk = vec![0; 8192];
+
+    loop {
+        let read = from_command.read(&mut chunk).await?;
+
+        if read == 0 {
+            break;
+        }
+
+        if !framed {
+            stdout.write_all(&chunk[..read]).await?;
+            stdout.flush().await?;
+            continue;
+        }
+
+        for (output, bytes) in demux.push(&chunk[..read])? {
+            match output {
+                Output::Stdout => stdout.write_all(bytes).await?,
+                Output::Stderr => stderr.write_all(bytes).await?,
+            }
+        }
+
+        stdout.flush().await?;
+        stderr.flush().await?;
+    }
+
+    // The command has ended: what is left of the input goes nowhere.
+    sending.abort();
     Ok(demux.finish()?)
 }
 

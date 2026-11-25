@@ -26,8 +26,9 @@ Quoll is a Rust library, edition 2024, built with the latest stable Rust. The ru
 - Features are additive and off by default: `server` adds axum, `client` adds reqwest. Code behind a feature carries
   `#[cfg(feature = "...")]` on the module rather than on each item.
 - The dependencies the spec names are part of the API: axum's `Router`, reqwest-middleware's `ClientWithMiddleware`,
-  http's `StatusCode`, `Method` and `HeaderMap`, which axum and reqwest both use, serde and schemars. Any other
-  dependency stays out of public signatures, so that it can be replaced.
+  http's `StatusCode`, `Method` and `HeaderMap`, which axum and reqwest both use, tokio's `AsyncRead` and `AsyncWrite`,
+  which `TcpTunnel` implements, serde and schemars. Any other dependency stays out of public signatures, so that it
+  can be replaced.
 - No `unsafe`. A need for it goes to the maintainer first.
 
 ## The macro

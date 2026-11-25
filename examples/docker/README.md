@@ -19,6 +19,7 @@ cargo run -p docker-cli -- inspect web
 cargo run -p docker-cli -- start web
 cargo run -p docker-cli -- stop web -t 5
 cargo run -p docker-cli -- logs -f web
+echo hello | cargo run -p docker-cli -- exec web cat
 cargo run -p docker-cli -- events --since 1763632800
 ```
 
@@ -46,6 +47,13 @@ TLS, `DOCKER_TLS_VERIFY` and `ssh://` are not supported.
   (`application/vnd.docker.multiplexed-stream`). Each frame is a header of 8 bytes, then its bytes. The header holds
   the stream, three zeros and the size. The command line splits the frames, across chunks, and writes stdout and
   stderr each to its own stream. With a TTY (`application/vnd.docker.raw-stream`), it writes the bytes as they come.
+- **exec.** `docker-cli exec <container> <command>...` makes the command with `POST /containers/{id}/exec`, then
+  starts it with `POST /exec/{id}/start`, a route `-> TcpTunnel`. Docker answers `101 Switching Protocols`, and the
+  connection carries the command's input and output. The command line copies its own input into the tunnel, and
+  closes the half it writes when its input ends, which Docker passes on as the end of the command's input, as `cat`
+  needs. It reads the output as it reads the logs: frames without a TTY, the bytes as they are with `-t`, as the
+  content type of the 101 says. Its runtime does not wait, at the end, for a read of its own input that may never
+  end. `resize` sets the size of a TTY, which the test against a real daemon checks with `stty size`.
 - **The events.** `JsonLines<Event>`. Docker 29 and later send them as `application/jsonl`, and older versions as
   `application/json`, which quoll's client also reads as JSON Lines. quoll's client reads the progress of a pull the
   same way. The command line skips an event of a kind newer than itself, which it does not read, with a warning on
@@ -55,6 +63,6 @@ TLS, `DOCKER_TLS_VERIFY` and `ssh://` are not supported.
 
 `cli/tests/cli.rs` runs each command against a fake daemon written with axum, on port 0 and on a Unix socket.
 `cli/tests/daemon.rs` runs them against a real daemon: it pulls `alpine:3`, makes a container, then starts it, reads
-its logs and its events, stops it and removes it. When nothing listens where the daemon would, the test says it is
+its logs and its events, runs `cat` and a shell in it, stops it and removes it. When nothing listens where the daemon would, the test says it is
 skipped and passes, unless `DOCKER_CLI_TEST_DAEMON=required` is set. CI sets it on its runners, where Docker runs.
 `cargo test` in this directory runs both.

@@ -40,6 +40,9 @@ pub(crate) struct ResultKind {
     /// Whether the document has the schema of the type: its own for JSON, the one it wraps for the others, none for
     /// text and bytes.
     pub(crate) schema: bool,
+    /// The protocol the request asks its connection be switched to, a constant of `quoll::__private::client`, for a
+    /// result that is that connection: its answer is a 101.
+    pub(crate) upgrade: Option<&'static str>,
 }
 
 impl ResultKind {
@@ -68,6 +71,14 @@ impl ResultKind {
     pub(crate) const BYTE_STREAM: Self =
         Self::new("byte_stream", "ANY", "byte_stream", "ByteStream", false);
 
+    /// `TcpTunnel`: 101, the connection switched to `tcp`. Only the client reads it: a route that returns it is in a
+    /// contract with no server side and no document, which the macro checks, so that its `answer` and its `document`
+    /// are never written.
+    pub(crate) const TCP_TUNNEL: Self = Self {
+        upgrade: Some("TCP"),
+        ..Self::new("tcp_tunnel", "ANY", "tcp_tunnel", "TcpTunnel", false)
+    };
+
     const fn new(
         answer: &'static str,
         accept: &'static str,
@@ -82,6 +93,7 @@ impl ResultKind {
             unwrapped: false,
             document,
             schema,
+            upgrade: None,
         }
     }
 
@@ -93,6 +105,7 @@ impl ResultKind {
             unwrapped: true,
             document,
             schema: true,
+            upgrade: None,
         }
     }
 }
@@ -235,6 +248,15 @@ pub(crate) const KNOWN: &[Known] = &[
         check: "byte_stream",
         wraps: None,
         result: Some(ResultKind::BYTE_STREAM),
+        body: None,
+        stream: true,
+    },
+    // A stream for every rule streams follow: `client::timeout` bounds the head of its answer, the 101, alone.
+    Known {
+        name: "TcpTunnel",
+        check: "tcp_tunnel",
+        wraps: None,
+        result: Some(ResultKind::TCP_TUNNEL),
         body: None,
         stream: true,
     },

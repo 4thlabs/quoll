@@ -1,8 +1,8 @@
-use quoll::{ByteStream, JsonLines};
+use quoll::{ByteStream, JsonLines, TcpTunnel};
 
 use crate::{
-    ContainerInspect, ContainerSummary, CreatedContainer, DockerError, Event, NewContainer,
-    PullProgress, Version,
+    ContainerInspect, ContainerSummary, CreatedContainer, CreatedExec, DockerError, Event,
+    ExecStart, NewContainer, NewExec, PullProgress, Version,
 };
 
 quoll::api! {
@@ -24,6 +24,17 @@ quoll::api! {
                => logs(id: &str, follow: bool, stdout: bool, stderr: bool) -> ByteStream;
         POST   "/containers/create?name={name}" => create(name: Option<&str>, container: NewContainer) -> CreatedContainer;
         DELETE "/containers/{id}?force={force}" => remove(id: &str, force: bool);
+    }
+
+    /// A command run in a container that runs.
+    pub group Exec {
+        POST "/containers/{id}/exec" => create(id: &str, exec: NewExec) -> CreatedExec;
+        /// The command's streams on the connection, once its 101 has switched it to `tcp`: its input written, and its
+        /// output read, as it is with a TTY, `application/vnd.docker.raw-stream`, in Docker's frames without one,
+        /// `application/vnd.docker.multiplexed-stream`.
+        POST "/exec/{id}/start" => start(id: &str, start: ExecStart) -> TcpTunnel;
+        /// The size of the TTY of a command that has one, in characters.
+        POST "/exec/{id}/resize?h={h}&w={w}" => resize(id: &str, h: u16, w: u16);
     }
 
     pub group Images {

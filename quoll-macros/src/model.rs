@@ -936,7 +936,11 @@ fn check_body(method: Method, name: &Ident, ty: &Type, earlier: Option<&Ident>) 
         && known.body.is_none()
     {
         let result = known.name;
-        let message = if known.stream {
+        let message = if known.result.is_some_and(|kind| kind.upgrade.is_some()) {
+            format!(
+                "`{result}` is the connection a route's 101 opens, not a body it reads: take what the request sends as its body, and write to the tunnel the route returns"
+            )
+        } else if known.stream {
             format!(
                 "`{result}` is a stream a route answers, and a route does not read a stream as its body: take all the items at once, a `Vec<Note>` as JSON, or `Bytes`"
             )
@@ -990,6 +994,21 @@ impl Returned {
             .transpose()?;
 
         // A `Created<T>` or an `Accepted<T>` answers the JSON of its `T`, which a type of quoll's is not.
+        if kind.unwrapped
+            && let Some(inner) = &inner
+            && let Some(other) = Known::of(inner)
+            && other.result.is_some_and(|kind| kind.upgrade.is_some())
+        {
+            return Err(Error::new_spanned(
+                inner,
+                format!(
+                    "a `{wrapper}<T>` answers the JSON of its `T`, which a `{other}` is not: a tunnel is opened by a 101, so return `-> {other}`",
+                    wrapper = known.name,
+                    other = other.name,
+                ),
+            ));
+        }
+
         if kind.unwrapped
             && let Some(inner) = &inner
             && let Some(other) = Known::of(inner)
