@@ -4,7 +4,8 @@
 //!
 //! The kernel's buffers absorb several MiB of an answer before a write waits, about 6 MiB on loopback: the clock runs
 //! only from then on. The default of 60 s is tested under tokio's paused clock, which jumps to the cut once the server
-//! has nothing to do but wait for the client; a slow reader in real time, as the paused clock would jump its pauses too.
+//! has nothing to do but wait for the client; a slow reader in real time, as the paused clock would jump its pauses
+//! too.
 
 #![cfg(feature = "server")]
 
