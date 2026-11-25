@@ -1,0 +1,103 @@
+error: future cannot be sent between threads safely
+  --> tests/compile_fail_client/follow_not_send.rs:19:5
+   |
+19 | /     tokio::spawn(async move {
+20 | |         let mut changes = client::follow(async move || feed.changes().await);
+21 | |
+22 | |         while let Some(Followed::Item(_)) = changes.next().await {}
+23 | |     });
+   | |______^ future created by async block is not `Send`
+   |
+   = help: within `{async block@$DIR/tests/compile_fail_client/follow_not_send.rs:19:18: 19:28}`, the trait `Send` is not implemented for `Rc<FeedClient>`
+note: captured value is not `Send`
+  --> tests/compile_fail_client/follow_not_send.rs:20:56
+   |
+20 |         let mut changes = client::follow(async move || feed.changes().await);
+   |                                                        ^^^^ has type `Rc<FeedClient>` which is not `Send`
+note: required by a bound in `tokio::spawn`
+  --> $CARGO/tokio-$VERSION/src/task/spawn.rs
+   |
+   |     pub fn spawn<F>(future: F) -> JoinHandle<F::Output>
+   |     where
+   |         F: Future + Send + 'static,
+   |                     ^^^^ required by this bound in `spawn`
+
+error[E0277]: `Rc<FeedClient>` cannot be shared between threads safely
+  --> tests/compile_fail_client/follow_not_send.rs:19:5
+   |
+19 | /     tokio::spawn(async move {
+20 | |         let mut changes = client::follow(async move || feed.changes().await);
+21 | |
+22 | |         while let Some(Followed::Item(_)) = changes.next().await {}
+23 | |     });
+   | |______^ `Rc<FeedClient>` cannot be shared between threads safely
+   |
+   = help: the trait `Sync` is not implemented for `Rc<FeedClient>`
+   = note: required for `&Rc<FeedClient>` to implement `Send`
+note: required because it's used within this `async` closure body
+  --> tests/compile_fail_client/follow_not_send.rs:20:56
+   |
+20 |         let mut changes = client::follow(async move || feed.changes().await);
+   |                                                        ^^^^^^^^^^^^^^^^^^^^
+note: required because it's used within this `async` fn body
+  --> src/client/follow.rs
+   |
+   |       async fn connect(&mut self) -> Followed<T, E> {
+   |  ___________________________________________________^
+   | |         if let Some(wait) = self.wait.take() {
+   | |             tokio::time::sleep(wait).await;
+...  |
+   | |     }
+   | |_____^
+note: required because it's used within this `async` fn body
+  --> src/client/follow.rs
+   |
+   |       async fn next(mut self) -> Option<(Followed<T, E>, Self)> {
+   |  _______________________________________________________________^
+   | |         if self.stopped {
+   | |             return None;
+...  |
+   | |     }
+   | |_____^
+note: required because it appears within the type `futures_util::unfold_state::UnfoldState<client::follow::State<{async closure@$DIR/tests/compile_fail_client/follow_not_send.rs:20:42: 20:55}, JsonLines<String>>, impl futures_util::Future<Output = Option<(Followed<String>, client::follow::State<{async closure@$DIR/tests/compile_fail_client/follow_not_send.rs:20:42: 20:55}, JsonLines<String>>)>>>`
+  --> $CARGO/futures-util-$VERSION/src/unfold_state.rs
+   |
+   |     pub(crate) enum UnfoldState<T, R> {
+   |                     ^^^^^^^^^^^
+note: required because it appears within the type `Unfold<client::follow::State<{async closure@$DIR/tests/compile_fail_client/follow_not_send.rs:20:42: 20:55}, JsonLines<String>>, fn(client::follow::State<{async closure@$DIR/tests/compile_fail_client/follow_not_send.rs:20:42: 20:55}, JsonLines<String>>) -> impl futures_util::Future<Output = Option<(Followed<String>, client::follow::State<{async closure@$DIR/tests/compile_fail_client/follow_not_send.rs:20:42: 20:55}, JsonLines<String>>)>> {client::follow::State::<{async closure@$DIR/tests/compile_fail_client/follow_not_send.rs:20:42: 20:55}, JsonLines<String>>::next}, impl futures_util::Future<Output = Option<(Followed<String>, client::follow::State<{async closure@$DIR/tests/compile_fail_client/follow_not_send.rs:20:42: 20:55}, JsonLines<String>>)>>>`
+  --> $CARGO/futures-util-$VERSION/src/stream/unfold.rs
+   |
+   |     pub struct Unfold<T, F, Fut> {
+   |                ^^^^^^
+note: required because it appears within the type `impl Stream<Item = Followed<String>>`
+  --> src/client/follow.rs
+   |
+   |     pub fn follow<F, S, T, E>(self, open: F) -> Following<impl Stream<Item = Followed<T, E>>>
+   |                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `impl Stream<Item = Followed<String>>`
+  --> src/client/follow.rs
+   |
+   | pub fn follow<F, S, T, E>(open: F) -> Following<impl Stream<Item = Followed<T, E>>>
+   |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for `std::ptr::Unique<impl Stream<Item = Followed<String>>>` to implement `Send`
+note: required because it appears within the type `Box<impl Stream<Item = Followed<String>>>`
+  --> $RUST/alloc/src/boxed.rs
+note: required because it appears within the type `Pin<Box<impl Stream<Item = Followed<String>>>>`
+  --> $RUST/core/src/pin.rs
+note: required because it appears within the type `Following<impl Stream<Item = Followed<String>>>`
+  --> src/client/follow.rs
+   |
+   | pub struct Following<S> {
+   |            ^^^^^^^^^
+note: required because it's used within this `async` block
+  --> tests/compile_fail_client/follow_not_send.rs:19:18
+   |
+19 |     tokio::spawn(async move {
+   |                  ^^^^^^^^^^
+note: required by a bound in `tokio::spawn`
+  --> $CARGO/tokio-$VERSION/src/task/spawn.rs
+   |
+   |     pub fn spawn<F>(future: F) -> JoinHandle<F::Output>
+   |     where
+   |         F: Future + Send + 'static,
+   |                     ^^^^ required by this bound in `spawn`

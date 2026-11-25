@@ -1,5 +1,5 @@
 //! The client of a contract: [`builder()`], which builds it with middleware, and the usual middleware, on
-//! reqwest-middleware.
+//! reqwest-middleware; and [`follow()`], which calls a stream route again each time its stream ends.
 //!
 //! A client runs its middleware on each request in the order they are added: the first sees the request first, and
 //! the answer last.
@@ -97,6 +97,7 @@ use crate::auth::is_b64token;
 use crate::{Basic, Bearer, Route, Scheme};
 
 mod builder;
+mod follow;
 mod redirects;
 mod request;
 mod retry;
@@ -104,6 +105,7 @@ mod token;
 mod trace;
 
 pub use builder::{Builder, Contract, builder};
+pub use follow::{Followed, Following, Reconnect, follow};
 pub use redirects::redirects;
 pub(crate) use request::{CallTimeout, HeadTimedOut, KeepsDeadline, calls_timeout};
 pub use request::{on_request, request_id, timeout, user_agent};

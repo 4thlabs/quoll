@@ -19,6 +19,15 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
 
 ### Added
 
+- `client::follow(async move || api.feed().changes(&topic).await)` follows a stream route: it calls it at once, then
+  again each time its stream ends or fails, after a wait ([#127](https://github.com/4thlabs/quoll/issues/127)). Each
+  wait is drawn between half a bound and the bound, which doubles from 1 s to 30 s, and starts again from 1 s once a
+  connection has stayed open 10 s; `client::Reconnect` sets `first`, `longest` and `steady`, and `without_jitter()`
+  makes each wait its bound for a test. The stream gives `client::Followed` states: `Connected`, after each
+  connection, `Item(T)`, `Skipped(error)` for an item that does not read, `Reconnecting { error, wait }` and
+  `Stopped(error)`, the last. A 4xx other than 408 and 429, a 3xx and an `Invalid` call stop it; any other failure of
+  the call reconnects, and so does any error of the stream but an item that does not read, an `event: problem`
+  included. A fake of the group is followed as the client is.
 - Every error has a kind, `error.kind()`, a `quoll::ErrorKind`: `Status(StatusCode)` for an error of a status, a
   handler's or another API's answer, and for a call of the client that got no answer to read, `Connect`, `Timeout`,
   `Closed`, `Body`, `Decode`, `Middleware` or `Invalid`. One `match` tells a refused connection from a deadline passed,

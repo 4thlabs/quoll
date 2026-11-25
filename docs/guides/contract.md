@@ -494,7 +494,8 @@ How a stream behaves:
 
 - The server asks its stream for an item only once the connection has taken the last one. So a client that reads
   slowly slows it down.
-- Dropping the client's stream closes its connection. The client does not call the route again when a stream ends.
+- Dropping the client's stream closes its connection. The client does not call the route again when a stream ends:
+  `client::follow` does, as [Following a stream](client.md#following-a-stream) shows.
 - `try_new` builds a stream from results. An error after the 200 ends an `Events` stream with a last event, `event:
   problem`, which the client reads as that error. JSON Lines and bytes have no way to say an error: the server cuts
   the answer short, and the client reads an error.
