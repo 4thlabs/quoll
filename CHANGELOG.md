@@ -64,8 +64,18 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.9.2" }
   connection cannot be taken `Closed`, and an answer in HTTP/2 `Invalid`. A fake returns `TcpTunnel::new(io)`. The
   Docker example runs a command in a container with `docker-cli exec`.
 
+- `server::Builder::send_timeout(duration)` and `without_send_timeout()`: a connection whose client takes no bytes of
+  an answer for the bound, 60 s unless it is set, is cut, as nginx's `send_timeout`
+  ([#128](https://github.com/4thlabs/quoll/issues/128)). The clock runs only while a write waits for the client, and
+  stops as soon as it takes any bytes: a slow reader is kept, and a quiet stream runs no clock. The handler's stream
+  is dropped, as on a disconnection, a tokio `TcpStream` is reset so that the kernel frees its buffers at once, and
+  each cut is logged once at `INFO` with the client's address.
+
 ### Changed
 
+- `serve`, `serve_on` and `test::spawn` cut a client that takes no bytes of an answer for 60 s, where it held its
+  connection and the handler's stream for ever. `.without_send_timeout()` keeps them open as before. A router served
+  with `axum::serve` has no bound. quoll needs tokio 1.50 or later.
 - `client::trace` records `error.type` on its span, as OpenTelemetry names it: the kind of a call that failed,
   `connect`, `timeout`..., and the code of an answer of a 4xx or 5xx status, `404`.
 - An `event: problem` whose data is not a problem is an item that does not read, of the kind `Decode`: the stream goes

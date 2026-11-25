@@ -82,7 +82,8 @@ serde_json = "1"
 # A stream result is `Sync` through it, whatever its stream, which it polls through `&mut` alone.
 sync_wrapper = "1"
 # `time` for the keep-alive comments of server-sent events, and the deadline of the head of a stream's answer.
-tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
+# 1.50 for `TcpStream::set_zero_linger`, the reset of a connection whose client takes no bytes.
+tokio = { version = "1.50", features = ["net", "rt", "time"], optional = true }
 # The span of `server::trace`, CORS and compression, each behind a layer of quoll's own, and `ServeDir`, which serves
 # the files of a page.
 tower-http = { version = "0.6", default-features = false, features = [
@@ -119,7 +120,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The directories of a page, made for a test and removed after it.
 tempfile = "3"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 trybuild = "1"
 

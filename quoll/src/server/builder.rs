@@ -30,6 +30,7 @@ use super::layer::{
 };
 use super::no_delay::no_delay;
 use super::page::{self, Page};
+use super::send_timeout::{SEND_TIMEOUT, send_timeouts};
 use crate::__private::server::ended_on_stop;
 use crate::order::arrange;
 
@@ -94,6 +95,7 @@ pub struct Builder {
     layers: Vec<(Option<Rank>, Box<Add>)>,
     shutdown: Option<SyncWrapper<Signal>>,
     grace: Duration,
+    send_timeout: Option<Duration>,
     page: Option<PathBuf>,
 }
 
@@ -103,6 +105,7 @@ impl Default for Builder {
             layers: Vec::new(),
             shutdown: None,
             grace: GRACE,
+            send_timeout: Some(SEND_TIMEOUT),
             page: None,
         }
     }
@@ -173,6 +176,51 @@ impl Builder {
         self
     }
 
+    /// Cuts a connection whose client takes no bytes of an answer for `bound`, 60 s unless it is set, as nginx's
+    /// `send_timeout`.
+    ///
+    /// The clock runs only while a write waits: it starts when the connection refuses bytes, its client's buffers
+    /// full, and stops as soon as the client takes any. A slow client that takes some bytes within each `bound` is
+    /// kept; one that stops reading is cut, after its buffers and the kernel's have filled, then `bound`. A quiet
+    /// stream, with nothing to send, runs no clock: neither do the keep-alive comments of an `Events`, too small to
+    /// fill the buffers.
+    ///
+    /// The cut is the end of the connection, as when the client disconnects: the handler's stream is dropped, at its
+    /// next `.await`, and the client reads an error, never a clean end. A connection whose stream is tokio's
+    /// `TcpStream` is reset, with `SO_LINGER` 0, so that the kernel drops at once what it holds for the client; any
+    /// other, as TLS over TCP, is closed. Each cut is logged once at `INFO`, with the client's address, out of the
+    /// request's span.
+    ///
+    /// It bounds every write of the connection, the head of an answer, a large body and a stream alike, and what an
+    /// upgrade gives a handler. [`test::spawn`](crate::test::spawn) has the same bound; a router served otherwise,
+    /// from [`into_router`](Self::into_router) by `axum::serve`, has none.
+    ///
+    /// ```no_run
+    /// use std::time::Duration;
+    ///
+    /// use quoll::server;
+    ///
+    /// # fn api_router() -> axum::Router { axum::Router::new() }
+    /// # async fn run() -> std::io::Result<()> {
+    /// server::builder()
+    ///     .send_timeout(Duration::from_secs(30))
+    ///     .serve("0.0.0.0:8080", api_router())
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn send_timeout(mut self, bound: Duration) -> Self {
+        self.send_timeout = Some(bound);
+        self
+    }
+
+    /// Leaves a connection whose client takes no bytes open, in the place of [`send_timeout`](Self::send_timeout):
+    /// a client that stops reading holds its answer, and the handler's stream, until it reads again or disconnects.
+    pub fn without_send_timeout(mut self) -> Self {
+        self.send_timeout = None;
+        self
+    }
+
     /// Serves the files of `dir`, the page a bundler builds, `web/dist`, at every path the router does not serve:
     /// the page and its api on one origin.
     ///
@@ -221,6 +269,9 @@ impl Builder {
     }
 
     /// The router with the layers around it, and the page, for an application that serves it itself, or a test.
+    ///
+    /// What the builder puts on the connections it accepts is not in the router: served by `axum::serve`, they have no
+    /// [`send_timeout`](Self::send_timeout) and no `TCP_NODELAY`, and its `Events` do not end when it stops.
     pub fn into_router(self, router: Router) -> Router {
         layered(self.layers, with_page(self.page, router))
     }
@@ -247,6 +298,9 @@ impl Builder {
     /// connection where it cannot be set is served all the same, logged at `DEBUG`. A listener of its own whose
     /// stream wraps a TCP stream, TLS or another wrapper, sets the option itself, as on the accepted `TcpStream`
     /// before it wraps it.
+    ///
+    /// A connection whose client takes no bytes of an answer for 60 s is cut, as
+    /// [`send_timeout`](Self::send_timeout) says.
     ///
     /// Once told, it accepts no more connections, closes those that wait for a request, and returns `Ok` when the
     /// requests it serves have ended. It returns `Ok` too once [`grace`](Self::grace) has passed, or when it is told a
@@ -294,6 +348,7 @@ impl Builder {
             layers,
             shutdown,
             grace,
+            send_timeout,
             page,
         } = self;
 
@@ -315,7 +370,9 @@ impl Builder {
             async move { response }
         }));
 
-        run(listener, layered(layers, router), signals, stopping, grace).await
+        let router = layered(layers, router);
+
+        run(listener, router, signals, stopping, grace, send_timeout).await
     }
 }
 
@@ -362,20 +419,23 @@ mod sealed {
 }
 
 /// Serves `router` on `listener` until the first of `signals`, then for the requests it serves, up to `grace` or the
-/// next of `signals`. At the first of `signals`, `stopping` is set to `true`, which ends the `Events` in flight.
+/// next of `signals`. At the first of `signals`, `stopping` is set to `true`, which ends the `Events` in flight. Each
+/// connection's writes wait at most `send_timeout` for its client.
 async fn run<L>(
     listener: L,
     router: Router,
     mut signals: Signals,
     stopping: watch::Sender<bool>,
     grace: Duration,
+    send_timeout: Option<Duration>,
 ) -> io::Result<()>
 where
     L: Listener,
     L::Addr: fmt::Debug,
 {
     let (stop, stopped) = oneshot::channel::<()>();
-    let serving = axum::serve(listener.tap_io(no_delay), router)
+    let listener = send_timeouts(listener.tap_io(no_delay), send_timeout);
+    let serving = axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             // The sender lives until the server is told to stop, or has returned.
             let _ = stopped.await;
@@ -428,6 +488,7 @@ impl fmt::Debug for Builder {
             .field("layers", &self.layers.len())
             .field("shutdown", &shutdown)
             .field("grace", &self.grace)
+            .field("send_timeout", &self.send_timeout)
             .field("page", &self.page)
             .finish()
     }
@@ -544,6 +605,7 @@ mod tests {
             signals,
             stopping,
             Duration::from_secs(5),
+            Some(SEND_TIMEOUT),
         ));
 
         // The connection's options are set before its first request is read: once answered, they hold.
@@ -593,6 +655,7 @@ mod tests {
             signals,
             stopping,
             Duration::from_secs(3600),
+            Some(SEND_TIMEOUT),
         ));
         let answer = reqwest::get(url).await.expect("the server answers");
 

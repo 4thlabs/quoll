@@ -6,6 +6,7 @@ use axum::serve::{Listener, ListenerExt};
 use tokio::net::TcpListener;
 
 use crate::server::no_delay::no_delay;
+use crate::server::send_timeout::{SEND_TIMEOUT, send_timeouts};
 
 /// Serves `router` on a free port of 127.0.0.1, and gives its base URL.
 ///
@@ -14,7 +15,9 @@ use crate::server::no_delay::no_delay;
 /// [`into_router`](crate::server::Builder::into_router) gives.
 ///
 /// Its connections have `TCP_NODELAY`, as those of [`serve`](crate::server::Builder::serve) do, so that a stream's
-/// small chunks reach the test at once.
+/// small chunks reach the test at once, and the same [`send_timeout`](crate::server::Builder::send_timeout), 60 s: a
+/// client that takes no bytes of an answer for 60 s is cut. A test of it runs under tokio's paused clock, where the
+/// clock jumps to the cut as soon as the runtime has nothing else to do.
 ///
 /// The server runs on a task of the tokio runtime it is called from, and lives as long as that runtime: to the end of
 /// the test, as `#[tokio::test]` gives each test a runtime of its own, which stops the server when the test returns.
@@ -58,7 +61,9 @@ where
 {
     // axum's server never ends: it waits and accepts again when accepting a connection fails, so its result, which
     // only `Ok` would be, is not read.
-    tokio::spawn(async move { axum::serve(listener.tap_io(no_delay), router).await });
+    let listener = send_timeouts(listener.tap_io(no_delay), Some(SEND_TIMEOUT));
+
+    tokio::spawn(async move { axum::serve(listener, router).await });
 }
 
 #[cfg(test)]
