@@ -349,12 +349,118 @@ async fn a_directory_answers_its_index_html_and_without_its_slash_a_307() {
 
     let slashed = browse(&format!("{url}/docs/")).await;
     let bare = browse(&format!("{url}/docs?tab=a%20b")).await;
+    let fetched = get(&format!("{url}/docs")).await;
 
     assert_eq!(slashed.status(), StatusCode::OK);
     assert_eq!(header(&slashed, CACHE_CONTROL), "no-cache");
     assert_eq!(slashed.text().await.expect("a text"), "<title>docs</title>");
     assert_eq!(bare.status(), StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(header(&bare, LOCATION), "/docs/?tab=a%20b");
+    assert_eq!(fetched.status(), StatusCode::TEMPORARY_REDIRECT);
+}
+
+#[tokio::test]
+async fn a_directory_with_no_index_html_is_no_file_with_or_without_its_slash() {
+    let dir = page();
+
+    write(dir.path(), "images/logo.svg", b"<svg/>");
+
+    let url = serve(dir.path()).await;
+
+    for path in ["/assets", "/assets/", "/assets?v=1", "/images", "/images/"] {
+        let page = browse(&format!("{url}{path}")).await;
+
+        assert_eq!(page.status(), StatusCode::OK, "{path}");
+        assert_eq!(header(&page, LOCATION), "", "{path}");
+        assert_eq!(header(&page, CACHE_CONTROL), "no-cache", "{path}");
+        assert_eq!(varies(&page), ["accept", "accept-encoding"], "{path}");
+        assert_eq!(page.text().await.expect("a text"), INDEX, "{path}");
+
+        let fetched = get(&format!("{url}{path}")).await;
+
+        assert_eq!(header(&fetched, LOCATION), "", "{path}");
+        assert_eq!(varies(&fetched), ["accept", "accept-encoding"], "{path}");
+        not_found(fetched, "the page has no file of this path").await;
+    }
+}
+
+/// An application's layer in front of the page that redirects a path with a final `/` to the one without, with a
+/// 301, as Hangar keeps the rule of its Waku version: `/` and a directory of the page that holds an `index.html`, whose
+/// final `/` the page needs, are left alone.
+async fn trim_final_slash(
+    page: std::sync::Arc<Path>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = request.uri().path();
+    let trimmed = path.strip_suffix('/').filter(|trimmed| !trimmed.is_empty());
+    let Some(trimmed) = trimmed else {
+        return next.run(request).await;
+    };
+
+    let paged = page
+        .join(trimmed.trim_start_matches('/'))
+        .join("index.html")
+        .is_file();
+
+    if paged {
+        return next.run(request).await;
+    }
+
+    let location = match request.uri().query() {
+        Some(query) => format!("{trimmed}?{query}"),
+        None => trimmed.to_owned(),
+    };
+
+    axum::response::IntoResponse::into_response((
+        StatusCode::MOVED_PERMANENTLY,
+        [(LOCATION, location)],
+    ))
+}
+
+#[tokio::test]
+async fn a_layer_that_removes_the_final_slash_meets_no_loop() {
+    let dir = page();
+    let page: std::sync::Arc<Path> = dir.path().into();
+    let router = server::builder()
+        .page(dir.path())
+        .into_router(Api::router(ApiServices { notes: App }))
+        .layer(axum::middleware::from_fn(move |request, next| {
+            trim_final_slash(std::sync::Arc::clone(&page), request, next)
+        }));
+    let url = quoll::test::spawn(router).await;
+    // Past four hops, a loop: each case takes one at most.
+    let client = reqwest::Client::builder()
+        .no_gzip()
+        .redirect(reqwest::redirect::Policy::limited(4))
+        .build()
+        .expect("a client is built");
+    let fetch = async |path: &str, accept: &str| {
+        client
+            .get(format!("{url}{path}"))
+            .header(ACCEPT, accept)
+            .send()
+            .await
+            .unwrap_or_else(|error| panic!("{path} is answered: {error}"))
+    };
+
+    for path in ["/assets", "/assets/", "/notes/3/"] {
+        let page = fetch(path, BROWSER).await;
+
+        assert_eq!(page.status(), StatusCode::OK, "{path}");
+        assert_eq!(page.text().await.expect("a text"), INDEX, "{path}");
+
+        let fetched = fetch(path, "*/*").await;
+
+        not_found(fetched, "the page has no file of this path").await;
+    }
+
+    for path in ["/docs", "/docs/"] {
+        let docs = fetch(path, BROWSER).await;
+
+        assert_eq!(docs.url().path(), "/docs/", "{path}");
+        assert_eq!(docs.text().await.expect("a text"), "<title>docs</title>");
+    }
 }
 
 #[tokio::test]
@@ -590,6 +696,9 @@ async fn a_symbolic_link_out_of_the_directory_is_refused() {
     link(&dir.join("inside/real.txt"), "linked-within.txt");
     // A compressed copy that `ServeDir` would send in the file's place.
     link(&outer.path().join("secret.txt"), "within.txt.gz");
+    // A directory whose `index.html` leads out: refused, not redirected, without its final `/`.
+    fs::create_dir(dir.join("out")).expect("the directory is made");
+    link(&outer.path().join("secret.txt"), "out/index.html");
 
     let url = serve(&dir).await;
 
@@ -599,6 +708,8 @@ async fn a_symbolic_link_out_of_the_directory_is_refused() {
         "/up/secret.txt",
         "/within.txt",
         "/within.txt/",
+        "/out",
+        "/out/",
     ] {
         let response = client()
             .get(format!("{url}{path}"))
