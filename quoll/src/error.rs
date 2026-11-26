@@ -2,14 +2,18 @@
 
 use std::error::Error as StdError;
 use std::fmt;
+use std::time::Duration;
 
-use http::{HeaderMap, StatusCode, Version};
+use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Version};
 
 use crate::{Problem, Response};
 
 #[cfg(feature = "client")]
 mod client;
+mod headers;
 mod kind;
+
+use headers::Headers;
 
 pub use kind::ErrorKind;
 
@@ -39,6 +43,10 @@ pub type Result<T, E = Problem> = std::result::Result<T, Error<E>>;
 /// A failure of the server's own, a database that does not answer, is [`Error::internal`]: it is logged, and the
 /// caller sees only a 500.
 ///
+/// An error carries headers, which the server sends with its status: a `Retry-After` on a 429 with
+/// [`retry_after`](Error::retry_after), any other with [`with_header`](Error::with_header). The client reads those of
+/// an answer with [`headers`](Error::headers).
+///
 /// On the client, an answer with an error status is an error with that [status](Error::status), its
 /// [detail](Error::detail) when the body is one of the api's error shape, `E`, and the [body](Error::body) as it came.
 /// `E` is an RFC 9457 [`Problem`] unless the contract says otherwise, `#[error(GitHubError)]` on its api, a group or
@@ -64,7 +72,7 @@ pub type Result<T, E = Problem> = std::result::Result<T, Error<E>>;
 /// A handler that returns an error its own client received answers 502, or 500 when it is the handler's own mistake,
 /// a URL that is not one: the status of another API is not passed on as this one's. An error of another shape goes up
 /// into a handler's `quoll::Error` with `?`, which keeps its status, its message and its body, and leaves its detail.
-pub struct Error<E = Problem>(pub(crate) Box<Repr<E>>);
+pub struct Error<E = Problem>(pub(crate) Box<Repr<E>>, Headers);
 
 /// What an error holds, which the server reads to answer it.
 pub(crate) enum Repr<E> {
@@ -96,10 +104,10 @@ impl Error {
     ///
     /// The status is a client or a server error, `4xx` or `5xx`: any other is answered as a 500, and logged.
     pub fn new(status: StatusCode, detail: impl Into<String>) -> Self {
-        Self(Box::new(Repr::Problem {
+        Self::of(Repr::Problem {
             status,
             detail: detail.into(),
-        }))
+        })
     }
 
     /// A 404: what the route names does not exist.
@@ -137,11 +145,12 @@ impl Error {
         #[cfg(feature = "client")]
         let error = client::without_query(error);
 
-        Self(Box::new(Repr::Internal(error)))
+        Self::of(Repr::Internal(error))
     }
 
     /// The error, as an error of the shape `F`: an error of a status, an internal one and a call that got no answer
     /// as they are, and the answer of another API, whose problem is left, with its status, its body and its message.
+    /// Every error keeps its [headers](Error::headers).
     ///
     /// A fake of an api with `#[error(F)]` so returns an error of a status alone, which has no detail, as an answer
     /// whose body is not an `F`:
@@ -240,15 +249,16 @@ impl<E> Error<E> {
             "a call that got no answer has no status"
         );
 
-        Self(Box::new(Repr::Failed {
+        Self::of(Repr::Failed {
             kind,
             message: message.into(),
             source,
-        }))
+        })
     }
 
     /// What another API answered with an error status, `detail`, as a fake of a group's client gives it: an error with
-    /// `status`, whose [`response`](Error::response) has no headers, whose `Display` says the message of `detail`, and
+    /// `status`, whose [`response`](Error::response) has no headers until it is given some with
+    /// [`with_header`](Error::with_header), whose `Display` says the message of `detail`, and
     /// that has no [`body`](Error::body), as nothing came. It is for the shape of an api with `#[error(E)]`: a fake of
     /// an api of problems returns [`Error::not_found`] and the others, with their status, and a fake of another shape
     /// gives them its shape with [`into_shape`](Error::into_shape).
@@ -294,18 +304,35 @@ impl<E> Error<E> {
         body: Option<Vec<u8>>,
         message: Option<String>,
     ) -> Self {
-        Self(Box::new(Repr::Upstream {
+        Self::of(Repr::Upstream {
             status,
             answer,
             body,
             message,
-        }))
+        })
+    }
+
+    /// The error with the headers of the answer the client received, `headers`, which its `answer` holds too when it
+    /// has one.
+    #[cfg_attr(
+        not(feature = "client"),
+        expect(dead_code, reason = "only the client receives an answer")
+    )]
+    pub(crate) fn received(mut self, headers: HeaderMap) -> Self {
+        self.1 = Headers::received(headers);
+        self
+    }
+
+    /// An error of `repr`, with no headers.
+    fn of(repr: Repr<E>) -> Self {
+        Self(Box::new(repr), Headers::default())
     }
 
     /// The error, as an error of the shape `F`: an error of a status, an internal one and a call that got no answer
-    /// as they are, and an answer, whose detail is left, with its status, its body and its message.
+    /// as they are, and an answer, whose detail is left, with its status, its body and its message; and its headers.
     pub(crate) fn cast<F>(self) -> Error<F> {
-        Error(Box::new(match *self.0 {
+        let Self(repr, headers) = self;
+        let repr = Box::new(match *repr {
             Repr::Problem { status, detail } => Repr::Problem { status, detail },
             Repr::Internal(source) => Repr::Internal(source),
             Repr::Upstream {
@@ -328,7 +355,9 @@ impl<E> Error<E> {
                 message,
                 source,
             },
-        }))
+        });
+
+        Error(repr, headers)
     }
 
     /// The status of the error, `Some(status)` exactly when its [kind](Error::kind) is
@@ -381,9 +410,10 @@ impl<E> Error<E> {
     /// The answer another API gave, when its body is an `E`: its status, its version, its headers, a rate limit's or
     /// a `Retry-After`, and its [detail](Error::detail).
     ///
-    /// `None` when [`detail`](Error::detail) is: the headers of any answer are those of the call's `.response()`. The
-    /// error of an `event: problem` in a stream, or one a fake builds, has a response of its status alone, in HTTP/1.1
-    /// and with no headers.
+    /// `None` when [`detail`](Error::detail) is: the headers of any answer are those of the call's `.response()`, and
+    /// the error's [`headers`](Error::headers). The error of an `event: problem` in a stream, or one a fake builds,
+    /// has a response of its status alone, in HTTP/1.1 and with the headers given with
+    /// [`with_header`](Error::with_header) alone.
     pub fn response(&self) -> Option<&Response<E>> {
         match &*self.0 {
             Repr::Upstream { answer, .. } => answer.as_ref(),
@@ -400,11 +430,126 @@ impl<E> Error<E> {
             Repr::Problem { .. } | Repr::Internal(_) | Repr::Failed { .. } => None,
         }
     }
+
+    /// The error with the header `name` of `value`, after those of that name it has already: a `WWW-Authenticate` on
+    /// a 401, an `Allow` on a 405, a `Retry-After` on a 429 or a 503, which [`retry_after`](Error::retry_after)
+    /// writes from a `Duration`.
+    ///
+    /// The server answers them with the error's status and its problem, and the client reads them back with
+    /// [`headers`](Error::headers). An error the server answers with a status of its own, 500 for an internal error,
+    /// 502 for an error its client received, is answered with that status alone, without them. A `WWW-Authenticate`
+    /// on a 401 takes the place of the challenges of the route's schemes. An error after the 200 of a stream, an
+    /// `event: problem`, has no headers to send.
+    ///
+    /// `name` is a [`HeaderName`], as `http::header::WWW_AUTHENTICATE`, or its text; `value` a [`HeaderValue`], a
+    /// string or a number. A name or a value that is not one is kept out of the headers, and so is a header that
+    /// belongs to a connection, `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
+    /// `Transfer-Encoding` or `Upgrade`, or that quoll writes from the problem, `Content-Type` or `Content-Length`:
+    /// the server then answers the error with a 500, logged with what was refused, without its value, as it answers
+    /// a [`Response::header`] that cannot be sent.
+    ///
+    /// ```
+    /// use http::StatusCode;
+    /// use http::header::WWW_AUTHENTICATE;
+    /// use quoll::Error;
+    ///
+    /// let error = Error::unauthorized("the token has expired")
+    ///     .with_header(WWW_AUTHENTICATE, r#"Bearer error="invalid_token""#);
+    ///
+    /// assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
+    /// assert_eq!(error.headers()[WWW_AUTHENTICATE], r#"Bearer error="invalid_token""#);
+    /// ```
+    #[must_use]
+    pub fn with_header<K, V>(mut self, name: K, value: V) -> Self
+    where
+        K: TryInto<HeaderName>,
+        V: TryInto<HeaderValue>,
+    {
+        let added = self.1.append(name, value);
+
+        // The answer a fake builds keeps the headers of its error, as the client's does.
+        if let (
+            Some((name, value)),
+            Repr::Upstream {
+                answer: Some(answer),
+                ..
+            },
+        ) = (added, &mut *self.0)
+        {
+            answer.headers_mut().append(name, value);
+        }
+
+        self
+    }
+
+    /// The error with a `Retry-After` of `wait`, in place of any it has: its seconds, a part of one counted as a
+    /// whole, so that a client does not come back before `wait` has passed. A 429 or a 503 says so when to try again,
+    /// which [`client::retry`] reads with [`Attempt::retry_after`].
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use http::StatusCode;
+    /// use http::header::RETRY_AFTER;
+    /// use quoll::Error;
+    ///
+    /// let error = Error::new(StatusCode::TOO_MANY_REQUESTS, "too many failed sign-ins")
+    ///     .retry_after(Duration::from_secs(30));
+    ///
+    /// assert_eq!(error.headers()[RETRY_AFTER], "30");
+    /// ```
+    ///
+    #[cfg_attr(feature = "client", doc = "[`client::retry`]: crate::client::retry")]
+    #[cfg_attr(
+        feature = "client",
+        doc = "[`Attempt::retry_after`]: crate::client::Attempt::retry_after"
+    )]
+    #[cfg_attr(not(feature = "client"), doc = "[`client::retry`]: crate#features")]
+    #[cfg_attr(
+        not(feature = "client"),
+        doc = "[`Attempt::retry_after`]: crate#features"
+    )]
+    #[must_use]
+    pub fn retry_after(mut self, wait: Duration) -> Self {
+        let value = self.1.retry_after(wait);
+
+        if let Repr::Upstream {
+            answer: Some(answer),
+            ..
+        } = &mut *self.0
+        {
+            answer
+                .headers_mut()
+                .insert(http::header::RETRY_AFTER, value);
+        }
+
+        self
+    }
+
+    /// The headers of the error: those given with [`with_header`](Error::with_header) and
+    /// [`retry_after`](Error::retry_after), and, for an answer the client received, the headers of that answer,
+    /// whatever its body, before those given. Empty for any other error.
+    ///
+    /// On the client, a `Retry-After`, a `WWW-Authenticate` or a rate limit's headers are read here, of an answer
+    /// whose body is not the api's shape too, which has no [`response`](Error::response).
+    pub fn headers(&self) -> &HeaderMap {
+        self.1.map()
+    }
+
+    /// The first header given to [`with_header`](Error::with_header) that was refused, which says why: the server
+    /// answers the error with a 500.
+    #[cfg_attr(
+        not(feature = "server"),
+        expect(dead_code, reason = "only the server answers an error")
+    )]
+    pub(crate) fn refused_header(&self) -> Option<&str> {
+        self.1.refused()
+    }
 }
 
-/// An error of another shape, carried up into a `quoll::Error`, a handler's: its status, its message and its body
-/// kept, its detail left, as a `quoll::Error` holds a problem alone. A handler returning it answers as the error it
-/// comes from: 502 for an answer of another API.
+/// An error of another shape, carried up into a `quoll::Error`, a handler's: its status, its message, its body and its
+/// headers kept, its detail left, as a `quoll::Error` holds a problem alone. A handler returning it answers as the
+/// error it comes from: 502 for an answer of another API, without its headers.
 impl<E> From<Error<E>> for Error
 where
     E: serde::de::DeserializeOwned + fmt::Display + fmt::Debug + Send + Sync + 'static,

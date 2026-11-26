@@ -720,8 +720,8 @@ impl<E> Clone for Shaped<E> {
 
 impl<E> Copy for Shaped<E> {}
 
-/// The error of an answer with an error status, or a redirection: its status, its detail when its body is an `E`, and
-/// the first 64 KiB of its body.
+/// The error of an answer with an error status, or a redirection: its status, its headers, its detail when its body is
+/// an `E`, and the first 64 KiB of its body.
 ///
 /// # Errors
 ///
@@ -739,9 +739,10 @@ async fn answered_error<E>(
     })?;
     let detail = (shape.read)(&headers, &body);
     let message = detail.as_ref().and_then(shape.message);
-    let answer = detail.map(|detail| crate::Response::from_parts(status, version, headers, detail));
+    let answer =
+        detail.map(|detail| crate::Response::from_parts(status, version, headers.clone(), detail));
 
-    Ok(Error::upstream(status, answer, Some(body), message))
+    Ok(Error::upstream(status, answer, Some(body), message).received(headers))
 }
 
 /// A call of a route, described and not sent yet: the request the route's arguments write, or why they could not,

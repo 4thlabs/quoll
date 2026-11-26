@@ -25,6 +25,14 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.10.0" }
   restarted after a change gets them again. `[workspace.metadata.quoll.web]` takes an `env` too, set for `dev` alone.
   Both are checked when the config is read: a value that is not a string, a port written as a number included, and a
   variable or an argument that the OS cannot set are refused with the key at fault.
+- An error carries headers, which the server sends with its status and its problem
+  ([#139](https://github.com/4thlabs/quoll/issues/139)): `error.retry_after(Duration::from_secs(30))` on a 429 or a
+  503 sets `Retry-After: 30`, and `error.with_header(name, value)` adds any other, a `WWW-Authenticate` on a 401 or an
+  `Allow` on a 405. A `WWW-Authenticate` on a 401 takes the place of the route's challenges. `error.headers()` gives
+  them back on every shape, and on the client the headers of any answer of an error status, whatever its body, so
+  that `client::retry` and the caller read the wait the server asked. An internal error and an error of another API
+  are answered 500 and 502 without them. A hop-by-hop header, `Content-Type` and `Content-Length` are refused: the
+  error is answered 500, and the log says which header. The OpenAPI document does not change.
 
 ### Fixed
 
