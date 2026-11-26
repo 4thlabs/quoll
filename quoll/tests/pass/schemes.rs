@@ -1,13 +1,17 @@
 use http::request::Parts;
-use quoll::{Result, Scheme, openapi::SecurityScheme};
+use http::HeaderName;
+use quoll::auth::{Outgoing, Unsendable};
+use quoll::{Result, ClientScheme, Scheme, ServerScheme, openapi::SecurityScheme};
 
 /// A scheme of the application's own.
 pub struct Hmac;
 
 impl Scheme for Hmac {
-    type Credential = String;
-
     const NAME: &'static str = "Hmac";
+}
+
+impl ServerScheme for Hmac {
+    type Credential = String;
 
     fn read(request: &Parts) -> Result<Option<String>> {
         Ok(request
@@ -19,6 +23,14 @@ impl Scheme for Hmac {
 
     fn openapi() -> SecurityScheme {
         SecurityScheme::header("X-Signature")
+    }
+}
+
+impl ClientScheme for Hmac {
+    type Secret = String;
+
+    fn write(secret: &String, request: &mut Outgoing<'_>) -> std::result::Result<(), Unsendable> {
+        request.header(HeaderName::from_static("x-signature"), secret)
     }
 }
 
@@ -60,6 +72,6 @@ quoll::api! {
 fn main() {
     let _ = Key;
     assert_eq!(<Key as Scheme>::NAME, "Key");
-    assert_eq!(<Login as Scheme>::CHALLENGE, "Bearer");
-    assert_eq!(<Session as Scheme>::CHALLENGE, "Session");
+    assert_eq!(<Login as ServerScheme>::CHALLENGE, "Bearer");
+    assert_eq!(<Session as ServerScheme>::CHALLENGE, "Session");
 }

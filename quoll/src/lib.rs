@@ -466,7 +466,9 @@
 //! - a scheme the contract declares, with its visibility and where its credential travels: a header, a cookie, a
 //!   query key, or a token of an OpenID Connect provider, sent as a bearer token. It becomes a type of that name,
 //!   whose credential is a `String`, and which [`client::key`] sends;
-//! - a type of the application's implementing [`Scheme`], as a signature, named in `#[auth(...)]` by its path.
+//! - a type of the application's implementing [`Scheme`], as a signature or the format of another API's key, named in
+//!   `#[auth(...)]` by its path. It implements [`ServerScheme`] to be read by a server, and [`ClientScheme`] to be
+//!   written by a client, as its api serves or calls; [`auth`] reads and writes the grammar of `Authorization`.
 //!
 //! ```
 //! quoll::api! {
@@ -716,7 +718,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod accepted;
-pub(crate) mod auth;
+pub mod auth;
 mod body;
 #[cfg(feature = "client")]
 mod call;
@@ -741,7 +743,9 @@ pub mod test;
 pub mod __private;
 
 pub use accepted::Accepted;
-pub use auth::{Authenticate, Basic, BasicCredential, Bearer, Scheme, Scoped};
+pub use auth::{
+    Authenticate, Basic, BasicCredential, Bearer, ClientScheme, Scheme, Scoped, ServerScheme,
+};
 pub use body::{Bytes, Form, Text};
 #[cfg(feature = "client")]
 pub use call::Call;

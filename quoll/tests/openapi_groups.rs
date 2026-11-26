@@ -1,17 +1,21 @@
 //! The OpenAPI document of an api that lists groups of other blocks, whatever the features: the schemes of those
 //! groups, which the macro does not see, found among the api's by their names as the document is built.
 
+use http::HeaderName;
 use http::request::Parts;
-use quoll::{Result, Scheme, openapi::SecurityScheme};
+use quoll::auth::{Outgoing, Unsendable};
+use quoll::{ClientScheme, Result, Scheme, ServerScheme, openapi::SecurityScheme};
 use serde_json::Value;
 
 /// A scheme of the application's own, which takes the name of the api's declared `Key`.
 pub struct Impostor;
 
 impl Scheme for Impostor {
-    type Credential = String;
-
     const NAME: &'static str = "Key";
+}
+
+impl ServerScheme for Impostor {
+    type Credential = String;
 
     fn read(_request: &Parts) -> Result<Option<String>> {
         Ok(None)
@@ -19,6 +23,14 @@ impl Scheme for Impostor {
 
     fn openapi() -> SecurityScheme {
         SecurityScheme::header("X-Impostor")
+    }
+}
+
+impl ClientScheme for Impostor {
+    type Secret = String;
+
+    fn write(secret: &String, request: &mut Outgoing<'_>) -> std::result::Result<(), Unsendable> {
+        request.header(HeaderName::from_static("x-impostor"), secret)
     }
 }
 

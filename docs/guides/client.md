@@ -184,7 +184,7 @@ fn clients() -> quoll::Result<(NotesClient, FilesClient)> {
 | `client::bearer(token)`     | `Authorization: Bearer`, on the routes that take `Bearer`                        |
 | `client::bearer_from(src)`  | the same, with a token asked of a `TokenSource` before each call, and after a 401 |
 | `client::basic(user, pwd)`  | `Authorization: Basic`, on the routes that take `Basic`                          |
-| `client::key::<K>(value)`   | the credential of a scheme `K` the contract declares, where it travels           |
+| `client::key::<S>(secret)`  | the credential of any scheme `S` that implements `ClientScheme`                  |
 | `client::on_request(f)`     | a closure that changes each request before it leaves                             |
 
 The builder puts quoll's helpers in the order they work in, whatever order they are given in. From the first, which
@@ -248,9 +248,13 @@ fn client(token: &str, key: &str) -> quoll::Result<ApiClient> {
 ```
 
 - `bearer` and `basic` send `Authorization`, marked sensitive so that a log does not show it.
-- `key::<K>` sends the credential of a declared scheme where it travels: its header, its cookie, its query key, or
-  `Authorization: Bearer` for an `openid` scheme. A scheme is told apart by its type: two contracts that each declare
-  a `Key` each get their own.
+- `key::<S>` sends the credential of any scheme that implements `quoll::ClientScheme`, as its `write` says. A declared
+  scheme's goes where it travels: its header, its cookie, its query key, or `Authorization: Bearer` for an `openid`
+  scheme. A scheme of the application's own writes its own format, such as Jellyfin's `MediaBrowser Token="<key>"`
+  (see [A scheme of the application's own](authentication.md#a-scheme-of-the-applications-own)). `bearer` is
+  `key::<Bearer>`, and `basic` is `key::<Basic>`.
+- A scheme is told apart by its type: two contracts that each declare a `Key` each get their own. Each header that
+  `key` writes is marked sensitive.
 - A credential that the server would not read, such as a token with a space or a key with a line break, fails each
   call that would send it. The error does not show the credential.
 
@@ -306,29 +310,33 @@ The call is not sent again when `refresh` gives back the refused token. An error
 ### A header computed from the request
 
 `on_request` runs a closure on each request of a contract to its api's own origin. The closure is given the request
-and its `quoll::Route`, and adds, for example, a signature or an application's own header. A header with the same
-value on every request belongs to the api, and goes in its contract: `#[header("name" = value)]` (see
+and its `quoll::Route`, and adds, for example, a checksum or a tenant. A header with the same value on every request
+belongs to the api, and goes in its contract: `#[header("name" = value)]` (see
 [Fixed headers](contract.md#fixed-headers)).
+
+A credential computed from the request, such as a signature, is a scheme's `write` instead, which `client::key`
+sends on the routes that take it, marked sensitive (see
+[A scheme of the application's own](authentication.md#a-scheme-of-the-applications-own)).
 
 ```rust,no_run
 use quoll::client;
 use reqwest::Request;
 
-fn signature(method: &http::Method, path: &str, body: &[u8]) -> http::HeaderValue {
+fn checksum(method: &http::Method, path: &str, body: &[u8]) -> http::HeaderValue {
     let text = format!("{method} {path} {}", body.len());
 
     http::HeaderValue::from_str(&text).expect("a method, a path and a number make a header value")
 }
 
 fn http() -> quoll::Result<reqwest_middleware::ClientWithMiddleware> {
-    let sign = client::on_request(|request: &mut Request, _route: &quoll::Route| {
+    let check = client::on_request(|request: &mut Request, _route: &quoll::Route| {
         let body = request.body().and_then(|body| body.as_bytes()).unwrap_or_default();
-        let value = signature(request.method(), request.url().path(), body);
+        let value = checksum(request.method(), request.url().path(), body);
 
-        request.headers_mut().insert("X-Signature", value);
+        request.headers_mut().insert("X-Checksum", value);
     });
 
-    client::builder().with(sign).build_http()
+    client::builder().with(check).build_http()
 }
 ```
 

@@ -1,0 +1,27 @@
+error[E0277]: `Hmac` is not a scheme a client writes, which an api that calls takes
+  --> tests/compile_fail/auth_server_scheme_in_api_that_calls.rs:26:12
+   |
+26 |     #[auth(Hmac)]
+   |            ^^^^ no client writes `Hmac`
+   |
+help: the trait `ClientScheme` is not implemented for `Hmac`
+  --> tests/compile_fail/auth_server_scheme_in_api_that_calls.rs:5:1
+   |
+ 5 | pub struct Hmac;
+   | ^^^^^^^^^^^^^^^
+   = note: implement `quoll::ClientScheme` for `Hmac`, with its `write`, for `client::key` to send it; an api that only serves writes `#[client(none)]`
+help: the following other types implement trait `ClientScheme`
+  --> src/auth/basic.rs
+   |
+   | impl ClientScheme for Basic {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Basic`
+   |
+  ::: src/auth/bearer.rs
+   |
+   | impl ClientScheme for Bearer {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Bearer`
+note: required by a bound in `quoll::__private::auth::is_client_scheme`
+  --> src/__private/auth.rs
+   |
+   | pub const fn is_client_scheme<S: ClientScheme>() {}
+   |                                  ^^^^^^^^^^^^ required by this bound in `is_client_scheme`

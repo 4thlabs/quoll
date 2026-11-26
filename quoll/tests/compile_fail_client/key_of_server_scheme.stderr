@@ -1,0 +1,55 @@
+error[E0277]: `Hmac` is not a scheme a client writes, which an api that calls takes
+  --> tests/compile_fail_client/key_of_server_scheme.rs:24:34
+   |
+24 |     let _ = quoll::client::key::<Hmac>(String::from("k-1"));
+   |                                  ^^^^ no client writes `Hmac`
+   |
+help: the trait `ClientScheme` is not implemented for `Hmac`
+  --> tests/compile_fail_client/key_of_server_scheme.rs:5:1
+   |
+ 5 | pub struct Hmac;
+   | ^^^^^^^^^^^^^^^
+   = note: implement `quoll::ClientScheme` for `Hmac`, with its `write`, for `client::key` to send it; an api that only serves writes `#[client(none)]`
+help: the following other types implement trait `ClientScheme`
+  --> src/auth/basic.rs
+   |
+   | impl ClientScheme for Basic {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Basic`
+   |
+  ::: src/auth/bearer.rs
+   |
+   | impl ClientScheme for Bearer {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Bearer`
+note: required by a bound in `key`
+  --> src/client.rs
+   |
+   | pub fn key<S: ClientScheme>(secret: impl Into<S::Secret>) -> impl Middleware {
+   |               ^^^^^^^^^^^^ required by this bound in `key`
+
+error[E0277]: `Hmac` is not a scheme a client writes, which an api that calls takes
+  --> tests/compile_fail_client/key_of_server_scheme.rs:24:13
+   |
+24 |     let _ = quoll::client::key::<Hmac>(String::from("k-1"));
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no client writes `Hmac`
+   |
+help: the trait `ClientScheme` is not implemented for `Hmac`
+  --> tests/compile_fail_client/key_of_server_scheme.rs:5:1
+   |
+ 5 | pub struct Hmac;
+   | ^^^^^^^^^^^^^^^
+   = note: implement `quoll::ClientScheme` for `Hmac`, with its `write`, for `client::key` to send it; an api that only serves writes `#[client(none)]`
+help: the following other types implement trait `ClientScheme`
+  --> src/auth/basic.rs
+   |
+   | impl ClientScheme for Basic {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Basic`
+   |
+  ::: src/auth/bearer.rs
+   |
+   | impl ClientScheme for Bearer {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Bearer`
+note: required by a bound in `key`
+  --> src/client.rs
+   |
+   | pub fn key<S: ClientScheme>(secret: impl Into<S::Secret>) -> impl Middleware {
+   |               ^^^^^^^^^^^^ required by this bound in `key`

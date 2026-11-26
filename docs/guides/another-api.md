@@ -163,8 +163,11 @@ A header that the API asks of every call, such as a version or a media type, is 
 - A header whose value changes from call to call, such as Stripe Connect's `Stripe-Account` or Anthropic's
   `anthropic-beta`, is an argument of the route: `header("anthropic-beta") beta: Option<String>`. A `None` leaves it
   out.
-- A header that comes from a deployment, a tenant or a signature goes through
+- A header that comes from a deployment or a tenant goes through
   [`client::on_request`](client.md#a-header-computed-from-the-request).
+- A key in a format of the API's own, such as Jellyfin's `MediaBrowser Token="<key>"` or Gitea's `token <key>`, or a
+  signature, is a scheme of the application's own that implements `quoll::ClientScheme`. `client::key` sends it (see
+  [A scheme of the application's own](authentication.md#a-scheme-of-the-applications-own)).
 
 ## Errors
 

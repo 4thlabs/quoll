@@ -1,8 +1,8 @@
 error[E0080]: evaluation panicked: HeaderValue::from_static with invalid bytes
-  --> tests/compile_fail/scheme_challenge_not_a_header.rs:12:36
+  --> tests/compile_fail/scheme_challenge_not_a_header.rs:16:36
    |
-12 |     const CHALLENGE: HeaderValue = HeaderValue::from_static("Hmac\nrealm");
-   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<Hmac as quoll::Scheme>::CHALLENGE` failed inside this call
+16 |     const CHALLENGE: HeaderValue = HeaderValue::from_static("Hmac\nrealm");
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<Hmac as quoll::ServerScheme>::CHALLENGE` failed inside this call
    |
 note: inside `HeaderValue::from_static`
   --> $RUST/core/src/panic.rs
@@ -15,7 +15,7 @@ note: inside `HeaderValue::from_static`
    |                 ----------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
-  --> tests/compile_fail/scheme_challenge_not_a_header.rs:26:12
+  --> tests/compile_fail/scheme_challenge_not_a_header.rs:38:12
    |
-26 |     #[auth(Hmac)]
+38 |     #[auth(Hmac)]
    |            ^^^^

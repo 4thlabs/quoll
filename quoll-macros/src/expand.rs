@@ -70,6 +70,8 @@ fn group(cx: &Cx) -> TokenStream {
     };
     // Only the server answers a scheme's challenge, on a 401.
     let challenges = cx.server.then(|| scheme::challenge_checks(cx.group));
+    // A group that is served checks its `ServerScheme` in `challenge_checks`, a group that is called here.
+    let sides = cx.client.then(|| scheme::client_checks(cx.group));
     let fixed = headers::group_checks(cx);
     let openapi = openapi::group(cx);
     let named_types = named_types(cx);
@@ -83,6 +85,7 @@ fn group(cx: &Cx) -> TokenStream {
         #(#errors)*
         #alone
         #challenges
+        #sides
         #fixed
         #openapi
         #server
