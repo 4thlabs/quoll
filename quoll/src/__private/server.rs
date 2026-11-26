@@ -494,9 +494,12 @@ pub fn authorize<C: Scoped + ?Sized>(caller: &C, scopes: &[&str]) -> Result<()> 
     }
 }
 
-/// A 401 with the challenges of the schemes `C`: a client knows so which credential to send.
+/// A 401 with the challenges of the schemes `C`: a client knows so which credential to send. A 401 whose error gave
+/// its own `WWW-Authenticate` keeps it in their place.
 fn challenged<C: Challenges>(mut response: Response) -> Response {
-    if response.status() == StatusCode::UNAUTHORIZED {
+    if response.status() == StatusCode::UNAUTHORIZED
+        && !response.headers().contains_key(header::WWW_AUTHENTICATE)
+    {
         C::challenge(response.headers_mut());
     }
 
@@ -1204,19 +1207,35 @@ struct Problem<'a> {
     detail: Option<&'a str>,
 }
 
-/// An error answered as an RFC 9457 problem, `application/problem+json`. An internal error and one received from
-/// another API are logged through `tracing`, and their status alone is sent: 500 and 502.
+/// An error answered as an RFC 9457 problem, `application/problem+json`, with the headers it was given. An internal
+/// error and one received from another API are logged through `tracing`, and their status alone is sent: 500 and
+/// 502. An error that was given a header it cannot send is answered as an internal error, which says why.
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
+        let sent = answered(&self).1.is_some();
+
+        if let Some(refused) = self.refused_header().filter(|_| sent) {
+            return Error::internal(format!(
+                "{refused}: a handler's error holds a header that cannot be sent"
+            ))
+            .into_response();
+        }
+
         // Logs what is not sent, which is all `answer` logs.
-        let logged = answer(&self).1.is_none();
+        answer(&self);
 
         let (status, body) = problem_json(&self);
         let content_type = [(header::CONTENT_TYPE, HeaderValue::from_static(PROBLEM))];
         let mut response = (status, content_type, body).into_response();
 
-        if logged {
+        if !sent {
             response.extensions_mut().insert(Logged);
+
+            return response;
+        }
+
+        for (name, value) in self.headers() {
+            response.headers_mut().append(name, value.clone());
         }
 
         response

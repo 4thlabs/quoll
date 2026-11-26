@@ -573,3 +573,7 @@ action back when the server returns.
 A handler returns a `quoll::Error`. The server answers it with its status and an RFC 9457 problem, like
 `Error::not_found("no such note")` above. `Error::internal(cause)` logs its cause and answers a bare 500.
 [Errors](errors.md) says what each error answers.
+
+An error carries headers, which the server sends with its status. `.retry_after(Duration::from_secs(30))` on a 429
+answers `Retry-After: 30`, and `.with_header(name, value)` adds any other, like a `WWW-Authenticate` on a 401.
+[Headers](errors.md#headers) says which headers are refused.

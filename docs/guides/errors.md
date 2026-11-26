@@ -59,6 +59,56 @@ fn store(id: i64, title: &str) -> std::io::Result<String> {
 - An error that a client received from another API, carried up with `?`, is answered 502. The other API's status is
   not passed on as the status of this API.
 
+### Headers
+
+An error carries headers, which the server sends with its status and its problem. A 429 or a 503 says when to try
+again with `Retry-After`, a 401 says which credential to send with `WWW-Authenticate`, and a 405 lists its methods
+with `Allow`:
+
+```rust
+use std::time::Duration;
+
+use http::StatusCode;
+use http::header::WWW_AUTHENTICATE;
+use quoll::{Error, Response, Result};
+
+quoll::api! {
+    pub api Api = "/api";
+
+    pub group Sessions {
+        POST "/sign-in" => sign_in(name: String) -> String;
+    }
+}
+
+struct App;
+
+impl SessionsServer for App {
+    async fn sign_in(&self, name: String) -> Result<Response<String>> {
+        if name == "locked" {
+            return Err(Error::new(StatusCode::TOO_MANY_REQUESTS, "too many failed sign-ins")
+                .retry_after(Duration::from_secs(30)));
+        }
+
+        if name.is_empty() {
+            return Err(Error::unauthorized("no such user")
+                .with_header(WWW_AUTHENTICATE, r#"Bearer realm="notes""#));
+        }
+
+        Ok(Response::new(format!("signed in as {name}")))
+    }
+}
+```
+
+- `retry_after(wait)` sets `Retry-After` to the seconds of `wait`, a part of one counted as a whole.
+- `with_header(name, value)` adds a header after those of its name, like `Response::header`.
+- A `WWW-Authenticate` on a 401 takes the place of the challenges of the route's schemes.
+- The server sends them only with the error's own status. An internal error and an error of another API are answered
+  500 and 502 without them.
+- A header that belongs to a connection is refused: `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`,
+  `Trailer`, `Transfer-Encoding` and `Upgrade`. So are `Content-Type` and `Content-Length`, which quoll writes from
+  the problem. The error is then answered 500, and the log says which header was refused.
+- The headers of an error stay out of the OpenAPI document.
+
 ## What the server answers
 
 The body of an error is a problem, `application/problem+json`:
@@ -129,6 +179,7 @@ async fn main() -> Result<()> {
   when `kind()` is `ErrorKind::Status(status)`.
 - `detail()` is the RFC 9457 problem, when the body is one (`application/problem+json`).
 - `response()` is the answer, with that detail, its status and its headers.
+- `headers()` is the answer's headers, such as a `Retry-After` or a rate limit, whatever its body.
 - `body()` is the body as it came: its first 64 KiB.
 - The error's sources show the URL of the call by its origin and its path alone. They never show its credentials, or
   its query, where a query scheme sends its key. A middleware of another crate may wrap reqwest's error in a type of
@@ -160,8 +211,9 @@ async fn main() -> quoll::Result<()> {
 }
 ```
 
-The headers of an error's answer, such as a `Retry-After` or a rate limit, come with the whole answer, which a call's
-`.response()` gives. Its body is then the error. [The whole answer](client.md#the-whole-answer) shows it.
+The whole answer of an error, which a call's `.response()` gives, has these headers too. Its body is then the error.
+[The whole answer](client.md#the-whole-answer) shows it. `client::retry` reads the `Retry-After` of an answer, as
+[Deciding a retry](client.md#deciding-a-retry) shows.
 
 ### The kind of an error
 
