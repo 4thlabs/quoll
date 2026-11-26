@@ -230,35 +230,67 @@ async fn an_error_answered_with_a_status_of_the_servers_own_sends_no_header() {
 }
 
 #[tokio::test]
-async fn a_header_of_a_connection_or_that_quoll_writes_is_answered_500_and_logged() {
+async fn a_refused_header_is_left_out_and_logged_and_the_error_answered_as_it_is() {
     let (log, _capture) = support::log::capture(false);
     let api = Api::client(&serve(&App::default()).await).expect("a client");
 
-    let connection = api.limits().error("connection").await.expect_err("a 500");
-    let content_type = api.limits().error("content-type").await.expect_err("a 500");
+    let connection = api.limits().error("connection").await.expect_err("a 429");
+    let content_type = api.limits().error("content-type").await.expect_err("a 429");
 
     for error in [&connection, &content_type] {
-        assert_eq!(error.status(), Some(StatusCode::INTERNAL_SERVER_ERROR));
-        assert!(!error.headers().contains_key(RETRY_AFTER), "{error:?}");
+        assert_eq!(error.status(), Some(StatusCode::TOO_MANY_REQUESTS));
+        assert_eq!(error.headers()[RETRY_AFTER], "2", "{error:?}");
+        assert!(!error.headers().contains_key(CONNECTION), "{error:?}");
+        assert_eq!(
+            error.headers()[CONTENT_TYPE],
+            "application/problem+json",
+            "{error:?}"
+        );
     }
 
     let log = log.text();
+    let warned = |refused: &str| {
+        log.lines().any(|line| {
+            line.contains("WARN")
+                && line.contains(&format!(
+                    "{refused}: a handler's error is answered without it"
+                ))
+        })
+    };
 
     assert!(
-        log.contains(
-            "the header `connection` is hop-by-hop: it belongs to a connection, not to an answer: \
-             a handler's error holds a header that cannot be sent"
+        warned(
+            "the header `connection` is hop-by-hop: it belongs to a connection, not to an answer"
         ),
         "{log}"
     );
     assert!(
-        log.contains(
-            "the header `content-type` is written by quoll from the problem it answers: \
-             a handler's error holds a header that cannot be sent"
-        ),
+        warned("the header `content-type` is written by quoll from the problem it answers"),
         "{log}"
     );
     assert!(!log.contains("text/html"), "{log}");
+}
+
+#[test]
+fn the_debug_form_of_an_error_names_its_headers_and_a_refusal_without_their_values() {
+    let error = too_many()
+        .with_header(WWW_AUTHENTICATE, "Bearer secret-realm")
+        .with_header(CONNECTION, "close");
+    let shown = format!("{error:?}");
+
+    assert!(
+        shown.contains(r#"headers: ["retry-after", "www-authenticate"]"#),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("refused: \"the header `connection` is hop-by-hop"),
+        "{shown}"
+    );
+    assert!(
+        !shown.contains("secret-realm") && !shown.contains("close"),
+        "{shown}"
+    );
+    assert!(!format!("{:?}", Error::not_found("x")).contains("headers"));
 }
 
 /// Limits kept in memory, in place of a server: every sign-in is refused, with a `Retry-After`.

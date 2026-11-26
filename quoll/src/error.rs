@@ -13,8 +13,6 @@ mod client;
 mod headers;
 mod kind;
 
-use headers::Headers;
-
 pub use kind::ErrorKind;
 
 /// A result whose error is an [`Error`] of the shape `E`: what every route returns, `quoll::Result<Note>` of the
@@ -72,7 +70,16 @@ pub type Result<T, E = Problem> = std::result::Result<T, Error<E>>;
 /// A handler that returns an error its own client received answers 502, or 500 when it is the handler's own mistake,
 /// a URL that is not one: the status of another API is not passed on as this one's. An error of another shape goes up
 /// into a handler's `quoll::Error` with `?`, which keeps its status, its message and its body, and leaves its detail.
-pub struct Error<E = Problem>(pub(crate) Box<Repr<E>>, Headers);
+pub struct Error<E = Problem>(pub(crate) Box<Inner<E>>);
+
+/// What an error holds, boxed, so that an error is one pointer wide.
+pub(crate) struct Inner<E> {
+    pub(crate) repr: Repr<E>,
+    /// The headers given, and those of an answer received with no `answer` to hold them: an answer's are in it alone.
+    headers: HeaderMap,
+    /// The first header given that was refused, which says why.
+    refused: Option<String>,
+}
 
 /// What an error holds, which the server reads to answer it.
 pub(crate) enum Repr<E> {
@@ -312,40 +319,68 @@ impl<E> Error<E> {
         })
     }
 
-    /// The error with the headers of the answer the client received, `headers`, which its `answer` holds too when it
-    /// has one.
+    /// The error with the headers of the answer the client received, `headers`: for an answer whose body is not an
+    /// `E`, which has no `answer` to hold them.
     #[cfg_attr(
         not(feature = "client"),
         expect(dead_code, reason = "only the client receives an answer")
     )]
     pub(crate) fn received(mut self, headers: HeaderMap) -> Self {
-        self.1 = Headers::received(headers);
+        self.0.headers = headers;
         self
     }
 
     /// An error of `repr`, with no headers.
     fn of(repr: Repr<E>) -> Self {
-        Self(Box::new(repr), Headers::default())
+        Self(Box::new(Inner {
+            repr,
+            headers: HeaderMap::new(),
+            refused: None,
+        }))
+    }
+
+    /// The headers, to change: those of its answer, when it has one, or its own.
+    fn headers_mut(&mut self) -> &mut HeaderMap {
+        let Inner { repr, headers, .. } = &mut *self.0;
+
+        match repr {
+            Repr::Upstream {
+                answer: Some(answer),
+                ..
+            } => answer.headers_mut(),
+            _ => headers,
+        }
     }
 
     /// The error, as an error of the shape `F`: an error of a status, an internal one and a call that got no answer
     /// as they are, and an answer, whose detail is left, with its status, its body and its message; and its headers.
     pub(crate) fn cast<F>(self) -> Error<F> {
-        let Self(repr, headers) = self;
-        let repr = Box::new(match *repr {
+        let Inner {
+            repr,
+            mut headers,
+            refused,
+        } = *self.0;
+        let repr = match repr {
             Repr::Problem { status, detail } => Repr::Problem { status, detail },
             Repr::Internal(source) => Repr::Internal(source),
             Repr::Upstream {
                 status,
+                answer,
                 body,
                 message,
-                ..
-            } => Repr::Upstream {
-                status,
-                answer: None,
-                body,
-                message,
-            },
+            } => {
+                // The answer is left, and its headers kept.
+                if let Some(mut answer) = answer {
+                    headers = std::mem::take(answer.headers_mut());
+                }
+
+                Repr::Upstream {
+                    status,
+                    answer: None,
+                    body,
+                    message,
+                }
+            }
             Repr::Failed {
                 kind,
                 message,
@@ -355,9 +390,13 @@ impl<E> Error<E> {
                 message,
                 source,
             },
-        });
+        };
 
-        Error(repr, headers)
+        Error(Box::new(Inner {
+            repr,
+            headers,
+            refused,
+        }))
     }
 
     /// The status of the error, `Some(status)` exactly when its [kind](Error::kind) is
@@ -388,7 +427,7 @@ impl<E> Error<E> {
     /// assert_eq!(refused.kind(), ErrorKind::Connect);
     /// ```
     pub fn kind(&self) -> ErrorKind {
-        match &*self.0 {
+        match &self.0.repr {
             Repr::Problem { status, .. } | Repr::Upstream { status, .. } => {
                 ErrorKind::Status(*status)
             }
@@ -415,7 +454,7 @@ impl<E> Error<E> {
     /// has a response of its status alone, in HTTP/1.1 and with the headers given with
     /// [`with_header`](Error::with_header) alone.
     pub fn response(&self) -> Option<&Response<E>> {
-        match &*self.0 {
+        match &self.0.repr {
             Repr::Upstream { answer, .. } => answer.as_ref(),
             Repr::Problem { .. } | Repr::Internal(_) | Repr::Failed { .. } => None,
         }
@@ -425,7 +464,7 @@ impl<E> Error<E> {
     /// further. `None` for an error that is not such an answer, or one a fake built with
     /// [`answered`](Error::answered).
     pub fn body(&self) -> Option<&[u8]> {
-        match &*self.0 {
+        match &self.0.repr {
             Repr::Upstream { body, .. } => body.as_deref(),
             Repr::Problem { .. } | Repr::Internal(_) | Repr::Failed { .. } => None,
         }
@@ -438,15 +477,25 @@ impl<E> Error<E> {
     /// The server answers them with the error's status and its problem, and the client reads them back with
     /// [`headers`](Error::headers). An error the server answers with a status of its own, 500 for an internal error,
     /// 502 for an error its client received, is answered with that status alone, without them. A `WWW-Authenticate`
-    /// on a 401 takes the place of the challenges of the route's schemes. An error after the 200 of a stream, an
-    /// `event: problem`, has no headers to send.
+    /// on a 401 takes the place of the challenges of the route's schemes. The error of an item after the 200 of a
+    /// stream cannot send them, as the head went with the 200: the server logs their names at `WARN`.
+    ///
+    /// A fake that stands for another API, whose errors a handler carries up with `?`, returns what the real client
+    /// does, [`Error::answered`] or [`Error::failed`] of an `ErrorKind::Status`: the handler answers it 502, without
+    /// its headers. An `Error::new` of the fake's would be answered with its own status and its headers.
     ///
     /// `name` is a [`HeaderName`], as `http::header::WWW_AUTHENTICATE`, or its text; `value` a [`HeaderValue`], a
-    /// string or a number. A name or a value that is not one is kept out of the headers, and so is a header that
-    /// belongs to a connection, `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
-    /// `Transfer-Encoding` or `Upgrade`, or that quoll writes from the problem, `Content-Type` or `Content-Length`:
-    /// the server then answers the error with a 500, logged with what was refused, without its value, as it answers
-    /// a [`Response::header`] that cannot be sent.
+    /// string or a number. Some headers are refused and kept out:
+    ///
+    /// - a name or a value that is not one;
+    /// - a header that belongs to a connection: `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer`,
+    ///   `Transfer-Encoding` and `Upgrade`;
+    /// - a header that describes the body quoll writes: `Content-Type`, `Content-Length`, `Content-Encoding` and
+    ///   `Content-Range`.
+    ///
+    /// The server answers the error all the same, with its status and the headers kept, so that its caller still
+    /// reads it, and logs the first refusal at `WARN`: the header's name and why, never its value. The error's
+    /// `Debug` shows it too.
     ///
     /// ```
     /// use http::StatusCode;
@@ -465,18 +514,13 @@ impl<E> Error<E> {
         K: TryInto<HeaderName>,
         V: TryInto<HeaderValue>,
     {
-        let added = self.1.append(name, value);
-
-        // The answer a fake builds keeps the headers of its error, as the client's does.
-        if let (
-            Some((name, value)),
-            Repr::Upstream {
-                answer: Some(answer),
-                ..
-            },
-        ) = (added, &mut *self.0)
-        {
-            answer.headers_mut().append(name, value);
+        match headers::checked(name, value) {
+            Ok((name, value)) => {
+                self.headers_mut().append(name, value);
+            }
+            Err(refused) => {
+                self.0.refused.get_or_insert(refused);
+            }
         }
 
         self
@@ -511,18 +555,8 @@ impl<E> Error<E> {
     )]
     #[must_use]
     pub fn retry_after(mut self, wait: Duration) -> Self {
-        let value = self.1.retry_after(wait);
-
-        if let Repr::Upstream {
-            answer: Some(answer),
-            ..
-        } = &mut *self.0
-        {
-            answer
-                .headers_mut()
-                .insert(http::header::RETRY_AFTER, value);
-        }
-
+        self.headers_mut()
+            .insert(http::header::RETRY_AFTER, headers::retry_after(wait));
         self
     }
 
@@ -533,7 +567,13 @@ impl<E> Error<E> {
     /// On the client, a `Retry-After`, a `WWW-Authenticate` or a rate limit's headers are read here, of an answer
     /// whose body is not the api's shape too, which has no [`response`](Error::response).
     pub fn headers(&self) -> &HeaderMap {
-        self.1.map()
+        match &self.0.repr {
+            Repr::Upstream {
+                answer: Some(answer),
+                ..
+            } => answer.headers(),
+            _ => &self.0.headers,
+        }
     }
 
     /// The first header given to [`with_header`](Error::with_header) that was refused, which says why: the server
@@ -543,7 +583,7 @@ impl<E> Error<E> {
         expect(dead_code, reason = "only the server answers an error")
     )]
     pub(crate) fn refused_header(&self) -> Option<&str> {
-        self.1.refused()
+        self.0.refused.as_deref()
     }
 }
 
@@ -559,43 +599,67 @@ where
     }
 }
 
+/// The debug form of an error: what it holds, and the names of its headers and the refusal of one, when it has any,
+/// never their values, which may hold a credential.
 impl<E: fmt::Debug> fmt::Debug for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &*self.0 {
-            Repr::Problem { status, detail } => f
-                .debug_struct("Error")
-                .field("status", status)
-                .field("detail", detail)
-                .finish(),
-            Repr::Internal(source) => f.debug_tuple("Internal").field(source).finish(),
+        let mut out = match &self.0.repr {
+            Repr::Problem { status, detail } => {
+                let mut out = f.debug_struct("Error");
+
+                out.field("status", status).field("detail", detail);
+                out
+            }
+            Repr::Internal(source) => {
+                let mut out = f.debug_struct("Internal");
+
+                out.field("source", source);
+                out
+            }
             Repr::Upstream {
                 status,
                 answer,
                 body,
                 ..
-            } => f
-                .debug_struct("Upstream")
-                .field("status", status)
-                .field("detail", &answer.as_ref().map(Response::body))
-                .field("body", &body.as_deref().map(String::from_utf8_lossy))
-                .finish(),
+            } => {
+                let mut out = f.debug_struct("Upstream");
+
+                out.field("status", status)
+                    .field("detail", &answer.as_ref().map(Response::body))
+                    .field("body", &body.as_deref().map(String::from_utf8_lossy));
+                out
+            }
             Repr::Failed {
                 kind,
                 message,
                 source,
-            } => f
-                .debug_struct("Failed")
-                .field("kind", kind)
-                .field("message", message)
-                .field("source", source)
-                .finish(),
+            } => {
+                let mut out = f.debug_struct("Failed");
+
+                out.field("kind", kind)
+                    .field("message", message)
+                    .field("source", source);
+                out
+            }
+        };
+
+        let names: Vec<&str> = self.headers().keys().map(HeaderName::as_str).collect();
+
+        if !names.is_empty() {
+            out.field("headers", &names);
         }
+
+        if let Some(refused) = &self.0.refused {
+            out.field("refused", refused);
+        }
+
+        out.finish()
     }
 }
 
 impl<E> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &*self.0 {
+        match &self.0.repr {
             Repr::Problem { status, detail } => write!(f, "{detail} ({})", status.as_u16()),
             Repr::Internal(_) => f.write_str("internal error"),
             Repr::Upstream {
@@ -615,7 +679,7 @@ impl<E> fmt::Display for Error<E> {
 
 impl<E: fmt::Debug> StdError for Error<E> {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match &*self.0 {
+        match &self.0.repr {
             Repr::Internal(source)
             | Repr::Failed {
                 source: Some(source),
@@ -766,6 +830,39 @@ mod tests {
             error.source().map(ToString::to_string).as_deref(),
             Some("the database is down")
         );
+    }
+
+    #[test]
+    fn an_error_is_one_pointer_wide_whatever_its_headers() {
+        assert_eq!(size_of::<Error>(), size_of::<usize>());
+        assert_eq!(size_of::<Error<Shape>>(), size_of::<usize>());
+    }
+
+    #[test]
+    fn an_answer_received_keeps_its_headers_in_one_place_and_through_a_cast() {
+        let mut headers = HeaderMap::new();
+
+        headers.insert(http::header::RETRY_AFTER, HeaderValue::from(5));
+
+        let answer = Response::from_parts(
+            StatusCode::TOO_MANY_REQUESTS,
+            Version::HTTP_11,
+            headers,
+            Shape {
+                message: "slow down".into(),
+            },
+        );
+        let error = Error::upstream(StatusCode::TOO_MANY_REQUESTS, Some(answer), None, None)
+            .with_header("x-limit", "10");
+
+        assert!(error.0.headers.is_empty(), "the answer holds them");
+        assert_eq!(error.headers()["retry-after"], "5");
+        assert_eq!(error.headers()["x-limit"], "10");
+
+        let carried: Error = error.into();
+
+        assert_eq!(carried.headers()["retry-after"], "5");
+        assert_eq!(carried.headers()["x-limit"], "10");
     }
 
     #[test]

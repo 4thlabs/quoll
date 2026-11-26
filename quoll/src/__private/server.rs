@@ -1109,7 +1109,7 @@ fn answer_body(content_type: HeaderValue, body: Vec<u8>) -> Response {
 
 /// What the server answers for this error: the status and, when it is to be sent, the detail; nothing is logged.
 fn answered(error: &Error) -> (StatusCode, Option<&str>) {
-    match &*error.0 {
+    match &error.0.repr {
         Repr::Problem { status, detail }
             if status.is_client_error() || status.is_server_error() =>
         {
@@ -1148,7 +1148,7 @@ fn problem_json(error: &Error) -> (StatusCode, Vec<u8>) {
 /// What the server answers for this error: the status and, when it is to be sent, the detail. Logs what is not
 /// sent.
 fn answer(error: &Error) -> (StatusCode, Option<&str>) {
-    match &*error.0 {
+    match &error.0.repr {
         Repr::Problem { status, detail }
             if status.is_client_error() || status.is_server_error() =>
         {
@@ -1209,20 +1209,13 @@ struct Problem<'a> {
 
 /// An error answered as an RFC 9457 problem, `application/problem+json`, with the headers it was given. An internal
 /// error and one received from another API are logged through `tracing`, and their status alone is sent: 500 and
-/// 502. An error that was given a header it cannot send is answered as an internal error, which says why.
+/// 502. A header the error was refused is logged, and the error answered without it.
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        let sent = answered(&self).1.is_some();
-
-        if let Some(refused) = self.refused_header().filter(|_| sent) {
-            return Error::internal(format!(
-                "{refused}: a handler's error holds a header that cannot be sent"
-            ))
-            .into_response();
-        }
-
         // Logs what is not sent, which is all `answer` logs.
-        answer(&self);
+        let sent = answer(&self).1.is_some();
+
+        refusal_logged(&self);
 
         let (status, body) = problem_json(&self);
         let content_type = [(header::CONTENT_TYPE, HeaderValue::from_static(PROBLEM))];
@@ -1239,6 +1232,14 @@ impl IntoResponse for Error {
         }
 
         response
+    }
+}
+
+/// Logs at `WARN` the header `error` was refused, if it was: its name and why, never its value. The error is answered
+/// all the same, without it, so that its caller still reads its status.
+pub(crate) fn refusal_logged(error: &Error) {
+    if let Some(refused) = error.refused_header() {
+        tracing::warn!("{refused}: a handler's error is answered without it");
     }
 }
 

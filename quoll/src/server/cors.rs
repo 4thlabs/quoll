@@ -31,7 +31,8 @@ const MAX_AGE: Duration = Duration::from_secs(60 * 60);
 ///   application's: the origins listed are trusted.
 /// - A preflight is an `OPTIONS` request with an `Origin` and an `Access-Control-Request-Method`, which the layer
 ///   answers itself. Any other `OPTIONS` request is a call of the route, which answers it, with the headers of CORS.
-/// - A page reads `Location`, `WWW-Authenticate` and `X-Request-Id` in an answer, beside the headers every page reads.
+/// - A page reads `Location`, `WWW-Authenticate`, `Retry-After`, `Allow` and `X-Request-Id` in an answer, beside the
+///   headers every page reads.
 /// - Credentials are not allowed: a page of another origin sends a token or a key in a header, which needs none, and
 ///   no cookie. A cookie scheme trusts the server's own origin alone: a call of another origin with its cookie whose
 ///   method is not `GET`, `HEAD` or `OPTIONS` is answered 403, whether its origin is listed here or not.
@@ -75,6 +76,8 @@ pub fn cors(
         .expose_headers([
             header::LOCATION,
             header::WWW_AUTHENTICATE,
+            header::RETRY_AFTER,
+            header::ALLOW,
             HeaderName::from_static("x-request-id"),
         ])
         .max_age(MAX_AGE);

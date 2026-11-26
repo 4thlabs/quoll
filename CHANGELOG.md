@@ -31,8 +31,15 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.10.0" }
   `Allow` on a 405. A `WWW-Authenticate` on a 401 takes the place of the route's challenges. `error.headers()` gives
   them back on every shape, and on the client the headers of any answer of an error status, whatever its body, so
   that `client::retry` and the caller read the wait the server asked. An internal error and an error of another API
-  are answered 500 and 502 without them. A hop-by-hop header, `Content-Type` and `Content-Length` are refused: the
-  error is answered 500, and the log says which header. The OpenAPI document does not change.
+  are answered 500 and 502 without them. A hop-by-hop header and the headers of the body quoll writes,
+  `Content-Type`, `Content-Length`, `Content-Encoding` and `Content-Range`, are refused: the error is answered
+  without them, and the log says which at `WARN`. The OpenAPI document does not change.
+- `server::cors` exposes `Retry-After` and `Allow` too, so that a page of another origin reads them.
+
+### Changed
+
+- The debug form of an error names its headers, never their values, and a header it was refused. That of an internal
+  error is `Internal { source: .. }`, where it was `Internal(..)`.
 
 ### Fixed
 

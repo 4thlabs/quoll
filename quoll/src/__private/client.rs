@@ -739,10 +739,13 @@ async fn answered_error<E>(
     })?;
     let detail = (shape.read)(&headers, &body);
     let message = detail.as_ref().and_then(shape.message);
-    let answer =
-        detail.map(|detail| crate::Response::from_parts(status, version, headers.clone(), detail));
+    // The headers are in one place: the answer, when the body is an `E`, or the error.
+    let Some(detail) = detail else {
+        return Ok(Error::upstream(status, None, Some(body), message).received(headers));
+    };
+    let answer = crate::Response::from_parts(status, version, headers, detail);
 
-    Ok(Error::upstream(status, answer, Some(body), message).received(headers))
+    Ok(Error::upstream(status, Some(answer), Some(body), message))
 }
 
 /// A call of a route, described and not sent yet: the request the route's arguments write, or why they could not,

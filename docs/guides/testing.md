@@ -219,6 +219,11 @@ Some apis answer their errors in a shape of their own, with `#[error(E)]`. A fak
 `impl Call<T, E>`. It builds the error of an answer with `quoll::Error::answered(StatusCode::NOT_FOUND, e)`:
 [Another API's errors](errors.md#another-apis-errors) shows one.
 
+A fake of another API, which a handler calls, returns the errors that the real client does: `Error::answered` or
+`Error::failed(ErrorKind::Status(..), ..)`. Carried up with `?`, the handler answers them 502, without their
+headers, as it answers the real client's. An `Error::new(..)` of the fake's would be answered with its own status and
+its headers.
+
 ## The OpenAPI snapshot
 
 A test keeps a snapshot of the document beside it, and fails when the document changes. So a change to the contract

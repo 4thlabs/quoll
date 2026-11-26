@@ -105,8 +105,11 @@ impl SessionsServer for App {
 - The server sends them only with the error's own status. An internal error and an error of another API are answered
   500 and 502 without them.
 - A header that belongs to a connection is refused: `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`,
-  `Trailer`, `Transfer-Encoding` and `Upgrade`. So are `Content-Type` and `Content-Length`, which quoll writes from
-  the problem. The error is then answered 500, and the log says which header was refused.
+  `Trailer`, `Transfer-Encoding` and `Upgrade`. So are the headers of the body that quoll writes: `Content-Type`,
+  `Content-Length`, `Content-Encoding` and `Content-Range`. The error is answered without the refused header, with
+  its status and its other headers, and the log says at `WARN` which header was refused.
+- Once a stream's 200 is sent, the head of the answer is gone: the error of an item is sent without its headers, and
+  the log names them at `WARN`.
 - The headers of an error stay out of the OpenAPI document.
 
 ## What the server answers

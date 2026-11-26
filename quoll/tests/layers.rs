@@ -769,7 +769,10 @@ async fn an_options_call_reaches_its_route_through_cors() -> Result<()> {
 
     assert_eq!(read, "options 3");
     assert_eq!(allowed, ORIGIN);
-    assert_eq!(exposed, "location,www-authenticate,x-request-id");
+    assert_eq!(
+        exposed,
+        "location,www-authenticate,retry-after,allow,x-request-id"
+    );
     assert_eq!(api.layers().options(4).await?, "options 4");
     Ok(())
 }
@@ -795,7 +798,7 @@ async fn a_call_of_a_listed_origin_reads_its_answer_and_another_does_not() {
     assert_eq!(listed.headers()["access-control-allow-origin"], ORIGIN);
     assert_eq!(
         listed.headers()["access-control-expose-headers"],
-        "location,www-authenticate,x-request-id"
+        "location,www-authenticate,retry-after,allow,x-request-id"
     );
     assert!(!other.headers().contains_key("access-control-allow-origin"));
 }
