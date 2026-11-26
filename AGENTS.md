@@ -137,6 +137,8 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
 ## Versions
 
 - A pull request that changes what users see adds its entry under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md).
+  An entry is short, two lines at most: what a user gets, the names they write, and the issue. Its cases, limits and
+  messages are in the guides and the spec, not in the entry.
 - `rust-version` is raised only in a minor version, with the dependency or the feature of Rust that needs it.
 - The pull request of a release:
   - moves the entries of `[Unreleased]` under the new version and its date, and updates the links at the bottom;
@@ -148,7 +150,8 @@ Hosted on GitHub: [`4thlabs/quoll`](https://github.com/4thlabs/quoll), MIT.
     git grep -nE 'tag = "v|--tag v'
     ```
 
-  The maintainer tags its merge, `v` and the version, with its notes from the changelog.
+  Its merge is tagged `v` and the version, and its release notes are the version's entries of the changelog, with the
+  install line.
 
 ## Related projects
 
