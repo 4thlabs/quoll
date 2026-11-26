@@ -7,9 +7,9 @@ use base64::engine::general_purpose::STANDARD;
 use http::HeaderValue;
 use http::request::Parts;
 
-use crate::auth::bearer::authorization;
+use crate::auth::{Outgoing, Unsendable, authorization};
 use crate::openapi::SecurityScheme;
-use crate::{Error, Result, Scheme};
+use crate::{ClientScheme, Error, Result, Scheme, ServerScheme};
 
 /// A user and a password in the `Authorization` header: `Authorization: Basic <base64 of user:password>`, as RFC 7617
 /// sends them. Its credential is a [`BasicCredential`].
@@ -19,7 +19,7 @@ use crate::{Error, Result, Scheme};
 /// a route that the web page calls had better take another scheme.
 ///
 /// ```
-/// use quoll::{Basic, Scheme};
+/// use quoll::{Basic, ServerScheme};
 ///
 /// let request = http::Request::get("/api/stats")
 ///     .header("Authorization", "Basic YW5hOnNlY3JldA==")
@@ -53,9 +53,38 @@ impl fmt::Debug for BasicCredential {
 }
 
 impl Scheme for Basic {
-    type Credential = BasicCredential;
-
     const NAME: &'static str = "Basic";
+}
+
+impl ClientScheme for Basic {
+    type Secret = BasicCredential;
+
+    /// `Authorization: Basic <base64 of user:password>`.
+    ///
+    /// # Errors
+    ///
+    /// When the user holds a `:`, or the user or the password a control character, which the server would not read.
+    fn write(
+        credential: &BasicCredential,
+        request: &mut Outgoing<'_>,
+    ) -> std::result::Result<(), Unsendable> {
+        let BasicCredential { user, password } = credential;
+        let readable = !user.contains(':')
+            && !user.chars().any(char::is_control)
+            && !password.chars().any(char::is_control);
+
+        if !readable {
+            return Err(Unsendable::new(
+                "the basic credential cannot be sent: its user holds a `:`, or its user or its password a control character",
+            ));
+        }
+
+        request.authorization_token68("Basic", &STANDARD.encode(format!("{user}:{password}")))
+    }
+}
+
+impl ServerScheme for Basic {
+    type Credential = BasicCredential;
 
     const CHALLENGE: HeaderValue =
         HeaderValue::from_static(r#"Basic realm="api", charset="UTF-8""#);
@@ -73,9 +102,10 @@ impl Scheme for Basic {
     /// - a value that is not UTF-8 once decoded, has no `:` between the user and the password, or holds a control
     ///   character.
     fn read(request: &Parts) -> Result<Option<BasicCredential>> {
-        let Some(encoded) = authorization(request, "Basic")? else {
+        let Some(credentials) = authorization(request, "Basic")? else {
             return Ok(None);
         };
+        let encoded = credentials.as_bytes();
 
         let decoded = STANDARD.decode(encoded).map_err(|_| {
             Error::unauthorized(

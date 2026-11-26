@@ -9,7 +9,7 @@
 //! | [`bearer()`]      | `Authorization: Bearer`, on the routes that take [`Bearer`]                         |
 //! | [`bearer_from()`] | the same, with a token asked of a [`TokenSource`] before each call, and after a 401 |
 //! | [`basic()`]       | `Authorization: Basic`, on the routes that take [`Basic`]                           |
-//! | [`key()`]         | the credential of a scheme the contract declares, where it travels                  |
+//! | [`key()`]         | the credential of any scheme that implements [`ClientScheme`]                       |
 //! | [`on_request()`]  | a closure that changes each request of a contract before it leaves                  |
 //! | [`user_agent()`]  | `User-Agent`, on a request that has none                                            |
 //! | [`request_id()`]  | a new `X-Request-Id` per call, on a request that has none                           |
@@ -83,18 +83,16 @@ use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use http::header::COOKIE;
 use http::header::GetAll;
-use http::header::{AUTHORIZATION, COOKIE};
-use http::{Extensions, HeaderName, HeaderValue};
+use http::{Extensions, HeaderValue};
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next};
 
-use crate::__private::auth::{Declared, Place};
 use crate::__private::client::ApiOrigin;
-use crate::auth::is_b64token;
-use crate::{Basic, Bearer, Route, Scheme};
+use crate::auth::Added;
+use crate::auth::{Outgoing, is_token68};
+use crate::{Basic, BasicCredential, Bearer, ClientScheme, Route};
 
 mod builder;
 mod follow;
@@ -142,12 +140,7 @@ pub use trace::trace;
 /// # }
 /// ```
 pub fn bearer(token: impl Into<String>) -> impl Middleware {
-    let header = bearer_header(&token.into());
-
-    send::<Bearer>(authorization(
-        header,
-        "the bearer token cannot be sent: it is not a `b64token`, letters, digits, `-._~+/` and `=` at its end",
-    ))
+    key::<Bearer>(token.into())
 }
 
 /// Sends `Authorization: Basic <base64 of user:password>` on the requests whose [`Route`] takes [`Basic`], and on no
@@ -173,27 +166,20 @@ pub fn bearer(token: impl Into<String>) -> impl Middleware {
 /// # }
 /// ```
 pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middleware {
-    let (user, password) = (user.into(), password.into());
-    let readable = !user.contains(':')
-        && !user.chars().any(char::is_control)
-        && !password.chars().any(char::is_control);
-    let header = readable
-        .then(|| {
-            let encoded = STANDARD.encode(format!("{user}:{password}"));
-
-            HeaderValue::try_from(format!("Basic {encoded}")).ok()
-        })
-        .flatten();
-
-    send::<Basic>(authorization(
-        sensitive(header),
-        "the basic credential cannot be sent: its user holds a `:`, or its user or its password a control character",
-    ))
+    key::<Basic>(BasicCredential {
+        user: user.into(),
+        password: password.into(),
+    })
 }
 
-/// Sends `value`, the credential of the scheme `K` that the contract declares, where `K` says it travels.
+/// Sends the credential of the scheme `S`, as its [`ClientScheme::write`] writes it from `secret`.
 ///
-/// It sends it on the requests whose [`Route`] takes `K`, and on no other, as [`bearer`] sends its token:
+/// It writes it on the requests whose [`Route`] takes `S`, to the api's own origin, and on no other, as [`bearer`]
+/// sends its token. Each header written is marked sensitive. A credential the server would not read, an
+/// [`Unsendable`](crate::auth::Unsendable), fails the call before it is sent, with an error that does not show it.
+/// [`bearer`] is `key::<Bearer>`, and [`basic`] is `key::<Basic>`.
+///
+/// A scheme the contract declares is sent where it travels:
 ///
 /// - `scheme Key = header "X-Api-Key";`: in the header, marked sensitive;
 /// - `scheme Session = cookie "session";`: as the cookie `session`, after the cookies the request already has, all in
@@ -207,7 +193,8 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
 /// `ClientWithMiddleware`, each get their own. A value the server would not read fails each call that would send it,
 /// with an error that does not show it: an empty one; in a header, one with a control character, or a space or a tab
 /// at either end; in a cookie, one with a character other than an ASCII letter, digit or sign, or with `"`, `,`, `;`
-/// or `\`; for OpenID Connect, a token that is not a `b64token`.
+/// or `\`; for OpenID Connect, a token that is not a `b64token`. A scheme of the application's own writes its own
+/// format: [`ClientScheme`] shows one.
 ///
 /// The key of a header scheme is a header of its own, which reqwest, as curl and `fetch`, keeps on a redirect it
 /// follows to another host: it strips only `Authorization`, `Cookie` and `Proxy-Authorization` there. [`redirects`]
@@ -238,46 +225,54 @@ pub fn basic(user: impl Into<String>, password: impl Into<String>) -> impl Middl
 /// # Ok(())
 /// # }
 /// ```
-pub fn key<K: Declared>(value: impl Into<String>) -> impl Middleware {
-    let value = value.into();
+pub fn key<S: ClientScheme>(secret: impl Into<S::Secret>) -> impl Middleware {
+    let secret = secret.into();
 
-    match K::PLACE {
-        Place::Header(name) => {
-            let name = HeaderName::from_static(name);
-            let header = header_value(&value);
-
-            send::<K>(Box::new(move |request| {
-                let value = header.clone().ok_or(Failure::new(
-                    "the key cannot be sent in its header: it is empty, or holds a control character or a space at either end",
-                ))?;
-
-                request.headers_mut().insert(name.clone(), value);
-                Ok(())
-            }))
+    helper(Rank::Credential, move |mut request, extensions, next| {
+        if !own_route(&request, extensions).is_some_and(Route::takes::<S>) {
+            return next.run(request, extensions);
         }
-        Place::Cookie(name) => {
-            let pair = is_cookie_value(&value).then(|| format!("{name}={value}"));
 
-            send::<K>(Box::new(move |request| {
-                add_cookie(request, pair.as_deref())
-            }))
+        let written = {
+            let url = request.url();
+            let body = request.body().and_then(reqwest::Body::as_bytes);
+            let mut outgoing = Outgoing::new(request.method(), url.path(), url.query(), body);
+
+            S::write(&secret, &mut outgoing).map(|()| outgoing.added)
+        };
+
+        match written {
+            Ok(added) => {
+                apply(&mut request, added);
+                next.run(request, extensions)
+            }
+            Err(unsendable) => {
+                Box::pin(async move { Err(reqwest_middleware::Error::middleware(unsendable)) })
+            }
         }
-        Place::Query(name) => {
-            let value = (!value.is_empty()).then_some(value);
+    })
+}
 
-            send::<K>(Box::new(move |request| {
-                let value = value.as_deref().ok_or(Failure::new(
-                    "the key cannot be sent in the query: it is empty",
-                ))?;
+/// Puts on `request` what a scheme wrote.
+fn apply(request: &mut Request, added: Added) {
+    let Added {
+        headers,
+        cookies,
+        query,
+    } = added;
 
-                set_query_pair(request, name, value);
-                Ok(())
-            }))
-        }
-        Place::Bearer => send::<K>(authorization(
-            bearer_header(&value),
-            "the OpenID Connect token cannot be sent: it is not a `b64token`, letters, digits, `-._~+/` and `=` at its end",
-        )),
+    for (name, value) in &headers {
+        request.headers_mut().insert(name, value.clone());
+    }
+
+    for pair in cookies {
+        let cookies = merged(request.headers().get_all(COOKIE), &pair);
+
+        request.headers_mut().insert(COOKIE, cookies);
+    }
+
+    for (key, value) in query {
+        set_query_pair(request, &key, &value);
     }
 }
 
@@ -297,19 +292,6 @@ fn set_query_pair(request: &mut Request, name: &str, value: &str) {
     }
 
     url.query_pairs_mut().append_pair(name, value);
-}
-
-/// Adds `pair`, `name=value`, to the request's cookies, in one `Cookie` header that holds every cookie the request had
-/// before, byte for byte, then the pair.
-fn add_cookie(request: &mut Request, pair: Option<&str>) -> Result<(), Failure> {
-    let pair = pair.ok_or(Failure::new(
-        "the key cannot be sent as a cookie: it is empty, or holds a character a cookie's value cannot",
-    ))?;
-
-    let cookies = merged(request.headers().get_all(COOKIE), pair);
-
-    request.headers_mut().insert(COOKIE, cookies);
-    Ok(())
 }
 
 /// The cookies of `headers`, each header's value as it is, then `pair`, joined with `; ` as one `Cookie` header, marked
@@ -337,71 +319,12 @@ fn merged(headers: GetAll<'_, HeaderValue>, pair: &str) -> HeaderValue {
 /// `Bearer <token>`, marked sensitive, or `None` for a token that is not a `b64token`, which no server of a contract
 /// reads.
 fn bearer_header(token: &str) -> Option<HeaderValue> {
-    let value = is_b64token(token.as_bytes())
+    let mut value = is_token68(token)
         .then(|| HeaderValue::try_from(format!("Bearer {token}")).ok())
-        .flatten();
+        .flatten()?;
 
-    sensitive(value)
-}
-
-/// A header's value, marked sensitive, or `None` for an empty one, or one with a control character or a space or a
-/// tab at either end, which HTTP would drop.
-fn header_value(value: &str) -> Option<HeaderValue> {
-    let blank = |c: char| c == ' ' || c == '\t';
-    let sendable = !value.is_empty()
-        && !value.starts_with(blank)
-        && !value.ends_with(blank)
-        && !value.chars().any(|c| c.is_control() && c != '\t');
-
-    sensitive(
-        sendable
-            .then(|| HeaderValue::try_from(value).ok())
-            .flatten(),
-    )
-}
-
-/// Whether `value` is an RFC 6265 `cookie-value` with no quotes: ASCII letters, digits and signs, but `"`, `,`, `;`
-/// and `\`.
-fn is_cookie_value(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_graphic() && !b"\",;\\".contains(&byte))
-}
-
-/// Marks a header's value sensitive, so that a log of the request does not show it.
-fn sensitive(value: Option<HeaderValue>) -> Option<HeaderValue> {
-    value.map(|mut value| {
-        value.set_sensitive(true);
-        value
-    })
-}
-
-/// Puts `header` in `Authorization`, or fails the request with `unsendable` when there is no header to send.
-fn authorization(header: Option<HeaderValue>, unsendable: &'static str) -> Box<Add> {
-    Box::new(move |request| {
-        let value = header.clone().ok_or(Failure::new(unsendable))?;
-
-        request.headers_mut().insert(AUTHORIZATION, value);
-        Ok(())
-    })
-}
-
-/// A middleware that calls `add` on the requests whose route takes `S`, to the api's own origin, and leaves the others
-/// as they are: a route with `#[auth(none)]`, a request that did not come from the client of a contract and carries
-/// no `Route`, or a hop of [`redirects`] to another origin, never gets the credential.
-fn send<S: Scheme>(add: Box<Add>) -> impl Middleware {
-    helper(Rank::Credential, move |mut request, extensions, next| {
-        if !own_route(&request, extensions).is_some_and(Route::takes::<S>) {
-            return next.run(request, extensions);
-        }
-
-        if let Err(failure) = add(&mut request) {
-            return Box::pin(async move { Err(reqwest_middleware::Error::middleware(failure)) });
-        }
-
-        next.run(request, extensions)
-    })
+    value.set_sensitive(true);
+    Some(value)
 }
 
 /// The [`Route`] of a request of a contract to its api's own origin, or `None` for any other request: one that did not
@@ -415,9 +338,6 @@ fn own_route<'a>(request: &Request, extensions: &'a Extensions) -> Option<&'a Ro
 
     extensions.get::<Route>()
 }
-
-/// What a middleware does to a request whose route takes its scheme: one type for every place a credential travels.
-type Add = dyn Fn(&mut Request) -> Result<(), Failure> + Send + Sync;
 
 /// What a middleware's call returns: the answer of the rest of the chain.
 type Handled<'a> = Pin<Box<dyn Future<Output = reqwest_middleware::Result<Response>> + Send + 'a>>;

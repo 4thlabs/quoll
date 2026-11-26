@@ -132,6 +132,8 @@ Decided by the maintainer:
   - as for a header of an error ([#139](https://github.com/4thlabs/quoll/issues/139)), `with_type` and `with_member` return the error, with no `Result`: a refused `type` or member is left out and logged once at `WARN`, when the error is built, with the reason and the member's name, never the value, and the error is answered as it is, its status and its other members kept, in an `event: problem` too; an error that sends its status alone, an internal one, one received from another API, or one of a status that is not an error's, `4xx` or `5xx`, which is answered 500, leaves both, and logs it at `DEBUG`;
   - a fake builds the error the client reads of a handler's error with `error.into_answered()`: the answer of the status quoll's server answers, its `detail()` the problem the server writes, its `body()` that problem's JSON, cut at the 64 KiB the client keeps, with no detail past them, its `response()` of the content type `application/problem+json`, and a `Display` of its detail, `another api answered 409: alpha is running`;
   - the OpenAPI document is unchanged, a route declaring none of its problems' types; a route's types in the contract and typed in the document, and a `type` for each of quoll's own errors, are left out, each an issue of its own once a case asks for it.
+  - a scheme is split by side, so that an application never writes the side it does not use ([#151](https://github.com/4thlabs/quoll/issues/151)): `quoll::Scheme` holds the `NAME` alone, `quoll::ServerScheme` the `Credential`, `CHALLENGE`, `read` and `openapi`, and `quoll::ClientScheme` the `Secret` and `write`, which writes the credential on a `quoll::auth::Outgoing`. A scheme of the application's own had no client side: Jellyfin's `MediaBrowser Token="<key>"`, Gitea's `token <key>`, PocketBase's raw token or a signature each needed a middleware of the application's, written with `on_request`, which lost the guarantees of `key`, and looked like they needed a syntax of their own in the macro ([#147](https://github.com/4thlabs/quoll/issues/147)). `client::key::<S: ClientScheme>(secret)` is now the one way a credential is sent, for every scheme: only on the routes that take it, only to the api's origin, each header marked sensitive, a credential the server would not read failing the call before it is sent; `bearer` and `basic` stay, as `key::<Bearer>` and `key::<Basic>`. `#[auth(X)]` requires, in a constant spanned on the scheme and whatever the features, `ServerScheme + ClientScheme` in an api with both sides, `ClientScheme` alone with `#[server(none)]`, `ServerScheme` alone with `#[client(none)]`, and the sides of its group in a `quoll::group!`. `quoll::auth` is public, with the helpers of RFC 9110's grammar, so that no scheme re-implements it: `auth::authorization(&parts, scheme)`, a `Credentials` with `token68()`, `param(name)` and `as_bytes()`, `is_token` and `is_token68`; `Bearer` and `Basic` go through them. Rejected: one trait with both sides required, or with defaults for `read` and `write`, which would compile a server that refuses every caller or a client that sends nothing; and a `PLACE` in the public trait, which would only state again what `read` and `write` do, and which quoll could not check: the checks of a place stay on the schemes quoll writes itself, `Bearer`, `Basic` and the declared ones.
+  - taken with it as implementation: `Outgoing` has a public constructor and gives back what was written, `added_headers()`, `added_cookies()` and `added_query()`, so that an application tests its `write` without a server; it reads the request's method, path, query and body, as a signature needs them; `authorization_params` writes each value as a quoted-string, `"` and `\` escaped, and refuses an empty value or one that is not visible ASCII or a space; an `Unsendable` holds a `&'static str`, so that it never shows the credential; a declared scheme's `write` refuses what it refused, with the same messages; `Credentials`'s `Debug` shows its auth-scheme alone; the messages of a missing side name the trait to implement and the `#[server(none)]` or `#[client(none)]` to write.
 
 ## Stack and crates
 
@@ -243,7 +245,7 @@ quoll::api! {
 }
 ```
 
-- `#[header("name" = value)]` goes on the api, a group or a route, as many as it needs, one per header, and is inherited downward as `#[auth]` is. The value is a string or the name of a `&str` constant, `#[header("anthropic-version" = ANTHROPIC_VERSION)]`, checked at compile time to be a header's value: visible ASCII, with spaces and tabs inside it only. A value that changes at run time, Stripe Connect's `Stripe-Account`, is a route's argument, `header("Stripe-Account")`, or goes through `on_request`, which stays for what belongs to a deployment, a signature or a tenant.
+- `#[header("name" = value)]` goes on the api, a group or a route, as many as it needs, one per header, and is inherited downward as `#[auth]` is. The value is a string or the name of a `&str` constant, `#[header("anthropic-version" = ANTHROPIC_VERSION)]`, checked at compile time to be a header's value: visible ASCII, with spaces and tabs inside it only. A value that changes at run time, Stripe Connect's `Stripe-Account`, is a route's argument, `header("Stripe-Account")`, or goes through `on_request`, which stays for what belongs to a deployment, a tenant; a signature is a scheme's `write`.
 - The nearest to the call wins: the caller's `header("X")` argument, when it gives one, then the route, the group, the api, then quoll's own, the `Accept` of the route's result. Names are compared ignoring case.
 - `#[header("X" = none)]` on a group or a route leaves one header it would take; `#[header(none)]` leaves them all, the headers it names beside it being its own, as `#[auth(none)]` then `#[auth(..)]`. A `none` never removes what quoll writes for the route: `#[header("Accept" = none)]` leaves the api's `Accept`, and the route asks for quoll's again. In the api's own block, where the parent is known, a `none` on a header its parent does not fix does not compile, its message on the name, so that a typo is not silent; neither does a `none` on the api, which has no parent. In a `quoll::group!`, a `none` leaves the header where the api that lists the group fixes it and does nothing elsewhere, so that any api may list the group; a route's `none` on a header its group already leaves does not compile there either.
 - `Content-Type` is the body's, which a fixed one keeps, adding a parameter: Slack's `application/json; charset=utf-8` on a JSON body. Another media type does not compile, nor does a charset other than UTF-8, which quoll writes its bodies in. One the route takes of its group or its api is left out of a request with no body; a route's own on a route with none does not compile, nor does any on a `Bytes` body, which carries its content type.
@@ -405,7 +407,7 @@ impl NotesServer for App {
 An implementation writes `authenticate` as an `async fn`, as the server above does.
 
 ```rust
-pub trait Authenticate<S: Scheme>: Send + Sync + 'static {
+pub trait Authenticate<S: ServerScheme>: Send + Sync + 'static {
     type Caller: Send + Sync + 'static;
 
     fn authenticate(&self, credential: S::Credential) -> impl Future<Output = Result<Self::Caller>> + Send;
@@ -418,26 +420,38 @@ pub trait Scoped {
 
 ### Schemes
 
-A scheme is a type implementing `quoll::Scheme`: how the server reads a credential, its name, the challenge of a 401, and how OpenAPI describes it.
+A scheme is a type implementing `quoll::Scheme`, its name, and one side or both: `quoll::ServerScheme`, how a server reads its credential, answers without one and describes it, and `quoll::ClientScheme`, how a client writes it.
 
 ```rust
 pub trait Scheme: 'static {
+    const NAME: &'static str;
+}
+
+pub trait ServerScheme: Scheme {
     type Credential: Send + 'static;
 
-    const NAME: &'static str;
     const CHALLENGE: HeaderValue = HeaderValue::from_static(Self::NAME);
 
     fn read(request: &http::request::Parts) -> Result<Option<Self::Credential>>;
     fn openapi() -> SecurityScheme;
 }
+
+pub trait ClientScheme: Scheme {
+    type Secret: Send + Sync + 'static;
+
+    fn write(secret: &Self::Secret, request: &mut quoll::auth::Outgoing<'_>) -> Result<(), quoll::auth::Unsendable>;
+}
 ```
 
-- `NAME` is what `quoll::Route::schemes()` holds and what OpenAPI names the scheme; `CHALLENGE` is the `WWW-Authenticate` of a 401, a constant, which the macro evaluates for each scheme a route takes, so that one that is not a header's value does not compile. The credential is `Send`, as `authenticate` holds it across an `await`. `openapi` describes the scheme in the document, with no default: `SecurityScheme::bearer()`, `basic()`, `http(name)`, `header(name)`, `cookie(name)`, `query(name)` or `openid(url)`, `.with_description(text)`. The crate's schemes and the declared ones give theirs, a declared one with its `///` as the description.
+- `#[auth(X)]` asks of `X` the sides of its api: both by default, `ClientScheme` alone with `#[server(none)]`, `ServerScheme` alone with `#[client(none)]`, and in a `quoll::group!` the sides of the group, whatever api lists it. The api checks it in a constant spanned on the scheme, whatever the features, and the message names the trait to implement or the `#[client(none)]` or `#[server(none)]` to write. `Bearer` and `Basic` implement both, and a declared scheme the sides of its api.
+- `NAME` is what `quoll::Route::schemes()` holds and what OpenAPI names the scheme; `CHALLENGE` is the `WWW-Authenticate` of a 401, a constant, which the macro evaluates for each scheme a route takes, so that one that is not a header's value does not compile. The credential is `Send`, as `authenticate` holds it across an `await`. `openapi` describes the scheme in the document, with no default: `SecurityScheme::bearer()`, `basic()`, `http(name)`, `header(name)`, `cookie(name)`, `query(name)` or `openid(url)`, `.with_description(text)`. The crate's schemes and the declared ones give theirs, a declared one with its `///` as the description. A scheme an api only calls has no `openapi`: `#[server(none)]` has no document.
+- `Secret` is what `client::key::<S>(secret)` is given, and `write` puts it on each request whose route takes the scheme. The two types differ where a signature does: the server reads the signature, and the client is given the key it signs each request with. `Outgoing` reads the request's method, path, query and body, and writes with `header(name, value)`, `authorization_token68(scheme, token)`, `authorization_params(scheme, &[(name, value)])`, `cookie(name, value)` and `query_pair(key, value)`, each value checked as the server would read it, each header marked sensitive. `authorization_params` writes each value as a quoted-string, `"` and `\` escaped as RFC 9110 says. A value the server would not read is an `Unsendable`, which fails the call before it is sent, and holds a `&'static str`, so that it never shows the credential. `Outgoing::new(method, path, query, body)` makes one for a test, which reads what was written with `added_headers()`, `added_cookies()` and `added_query()`.
+- `quoll::auth` holds the helpers of RFC 9110's grammar of `Authorization`, so that no scheme re-implements it. `auth::authorization(&parts, "MediaBrowser")` gives the `Credentials` of that auth-scheme, compared without case: `None` for a request with none of it, a 401 when another `Authorization` is beside it. `Credentials::token68()` gives the token68, and `param("Token")` the value of an `#auth-param`, its name compared without case, blanks allowed, a token or a quoted-string unescaped, the other params ignored, and a 401 when the list is malformed or the param is given twice; `as_bytes()` gives the rest, raw. `auth::is_token` and `auth::is_token68` check the RFC's two words. `Bearer` and `Basic` read through them.
 - `read` gives `None` for a request with none of its credential, leaving to another scheme an `Authorization` header of another scheme, and a 401 for one of its own that is not well formed. Its detail never shows the credential.
 - Given by the crate: `Bearer`, whose credential is the token, a `String`; and `Basic`, whose credential is a `quoll::BasicCredential { user, password }`, read from the base64 of `user:password` in UTF-8, and whose `Debug` hides the password. `Basic` challenges with `Basic realm="api", charset="UTF-8"`, which makes a browser open its own login window: a route the web page calls takes another scheme.
-- Declared in the contract, with a name and a visibility: `pub scheme Key = header "X-Api-Key";`, `pub scheme Session = cookie "session";`, `pub scheme Token = query "token";`, `pub scheme Login = openid "https://accounts.example.com/.well-known/openid-configuration";` (a bearer token on the wire, described as OpenID Connect, whose challenge is `Bearer`; quoll checks no token, `authenticate` does). Each becomes a type of that name implementing `Scheme`, whose credential is a `String` and whose name is its own: the server implements `Authenticate<Key>`. A header or a query key given twice is a 401, as is an empty one. A header scheme's credential is a header of its own, which reqwest, as curl and `fetch`, keeps on a redirect it follows to another host, where it strips only `Authorization`, `Cookie` and `Proxy-Authorization`: a client that sends one follows redirects with `client::redirects(n)`, which sends each hop through the middleware after it, on a reqwest client that follows none. Of a cookie given twice, as a browser holding it for two paths sends it, the first that is not empty is read, the one of the longest path (RFC 6265); an empty one is none, as a cookie cleared by the application. A route that takes a query scheme has no other value of its key: the macro refuses one in the route's string, and a query struct has no field of that name, which the macro cannot see.
+- Declared in the contract, with a name and a visibility: `pub scheme Key = header "X-Api-Key";`, `pub scheme Session = cookie "session";`, `pub scheme Token = query "token";`, `pub scheme Login = openid "https://accounts.example.com/.well-known/openid-configuration";` (a bearer token on the wire, described as OpenID Connect, whose challenge is `Bearer`; quoll checks no token, `authenticate` does). Each becomes a type of that name implementing `Scheme` and the sides of its api, whose credential and secret are a `String` and whose name is its own: the server implements `Authenticate<Key>`, and the client sends it with `client::key::<Key>(value)`. A header or a query key given twice is a 401, as is an empty one. A header scheme's credential is a header of its own, which reqwest, as curl and `fetch`, keeps on a redirect it follows to another host, where it strips only `Authorization`, `Cookie` and `Proxy-Authorization`: a client that sends one follows redirects with `client::redirects(n)`, which sends each hop through the middleware after it, on a reqwest client that follows none. Of a cookie given twice, as a browser holding it for two paths sends it, the first that is not empty is read, the one of the longest path (RFC 6265); an empty one is none, as a cookie cleared by the application. A route that takes a query scheme has no other value of its key: the macro refuses one in the route's string, and a query struct has no field of that name, which the macro cannot see.
 - A cookie travels with a request that a page of another site has a browser send, with no preflight for a form or text. A request that carries the cookie of a cookie scheme, with a method other than `GET`, `HEAD` or `OPTIONS`, is answered 403 unless its `Sec-Fetch-Site` is `same-origin` or `none`, or, from a browser that sends none, its `Origin` is its `Host`, compared as origins: one host, and one port, the default of the origin's scheme where either leaves it out. A request with neither header comes from no browser and passes. Behind a reverse proxy, the proxy passes the browser's `Host`, `proxy_set_header Host $host` in nginx; `X-Forwarded-Host`, which anyone may send, is not read. Only the server's own origin is trusted for now: trusted origins come later. The application sets the cookie `SameSite=Lax` or `Strict`, `HttpOnly` and `Secure`, a second defense that does not cover a page of the same site, and names it with the prefix `__Host-`, which a subdomain cannot set.
-- Any other is a type of the application implementing `Scheme`, as an HMAC signature, named in `#[auth(...)]` as the others are, by its path: `#[auth(crate::auth::Hmac)]`.
+- Any other is a type of the application implementing `Scheme` and the sides its api needs, as an HMAC signature or the format of another API's key, named in `#[auth(...)]` as the others are, by its path: `#[auth(crate::auth::Hmac)]`. quoll checks no place for it: two schemes of an alternative that read one header, or an argument that reads its credential, are the application's to avoid.
 
 ## What the macro generates
 
@@ -453,7 +467,7 @@ Nothing is written to disk: the macro runs as rustc compiles the contract, and i
 | `Api::client`, `Api::client_with` | client | `api.notes()` is a `NotesClient`, implementing `Notes` |
 | `impl client::Contract for Api` | client | what `client::builder().build::<Api>(url)` builds the client with |
 | `Api::openapi` | both, and neither | the OpenAPI 3.1 document; none with `#[openapi(none)]` or `#[server(none)]` |
-| `struct Key`, ... | both | each scheme the contract declares |
+| `struct Key`, ... | both | each scheme the contract declares, with `ServerScheme` when the api serves and `ClientScheme` when it calls |
 
 A contract with `#[server(none)]` has none of the items for the server, whatever the features, and one with `#[client(none)]` none of the items for the client, nor any item under their names, which stay the application's (see One side).
 
@@ -535,10 +549,10 @@ The builders put quoll's own in the order they work in, whatever the order they 
 | Helper | What it does |
 |---|---|
 | `on_request(f)` | a closure that changes each request of a contract to its api's own origin before it leaves, given its `quoll::Route`: what an interceptor does elsewhere |
-| `bearer(token)` | `Authorization: Bearer`, on the routes whose schemes hold `Bearer` only |
+| `bearer(token)` | `Authorization: Bearer`, on the routes whose schemes hold `Bearer` only: `key::<Bearer>(token)` |
 | `bearer_from(source)` | asks a `client::TokenSource` for a token before each call, and once more after a 401, for tokens that expire |
-| `basic(user, password)` | `Authorization: Basic`, on the routes whose schemes hold `Basic` only |
-| `key::<Key>(value)` | the credential of a scheme the contract declares, where it travels: its header, its cookie after the request's others in one `Cookie` header (a jar's are not added there), its query key, or `Authorization: Bearer` for `openid`; on the routes that take it only |
+| `basic(user, password)` | `Authorization: Basic`, on the routes whose schemes hold `Basic` only: `key::<Basic>(BasicCredential { user, password })` |
+| `key::<S>(secret)` | the credential of any scheme `S` implementing `ClientScheme`, as its `write` says, on the routes that take it only; a declared scheme's in its header, its cookie after the request's others in one `Cookie` header (a jar's are not added there), its query key, or `Authorization: Bearer` for `openid` |
 | `user_agent(name)` | `User-Agent`, on a request that has none |
 | `request_id()` | a new `X-Request-Id` per call, on a request that has none: added before `retry`, the attempts of a call share it |
 | `retry(times)` | backoff on a failure with no response, 502, 503 or 504; `GET`, `HEAD`, `PUT` and `DELETE` only; `.when(\|attempt\| ..)` decides otherwise, `Retry::No`, `Backoff` or `After(duration)`, from the `client::Attempt`: its `Route`, its request, the answer's status and headers or the error, its number, today's rule as `transient()` and the answer's `Retry-After` as `retry_after()`, a date measured from the answer's `Date`, capped by `.max_wait(..)` (backon's backoff) |
@@ -550,16 +564,21 @@ The builders put quoll's own in the order they work in, whatever the order they 
 
 The helpers tell a route's schemes by their type, `quoll::Route::takes::<Key>()`, so that two contracts declaring a `Key` each get their own through one `ClientWithMiddleware`, and send nothing on a request with no `quoll::Route`, nor to another origin than the api's: the client puts the api's origin in each request's extensions beside its `Route`, and `on_request` runs on the same requests. A credential the server would not read, a token that is not a `b64token`, a user with a `:`, a key with a line break, fails each call that would send it with an error that does not show it.
 
-A header computed from the request is a closure given to `on_request`; the helpers of authentication are written so:
+A credential computed from the request, a signature, is a scheme's `write`, which `key` calls on each request that takes it:
 
 ```rust
-let sign = client::on_request(move |request: &mut Request, route: &quoll::Route| {
-    let body = request.body().and_then(|body| body.as_bytes()).unwrap_or_default();
-    let signature = key.sign(request.method(), request.url().path(), body);
+impl ClientScheme for Hmac {
+    type Secret = SigningKey;
 
-    request.headers_mut().insert("X-Signature", signature);
-});
+    fn write(key: &SigningKey, request: &mut Outgoing<'_>) -> Result<(), Unsendable> {
+        let signature = key.sign(request.method(), request.path(), request.body().unwrap_or_default());
+
+        request.header(HeaderName::from_static("x-signature"), &signature)
+    }
+}
 ```
+
+`on_request` stays for what is not a credential and belongs to a deployment, a tenant, given the request and its `quoll::Route`.
 
 A full `Middleware`, which wraps the call with `next.run(request)`, is for what also sees the response: a retry, a token refreshed after a 401, a span around the call.
 
@@ -1642,7 +1661,7 @@ function NoteText({ note, error, onEdit, onRemove }: NoteTextProps) {
 - With the server, an argument it could not receive owned: `&mut X`, `&&X`, `&dyn Trait`, `&impl Trait`, the message saying what to write; and a `&X` whose `X` has no size, `&Path` or `&OsStr`, rustc's error on the contract's type then. On both sides, a `&'a X` with a lifetime other than `'static` or `'_`.
 - `client::builder().build::<T>(url)` for a type that is not the api of a contract: the message says what an api is.
 - A group without a service; a service of a group with authentication that does not implement `Authenticate` for its schemes; two schemes of one `#[auth(A | B)]` giving callers of two types; scopes on a caller that does not implement `Scoped`.
-- A scheme in `#[auth(...)]` that is neither given by the crate, declared in the contract nor a type implementing `Scheme`; a scheme's credential that is not `Send`; `key::<K>` for a scheme the contract does not declare; two schemes of one `NAME` in an api's block, which names a scheme in the OpenAPI document (from two blocks, `Api::openapi()` panics), or a `NAME` of other characters than ASCII letters, digits, `.`, `-` and `_`.
+- A scheme in `#[auth(...)]` that is neither given by the crate, declared in the contract nor a type implementing `Scheme`; one without a side its api or its group has, `ServerScheme` for one that serves, `ClientScheme` for one that calls; a scheme's credential that is not `Send`; `key::<S>` for a scheme that does not implement `ClientScheme`; an `impl Scheme` with a `read` or a `Credential`, which belong to `ServerScheme`; two schemes of one `NAME` in an api's block, which names a scheme in the OpenAPI document (from two blocks, `Api::openapi()` panics), or a `NAME` of other characters than ASCII letters, digits, `.`, `-` and `_`.
 - A type of a contract that does not implement `JsonSchema`, unless the api or the `quoll::group!` says `#[openapi(none)]` or `#[server(none)]`; `#[openapi(...)]` with anything but `none`, or on a scheme, a route or a group of the api's block.
 - `#[server(none)]` with `#[client(none)]`, a contract with no side; `#[server(...)]` or `#[client(...)]` with anything but `none`, twice, or on a scheme, a route or a group of the api's block; an `#[openapi(...)]` beside `#[server(none)]`, which leaves out the document already. An `#[error(...)]` in a contract with `#[client(none)]`. An item of the side a contract does not have, named by the application: rustc's own error.
 - In `#[auth(...)]`: `none` beside a scheme or an option; a scheme twice in an alternative, or more than four; in the api's block, a path to a declared scheme, `self::Key`, and anywhere, a path through `quoll` to the crate's, `quoll::Bearer`, which are named alone; two schemes of an alternative of one `NAME`, as `Key | crate::Key` in a `quoll::group!`; two schemes of an alternative that read one place, `Bearer | Login` for an `openid` scheme or two header schemes of one header; `optional` or `scopes` twice, or an option it does not take; `scopes()` empty, a scope written twice or that is not an OAuth `scope-token`; `optional` with `scopes`.

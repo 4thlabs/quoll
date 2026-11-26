@@ -1,11 +1,12 @@
-//! What the generated code calls for the schemes a contract declares: how each one reads its credential, and where it
-//! travels, which the client's `client::key` reads.
+//! What the generated code calls for the schemes a contract declares: how each one reads its credential, where it
+//! travels, and how a client writes it.
 
 use http::request::Parts;
 use http::uri::Authority;
-use http::{Method, StatusCode, Uri, header};
+use http::{HeaderName, Method, StatusCode, Uri, header};
 
-use crate::{Bearer, Error, Result, Scheme};
+use crate::auth::{Outgoing, Unsendable};
+use crate::{Bearer, ClientScheme, Error, Result, Scheme, ServerScheme};
 
 /// Where the credential of a scheme the contract declares travels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,12 +21,7 @@ pub enum Place {
     Bearer,
 }
 
-/// A scheme the contract declares, which the macro implements: where its credential travels.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a scheme the contract declares, whose credential `client::key` sends",
-    label = "not a declared scheme",
-    note = "`client::bearer` sends a `Bearer` token and `client::basic` a `Basic` user and password; a scheme of the application's own sends its credential through a middleware of its own"
-)]
+/// A scheme the contract declares, which the macro implements: what the api's checks know of it.
 pub trait Declared: Scheme {
     /// Where its credential travels.
     const PLACE: Place;
@@ -37,8 +33,78 @@ pub trait Declared: Scheme {
     const REACH: u8;
 }
 
-/// Checks, at compile time, that `S` is a scheme: the type a contract names in `#[auth(...)]`.
-pub const fn is_scheme<S: Scheme>() {}
+/// Writes the key of a header scheme in the header `name`, lowercase.
+///
+/// # Errors
+///
+/// When the key is empty, or holds a control character or a space at either end.
+pub fn write_header(
+    request: &mut Outgoing<'_>,
+    name: &'static str,
+    key: &str,
+) -> std::result::Result<(), Unsendable> {
+    request
+        .header(HeaderName::from_static(name), key)
+        .map_err(|_| {
+            Unsendable::new(
+                "the key cannot be sent in its header: it is empty, or holds a control character or a space at either end",
+            )
+        })
+}
+
+/// Writes the key of a cookie scheme in the cookie `name`.
+///
+/// # Errors
+///
+/// When the key is empty, or holds a character a cookie's value cannot.
+pub fn write_cookie(
+    request: &mut Outgoing<'_>,
+    name: &'static str,
+    key: &str,
+) -> std::result::Result<(), Unsendable> {
+    request.cookie(name, key).map_err(|_| {
+        Unsendable::new(
+            "the key cannot be sent as a cookie: it is empty, or holds a character a cookie's value cannot",
+        )
+    })
+}
+
+/// Writes the key of a query scheme in the key `name` of the query.
+///
+/// # Errors
+///
+/// When the key is empty.
+pub fn write_query(
+    request: &mut Outgoing<'_>,
+    name: &'static str,
+    key: &str,
+) -> std::result::Result<(), Unsendable> {
+    request
+        .query_pair(name, key)
+        .map_err(|_| Unsendable::new("the key cannot be sent in the query: it is empty"))
+}
+
+/// Writes the token of an OpenID Connect scheme in `Authorization: Bearer`.
+///
+/// # Errors
+///
+/// When the token is not a `b64token`.
+pub fn write_openid(
+    request: &mut Outgoing<'_>,
+    token: &str,
+) -> std::result::Result<(), Unsendable> {
+    request.authorization_token68("Bearer", token).map_err(|_| {
+        Unsendable::new(
+            "the OpenID Connect token cannot be sent: it is not a `b64token`, letters, digits, `-._~+/` and `=` at its end",
+        )
+    })
+}
+
+/// Checks, at compile time, that `S` is a scheme a server reads: a type an api that serves names in `#[auth(...)]`.
+pub const fn is_server_scheme<S: ServerScheme>() {}
+
+/// Checks, at compile time, that `S` is a scheme a client writes: a type an api that calls names in `#[auth(...)]`.
+pub const fn is_client_scheme<S: ClientScheme>() {}
 
 /// The credential of a header scheme: the value of the header `name`, lowercase.
 ///

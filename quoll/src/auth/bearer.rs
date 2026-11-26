@@ -1,10 +1,10 @@
 //! The scheme `Bearer`: a token in the `Authorization` header, as RFC 6750 sends it.
 
-use http::header::AUTHORIZATION;
 use http::request::Parts;
 
+use crate::auth::{Outgoing, Unsendable, authorization, is_token68};
 use crate::openapi::SecurityScheme;
-use crate::{Error, Result, Scheme};
+use crate::{ClientScheme, Error, Result, Scheme, ServerScheme};
 
 /// A token in the `Authorization` header: `Authorization: Bearer <token>`, as RFC 6750 sends it. Its credential is the
 /// token, a `String`.
@@ -13,7 +13,7 @@ use crate::{Error, Result, Scheme};
 /// letters, digits, `-._~+/`, and `=` at its end.
 ///
 /// ```
-/// use quoll::{Bearer, Scheme};
+/// use quoll::{Bearer, ServerScheme};
 ///
 /// let request = http::Request::get("/api/notes")
 ///     .header("Authorization", "Bearer mF_9.B5f-4.1JqM")
@@ -27,9 +27,29 @@ use crate::{Error, Result, Scheme};
 pub struct Bearer;
 
 impl Scheme for Bearer {
-    type Credential = String;
-
     const NAME: &'static str = "Bearer";
+}
+
+impl ClientScheme for Bearer {
+    type Secret = String;
+
+    /// `Authorization: Bearer <token>`.
+    ///
+    /// # Errors
+    ///
+    /// When the token is not a `b64token`, letters, digits, `-._~+/` and `=` at its end, which no server of a contract
+    /// reads.
+    fn write(token: &String, request: &mut Outgoing<'_>) -> std::result::Result<(), Unsendable> {
+        request.authorization_token68("Bearer", token).map_err(|_| {
+            Unsendable::new(
+                "the bearer token cannot be sent: it is not a `b64token`, letters, digits, `-._~+/` and `=` at its end",
+            )
+        })
+    }
+}
+
+impl ServerScheme for Bearer {
+    type Credential = String;
 
     /// The token of the request's `Authorization: Bearer` header. `None` when the request has no `Authorization`
     /// header of the scheme `Bearer`: none at all, or only headers of another scheme, which this one leaves to the
@@ -43,15 +63,16 @@ impl Scheme for Bearer {
     /// - an empty token;
     /// - a token that is not a `b64token`, as one with a space or a byte that is not ASCII.
     fn read(request: &Parts) -> Result<Option<String>> {
-        let Some(token) = authorization(request, "Bearer")? else {
+        let Some(credentials) = authorization(request, "Bearer")? else {
             return Ok(None);
         };
+        let token = credentials.as_bytes();
 
         if token.is_empty() {
             return Err(Error::unauthorized("the bearer token is empty"));
         }
 
-        if !is_b64token(token) {
+        if !is_token68(token) {
             return Err(Error::unauthorized(
                 "the bearer token is not well formed: it is letters, digits, `-._~+/`, and `=` at its end",
             ));
@@ -67,61 +88,10 @@ impl Scheme for Bearer {
     }
 }
 
-/// What follows the scheme `scheme` in the request's `Authorization` header, trimmed; `None` when the request has no
-/// `Authorization` header of that scheme, whatever the case of its name: none at all, or only headers of another
-/// scheme, which are left to the scheme they are for. Read as bytes, so that a header that is not ASCII is still known
-/// by its scheme.
-///
-/// # Errors
-///
-/// A 401 when a header of the scheme has another `Authorization` header beside it, which leaves it unclear what the
-/// request authenticates with.
-pub(crate) fn authorization<'a>(request: &'a Parts, scheme: &str) -> Result<Option<&'a [u8]>> {
-    let headers = request.headers.get_all(AUTHORIZATION);
-    let Some(credentials) = headers
-        .iter()
-        .find_map(|value| credentials(value.as_bytes(), scheme))
-    else {
-        return Ok(None);
-    };
-
-    if headers.iter().nth(1).is_some() {
-        return Err(Error::unauthorized(format!(
-            "the request has an `Authorization: {scheme}` header and another `Authorization` header"
-        )));
-    }
-
-    Ok(Some(credentials.trim_ascii()))
-}
-
-/// What follows the scheme in an `Authorization` header of the scheme `scheme`, whatever the case of its name; `None`
-/// for a header of another scheme.
-fn credentials<'a>(value: &'a [u8], scheme: &str) -> Option<&'a [u8]> {
-    let (name, rest) = match value.iter().position(|&byte| byte == b' ') {
-        Some(space) => (&value[..space], &value[space + 1..]),
-        None => (value, &[][..]),
-    };
-
-    name.eq_ignore_ascii_case(scheme.as_bytes()).then_some(rest)
-}
-
-/// Whether `token` is an RFC 6750 `b64token`: `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="`. The
-/// server reads no other token, and the client sends no other.
-pub(crate) fn is_b64token(token: &[u8]) -> bool {
-    let end = token
-        .iter()
-        .rposition(|&byte| byte != b'=')
-        .map_or(0, |last| last + 1);
-    let body = &token[..end];
-
-    !body.is_empty()
-        && body
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/".contains(byte))
-}
-
 #[cfg(test)]
 mod tests {
+    use http::header::AUTHORIZATION;
+
     use super::*;
 
     fn read(headers: &[&str]) -> Result<Option<String>> {
@@ -239,10 +209,10 @@ mod tests {
     #[test]
     fn a_b64token_is_letters_digits_and_six_signs_then_equals() {
         for token in ["a", "A-z.0_9~+/", "abc=", "abc=="] {
-            assert!(is_b64token(token.as_bytes()), "{token}");
+            assert!(is_token68(token.as_bytes()), "{token}");
         }
         for token in ["", "=", "==", "a b", "a=b", "a,b", "é", "a\n"] {
-            assert!(!is_b64token(token.as_bytes()), "{token:?}");
+            assert!(!is_token68(token.as_bytes()), "{token:?}");
         }
     }
 }

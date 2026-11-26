@@ -3,10 +3,12 @@
 
 use std::sync::LazyLock;
 
+use http::HeaderName;
 use http::request::Parts;
+use quoll::auth::{Outgoing, Unsendable};
 use quoll::{
-    Accepted, ByteStream, Bytes, Created, Events, Form, JsonLines, Result, Scheme, Text,
-    openapi::SecurityScheme,
+    Accepted, ByteStream, Bytes, ClientScheme, Created, Events, Form, JsonLines, Result, Scheme,
+    ServerScheme, Text, openapi::SecurityScheme,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -90,9 +92,11 @@ mod archive {
 struct Hmac;
 
 impl Scheme for Hmac {
-    type Credential = String;
-
     const NAME: &'static str = "Hmac";
+}
+
+impl ServerScheme for Hmac {
+    type Credential = String;
 
     fn read(request: &Parts) -> Result<Option<String>> {
         Ok(request
@@ -107,13 +111,23 @@ impl Scheme for Hmac {
     }
 }
 
+impl ClientScheme for Hmac {
+    type Secret = String;
+
+    fn write(secret: &String, request: &mut Outgoing<'_>) -> std::result::Result<(), Unsendable> {
+        request.header(HeaderName::from_static("x-signature"), secret)
+    }
+}
+
 /// A session cookie of the application's own, which checks no origin.
 struct Crumb;
 
 impl Scheme for Crumb {
-    type Credential = String;
-
     const NAME: &'static str = "Crumb";
+}
+
+impl ServerScheme for Crumb {
+    type Credential = String;
 
     fn read(_request: &Parts) -> Result<Option<String>> {
         Ok(None)
@@ -121,6 +135,14 @@ impl Scheme for Crumb {
 
     fn openapi() -> SecurityScheme {
         SecurityScheme::cookie("crumb")
+    }
+}
+
+impl ClientScheme for Crumb {
+    type Secret = String;
+
+    fn write(secret: &String, request: &mut Outgoing<'_>) -> std::result::Result<(), Unsendable> {
+        request.header(HeaderName::from_static("x-signature"), secret)
     }
 }
 

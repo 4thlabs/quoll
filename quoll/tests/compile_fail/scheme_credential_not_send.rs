@@ -1,15 +1,19 @@
 use std::rc::Rc;
 
 use http::request::Parts;
-use quoll::{Result, Scheme, openapi::SecurityScheme};
+use http::HeaderName;
+use quoll::auth::{Outgoing, Unsendable};
+use quoll::{Result, ClientScheme, Scheme, ServerScheme, openapi::SecurityScheme};
 
 /// A scheme whose credential cannot cross an `await` of a server on several threads.
 pub struct Hmac;
 
 impl Scheme for Hmac {
-    type Credential = Rc<String>;
-
     const NAME: &'static str = "Hmac";
+}
+
+impl ServerScheme for Hmac {
+    type Credential = Rc<String>;
 
     fn read(_request: &Parts) -> Result<Option<Rc<String>>> {
         Ok(None)
@@ -17,6 +21,14 @@ impl Scheme for Hmac {
 
     fn openapi() -> SecurityScheme {
         SecurityScheme::header("X-Signature")
+    }
+}
+
+impl ClientScheme for Hmac {
+    type Secret = String;
+
+    fn write(secret: &String, request: &mut Outgoing<'_>) -> std::result::Result<(), Unsendable> {
+        request.header(HeaderName::from_static("x-signature"), secret)
     }
 }
 

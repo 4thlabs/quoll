@@ -1,6 +1,6 @@
-//! What a scheme the contract declares becomes, on both sides and whatever the features: a type implementing
-//! `quoll::Scheme`, which reads its credential through a helper of `quoll`, and which says where its credential
-//! travels, for the client's `client::key`.
+//! What a scheme the contract declares becomes, whatever the features: a type implementing `quoll::Scheme`, then
+//! `quoll::ServerScheme` when its api serves and `quoll::ClientScheme` when it calls, which read and write its
+//! credential through helpers of `quoll`, and which says where its credential travels, for the api's checks.
 
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
@@ -11,17 +11,20 @@ use crate::model::{Api, DeclaredKind, DeclaredScheme, Group, Scheme, SchemeKind,
 
 /// The types of the schemes the api declares.
 pub(crate) fn expand(api: &Api) -> TokenStream {
-    let schemes = api.schemes.iter().map(declared);
+    let schemes = api
+        .schemes
+        .iter()
+        .map(|scheme| declared(scheme, api.server, api.client));
 
     quote! { #(#schemes)* }
 }
 
-fn declared(scheme: &DeclaredScheme) -> TokenStream {
+fn declared(scheme: &DeclaredScheme, server: bool, client: bool) -> TokenStream {
     let DeclaredScheme {
         docs, vis, name, ..
     } = scheme;
     let shown = name.unraw().to_string();
-    let (travels, read, place, challenge, openapi) = match &scheme.kind {
+    let (travels, read, place, challenge, openapi, write) = match &scheme.kind {
         DeclaredKind::Header(header) => {
             let lower = header.to_ascii_lowercase();
 
@@ -31,6 +34,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
                 quote! { Header(#lower) },
                 None,
                 quote! { header(#header) },
+                quote! { ::quoll::__private::auth::write_header(request, #lower, secret) },
             )
         }
         DeclaredKind::Cookie(cookie) => (
@@ -47,6 +51,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
             quote! { Cookie(#cookie) },
             None,
             quote! { cookie(#cookie) },
+            quote! { ::quoll::__private::auth::write_cookie(request, #cookie, secret) },
         ),
         DeclaredKind::Query(key) => (
             vec![
@@ -60,6 +65,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
             quote! { Query(#key) },
             None,
             quote! { query(#key) },
+            quote! { ::quoll::__private::auth::write_query(request, #key, secret) },
         ),
         DeclaredKind::OpenId(url) => (
             vec![format!(
@@ -72,6 +78,7 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
                     ::quoll::__private::http::HeaderValue::from_static("Bearer");
             }),
             quote! { openid(#url) },
+            quote! { ::quoll::__private::auth::write_openid(request, secret) },
         ),
     };
     let comments = &docs.0;
@@ -84,6 +91,43 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
     }
     lines.extend(travels);
     let docs = doc_attrs(&lines);
+
+    let server_impl = server.then(|| {
+        quote! {
+            impl ::quoll::ServerScheme for #name {
+                type Credential = ::std::string::String;
+
+                #challenge
+
+                fn read(
+                    request: &::quoll::__private::http::request::Parts,
+                ) -> ::quoll::Result<::core::option::Option<::std::string::String>> {
+                    #read
+                }
+
+                fn openapi() -> ::quoll::openapi::SecurityScheme {
+                    ::quoll::__private::openapi::described(
+                        ::quoll::openapi::SecurityScheme::#openapi,
+                        &[#(#comments),*],
+                    )
+                }
+            }
+        }
+    });
+    let client_impl = client.then(|| {
+        quote! {
+            impl ::quoll::ClientScheme for #name {
+                type Secret = ::std::string::String;
+
+                fn write(
+                    secret: &::std::string::String,
+                    request: &mut ::quoll::auth::Outgoing<'_>,
+                ) -> ::core::result::Result<(), ::quoll::auth::Unsendable> {
+                    #write
+                }
+            }
+        }
+    });
 
     quote! {
         #docs
@@ -99,25 +143,12 @@ fn declared(scheme: &DeclaredScheme) -> TokenStream {
         #vis struct #name;
 
         impl ::quoll::Scheme for #name {
-            type Credential = ::std::string::String;
-
             const NAME: &'static str = #shown;
-
-            #challenge
-
-            fn read(
-                request: &::quoll::__private::http::request::Parts,
-            ) -> ::quoll::Result<::core::option::Option<::std::string::String>> {
-                #read
-            }
-
-            fn openapi() -> ::quoll::openapi::SecurityScheme {
-                ::quoll::__private::openapi::described(
-                    ::quoll::openapi::SecurityScheme::#openapi,
-                    &[#(#comments),*],
-                )
-            }
         }
+
+        #server_impl
+
+        #client_impl
 
         impl ::quoll::__private::auth::Declared for #name {
             const PLACE: ::quoll::__private::auth::Place = ::quoll::__private::auth::Place::#place;
@@ -175,8 +206,47 @@ pub(crate) fn challenge_checks(group: &Group) -> TokenStream {
 
         // `forget`, as a `HeaderValue` cannot be dropped in a constant.
         checks.push(quote_spanned! {scheme.span()=>
-            ::core::mem::forget(<#ty as ::quoll::Scheme>::CHALLENGE);
+            ::core::mem::forget(<#ty as ::quoll::ServerScheme>::CHALLENGE);
         });
+    }
+
+    if checks.is_empty() {
+        return TokenStream::new();
+    }
+
+    quote! {
+        const _: () = {
+            #(#checks)*
+        };
+    }
+}
+
+/// The checks that each scheme of the application's that a route of the group takes has the sides of the group: a
+/// `ServerScheme` for a group that is served, a `ClientScheme` for one that is called, spanned on the scheme in its
+/// `#[auth(...)]`. The crate's schemes have both, and a declared one the sides of its api.
+pub(crate) fn side_checks(group: &Group, server: bool, client: bool) -> TokenStream {
+    let mut seen: Vec<String> = Vec::new();
+    let mut checks = Vec::new();
+
+    for scheme in group.routes.iter().flat_map(|route| route.schemes()) {
+        if scheme.kind != SchemeKind::Foreign || seen.contains(&scheme.word()) {
+            continue;
+        }
+
+        seen.push(scheme.word());
+
+        let ty = scheme_type(scheme);
+
+        if server {
+            checks.push(quote_spanned! {scheme.span()=>
+                ::quoll::__private::auth::is_server_scheme::<#ty>();
+            });
+        }
+        if client {
+            checks.push(quote_spanned! {scheme.span()=>
+                ::quoll::__private::auth::is_client_scheme::<#ty>();
+            });
+        }
     }
 
     if checks.is_empty() {

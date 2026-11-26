@@ -10,7 +10,8 @@
 //!   route `-> TcpTunnel` in a contract with a server side, in the files `tcp_tunnel_*`, with the tunnel as a body, a
 //!   parameter or the `T` of a `Created<T>`, or on `HEAD`; and a `quoll::group!` listed without a side its api has,
 //!   its server, its client or its document, one error whatever the features, as the api reaches its groups by their
-//!   descriptors alone.
+//!   descriptors alone; a scheme of an api that calls that does not implement `ClientScheme`, and an `impl Scheme`
+//!   written as before the split, with a `read`.
 //! - `tests/compile_fail_server/`, built with the feature `server`: what only the server's code checks, a route left
 //!   out of a service, a handler of the wrong signature, a status of no content on a route of a value or one that is
 //!   not a status, a body that is not `Deserialize`, a service that does not authenticate, and an argument the server
@@ -28,7 +29,8 @@
 //!   rustc's own error, as the contract writes none.
 //! - `tests/compile_fail_neither/`, built with neither feature: what each side would repeat a message of its own for.
 //!   A type the contract names `Created`, `Accepted`, `Form`, `Text`, `Bytes`, `Events`, `JsonLines`, `ByteStream` or
-//!   `TcpTunnel` that is not quoll's; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to
+//!   `TcpTunnel` that is not quoll's; a scheme of an api or a `quoll::group!` that serves that does not implement
+//!   `ServerScheme`, which the server's code would repeat; the mistakes of the OpenAPI document, a type with no schema and two schemes of one name, and a call to
 //!   the document of a contract that has none; and the mistakes of a group of another block: a group listed and not in
 //!   scope, or not a group, a group or a scheme less visible than what names it, and a scheme twice in an alternative.
 //!

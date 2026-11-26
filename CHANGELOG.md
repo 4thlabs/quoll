@@ -17,6 +17,15 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.11.0" }
 
 ## [Unreleased]
 
+### Changed
+
+- **Schemes by side**: `Scheme` keeps `NAME`, `ServerScheme` reads and `ClientScheme` writes; `client::key::<S>` sends
+  any scheme, and `quoll::auth` reads `Authorization` ([#151](https://github.com/4thlabs/quoll/issues/151)).
+
+Migration: keep `NAME` in `impl Scheme` and move `Credential`, `CHALLENGE`, `read` and `openapi` to
+`impl ServerScheme`. An api with both sides also needs `impl ClientScheme`, which replaces the `on_request` that sent
+the credential, or `#[client(none)]`.
+
 ## [0.11.0] - 2026-11-26
 
 ### Added

@@ -32,7 +32,7 @@
 //!   origin, on a method that changes things, 415 when it reads a body, and `default` for any other, each an
 //!   `application/problem+json` problem.
 //! - **Security**: each scheme under `components/securitySchemes`, by its [`NAME`](crate::Scheme::NAME), as its
-//!   [`openapi`](crate::Scheme::openapi) describes it, with a [`SecurityScheme`]. A route takes any of its schemes, each with its scopes,
+//!   [`openapi`](crate::ServerScheme::openapi) describes it, with a [`SecurityScheme`]. A route takes any of its schemes, each with its scopes,
 //!   and an empty requirement when its credential is optional.
 //! - **`info`**: the title and the version of the contract's crate, unless [`Document::with_title`] and
 //!   [`Document::with_version`] say others; for a crate built without Cargo, which gives neither, the api's name and
@@ -126,7 +126,7 @@ impl Serialize for Document {
 }
 
 /// How the OpenAPI document describes a [`Scheme`](crate::Scheme): what its
-/// [`openapi`](crate::Scheme::openapi) returns, under `components/securitySchemes`.
+/// [`openapi`](crate::ServerScheme::openapi) returns, under `components/securitySchemes`.
 ///
 /// ```
 /// use quoll::openapi::SecurityScheme;

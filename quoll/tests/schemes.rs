@@ -5,15 +5,18 @@
 #![cfg(all(feature = "server", feature = "client"))]
 
 use std::future::Future;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use http::Extensions;
+use http::HeaderName;
 use http::request::Parts;
+use quoll::auth::{Outgoing, Unsendable};
 use quoll::{
-    Authenticate, Basic, BasicCredential, Bearer, Error, Response, Result, Route, Scheme, Scoped,
-    Text, openapi::SecurityScheme,
+    Authenticate, Basic, BasicCredential, Bearer, ClientScheme, Error, Response, Result, Route,
+    Scheme, Scoped, ServerScheme, Text, openapi::SecurityScheme,
 };
 use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, COOKIE, WWW_AUTHENTICATE};
@@ -21,6 +24,7 @@ use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware, Next};
 use serde_json::Value;
 
 use other::Other as _;
+use third_party::{Library as _, Repos as _, Systems as _};
 
 quoll::api! {
     /// Every scheme, to test them with.
@@ -74,19 +78,38 @@ mod other {
     }
 }
 
-/// A request signed with a key the server knows: `X-Signature: <key id>:<signature>`.
+/// A request signed with a key the server knows: `X-Signature: <key id>:<signature>`, the signature of its method and
+/// its path.
 struct Hmac;
 
-/// What a signed request carries.
+/// What a signed request carries, with what was signed.
 struct Signed {
     key_id: String,
     signature: String,
+    method: String,
+    path: String,
+}
+
+/// The key a client signs with.
+struct SigningKey {
+    id: String,
+    secret: String,
+}
+
+/// A toy signature, not a MAC: the hash of the secret, the method and the path.
+fn sign(secret: &str, method: &str, path: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    (secret, method, path).hash(&mut hasher);
+
+    format!("{:016x}", hasher.finish())
 }
 
 impl Scheme for Hmac {
-    type Credential = Signed;
-
     const NAME: &'static str = "Hmac";
+}
+
+impl ServerScheme for Hmac {
+    type Credential = Signed;
 
     fn read(request: &Parts) -> Result<Option<Signed>> {
         let Some(value) = request.headers.get("x-signature") else {
@@ -104,11 +127,26 @@ impl Scheme for Hmac {
         Ok(Some(Signed {
             key_id: key_id.into(),
             signature: signature.into(),
+            method: request.method.to_string(),
+            path: request.uri.path().into(),
         }))
     }
 
     fn openapi() -> SecurityScheme {
         SecurityScheme::header("X-Signature")
+    }
+}
+
+impl ClientScheme for Hmac {
+    type Secret = SigningKey;
+
+    fn write(key: &SigningKey, request: &mut Outgoing<'_>) -> std::result::Result<(), Unsendable> {
+        let signature = sign(&key.secret, request.method().as_str(), request.path());
+
+        request.header(
+            HeaderName::from_static("x-signature"),
+            &format!("{}:{signature}", key.id),
+        )
     }
 }
 
@@ -213,10 +251,13 @@ impl Authenticate<Hmac> for App {
     type Caller = User;
 
     async fn authenticate(&self, signed: Signed) -> Result<User> {
-        match signed.signature.as_str() {
-            "good" => known(&signed.key_id),
-            _ => Err(Error::unauthorized("wrong signature")),
+        let secret = format!("{}-secret", signed.key_id);
+
+        if signed.signature != sign(&secret, &signed.method, &signed.path) {
+            return Err(Error::unauthorized("wrong signature"));
         }
+
+        known(&signed.key_id)
     }
 }
 
@@ -603,9 +644,11 @@ async fn a_scheme_of_the_applications_own_is_read_by_its_type() {
     let served = serve().await;
     let http = reqwest::Client::new();
 
+    let good = format!("ana:{}", sign("ana-secret", "GET", "/api/signed"));
+
     let signed = http
         .get(served.at("/signed"))
-        .header("x-signature", "ana:good")
+        .header("x-signature", &good)
         .send()
         .await
         .expect("the server answers");
@@ -976,6 +1019,294 @@ async fn a_key_in_a_header_follows_reqwests_own_redirect_to_another_origin() -> 
         *seen.lock().expect("no test panics while holding it"),
         [true],
         "reqwest's default policy keeps the key"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_scheme_of_the_applications_own_is_written_by_the_client_and_read_by_the_server()
+-> Result<()> {
+    let served = serve().await;
+    let signing = |secret: &str| {
+        quoll::client::key::<Hmac>(SigningKey {
+            id: "ana".into(),
+            secret: secret.into(),
+        })
+    };
+
+    let api = Api::client_with(with(signing("ana-secret")), &served.url)?;
+    assert_eq!(api.admin().signed().await?, "ana");
+
+    let api = Api::client_with(with(signing("another")), &served.url)?;
+    let error = api.admin().signed().await.expect_err("a wrong signature");
+    assert_eq!(error.status(), Some(StatusCode::UNAUTHORIZED));
+
+    assert_eq!(served.handled(), 1);
+    Ok(())
+}
+
+/// The schemes of three apis an application only calls, each a `ClientScheme` of a few lines, which `client::key`
+/// sends as it sends a declared one.
+mod third_party {
+    use http::header::AUTHORIZATION;
+    use quoll::auth::{Outgoing, Unsendable};
+    use quoll::{ClientScheme, Scheme};
+
+    /// A Jellyfin API key: `Authorization: MediaBrowser Token="<key>"`.
+    pub struct MediaBrowser;
+
+    impl Scheme for MediaBrowser {
+        const NAME: &'static str = "MediaBrowser";
+    }
+
+    impl ClientScheme for MediaBrowser {
+        type Secret = String;
+
+        fn write(key: &String, request: &mut Outgoing<'_>) -> Result<(), Unsendable> {
+            request.authorization_params("MediaBrowser", &[("Token", key)])
+        }
+    }
+
+    /// A Gitea access token: `Authorization: token <key>`.
+    pub struct Gitea;
+
+    impl Scheme for Gitea {
+        const NAME: &'static str = "Gitea";
+    }
+
+    impl ClientScheme for Gitea {
+        type Secret = String;
+
+        fn write(token: &String, request: &mut Outgoing<'_>) -> Result<(), Unsendable> {
+            request.authorization_token68("token", token)
+        }
+    }
+
+    /// A PocketBase token: the whole value of `Authorization`, with no auth-scheme.
+    pub struct PocketBase;
+
+    impl Scheme for PocketBase {
+        const NAME: &'static str = "PocketBase";
+    }
+
+    impl ClientScheme for PocketBase {
+        type Secret = String;
+
+        fn write(token: &String, request: &mut Outgoing<'_>) -> Result<(), Unsendable> {
+            request.header(AUTHORIZATION, token)
+        }
+    }
+
+    quoll::api! {
+        #[server(none)]
+        pub api Jellyfin = "";
+
+        #[auth(MediaBrowser)]
+        pub group Library {
+            GET "/Items/Counts" => counts() -> serde_json::Value;
+            GET "/Moved"        => moved() -> serde_json::Value;
+
+            #[auth(none)]
+            GET "/System/Info/Public" => info() -> serde_json::Value;
+        }
+    }
+
+    quoll::api! {
+        #[server(none)]
+        pub api Forge = "/api/v1";
+
+        #[auth(Gitea)]
+        pub group Repos {
+            GET "/user/repos" => mine() -> serde_json::Value;
+        }
+    }
+
+    quoll::api! {
+        #[server(none)]
+        pub api Monitor = "/api";
+
+        #[auth(PocketBase)]
+        pub group Systems {
+            GET "/collections/systems/records" => systems() -> serde_json::Value;
+        }
+    }
+}
+
+/// What a plain server saw of a request: its path, and its `Authorization`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Wire {
+    path: String,
+    authorization: Option<String>,
+}
+
+type Wires = Arc<Mutex<Vec<Wire>>>;
+
+/// A plain axum server, as a third-party api, that keeps what each request carries and answers `{}`, but `/Moved`,
+/// which it redirects to `/Landed` on `elsewhere` when given: its URL, and what it saw.
+async fn third_party_server(elsewhere: Option<String>) -> (String, Wires) {
+    let wires: Wires = Arc::default();
+    let kept = Arc::clone(&wires);
+    let app = axum::Router::new().fallback(move |uri: http::Uri, headers: http::HeaderMap| {
+        kept.lock()
+            .expect("no test panics while holding it")
+            .push(Wire {
+                path: uri.path().into(),
+                authorization: headers
+                    .get(AUTHORIZATION)
+                    .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned()),
+            });
+
+        let moved = (uri.path() == "/Moved")
+            .then_some(elsewhere.clone())
+            .flatten();
+
+        async move {
+            match moved {
+                Some(target) => axum::response::IntoResponse::into_response((
+                    StatusCode::FOUND,
+                    [(http::header::LOCATION, format!("{target}/Landed"))],
+                )),
+                None => axum::response::IntoResponse::into_response((
+                    [(http::header::CONTENT_TYPE, "application/json")],
+                    "{}",
+                )),
+            }
+        }
+    });
+
+    (quoll::test::spawn(app).await, wires)
+}
+
+/// What a server saw, taken out of it.
+fn taken(wires: &Wires) -> Vec<Wire> {
+    std::mem::take(&mut *wires.lock().expect("no test panics while holding it"))
+}
+
+/// What a request carries in `Authorization` on the path `path`.
+fn wire(path: &str, authorization: Option<&str>) -> Wire {
+    Wire {
+        path: path.into(),
+        authorization: authorization.map(str::to_owned),
+    }
+}
+
+#[tokio::test]
+async fn a_scheme_of_the_applications_own_writes_the_format_of_its_api() -> Result<()> {
+    let (url, wires) = third_party_server(None).await;
+
+    let jellyfin = quoll::client::builder()
+        .with(quoll::client::key::<third_party::MediaBrowser>("0123abcd"))
+        .build::<third_party::Jellyfin>(&url)?;
+    let forge = quoll::client::builder()
+        .with(quoll::client::key::<third_party::Gitea>("65eaa9c8"))
+        .build::<third_party::Forge>(&url)?;
+    let monitor = quoll::client::builder()
+        .with(quoll::client::key::<third_party::PocketBase>(
+            "eyJhbGciOiJIUzI1NiJ9.e30.sig",
+        ))
+        .build::<third_party::Monitor>(&url)?;
+    let quoted = quoll::client::builder()
+        .with(quoll::client::key::<third_party::MediaBrowser>(r#"a"b\c"#))
+        .build::<third_party::Jellyfin>(&url)?;
+
+    jellyfin.library().counts().await?;
+    forge.repos().mine().await?;
+    monitor.systems().systems().await?;
+    quoted.library().counts().await?;
+
+    assert_eq!(
+        taken(&wires),
+        [
+            wire("/Items/Counts", Some(r#"MediaBrowser Token="0123abcd""#)),
+            wire("/api/v1/user/repos", Some("token 65eaa9c8")),
+            wire(
+                "/api/collections/systems/records",
+                Some("eyJhbGciOiJIUzI1NiJ9.e30.sig")
+            ),
+            wire("/Items/Counts", Some(r#"MediaBrowser Token="a\"b\\c""#)),
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_scheme_of_the_applications_own_is_sent_on_its_routes_to_its_origin_marked_sensitive()
+-> Result<()> {
+    let (elsewhere, elsewhere_wires) = third_party_server(None).await;
+    let (url, wires) = third_party_server(Some(elsewhere)).await;
+    let sensitive: Arc<Mutex<Vec<bool>>> = Arc::default();
+    let kept = Arc::clone(&sensitive);
+
+    let api = quoll::client::builder()
+        .with(quoll::client::redirects(5))
+        .with(quoll::client::key::<third_party::MediaBrowser>("0123abcd"))
+        .with(quoll::client::on_request(
+            move |request: &mut reqwest::Request, _route: &Route| {
+                if let Some(value) = request.headers().get(AUTHORIZATION) {
+                    kept.lock()
+                        .expect("no test panics while holding it")
+                        .push(value.is_sensitive());
+                }
+            },
+        ))
+        .build::<third_party::Jellyfin>(&url)?;
+
+    api.library().counts().await?;
+    api.library().info().await?;
+    api.library().moved().await?;
+
+    let written = r#"MediaBrowser Token="0123abcd""#;
+    assert_eq!(
+        taken(&wires),
+        [
+            wire("/Items/Counts", Some(written)),
+            wire("/System/Info/Public", None),
+            wire("/Moved", Some(written)),
+        ]
+    );
+    assert_eq!(taken(&elsewhere_wires), [wire("/Landed", None)]);
+    assert_eq!(
+        *sensitive.lock().expect("no test panics while holding it"),
+        [true, true]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_key_of_the_applications_scheme_the_server_would_not_read_fails_the_call_before_it_is_sent()
+-> Result<()> {
+    let (url, wires) = third_party_server(None).await;
+
+    for key in ["", "secret-é", "secret\nkey"] {
+        let api = quoll::client::builder()
+            .with(quoll::client::key::<third_party::MediaBrowser>(key))
+            .build::<third_party::Jellyfin>(&url)?;
+
+        let error = api.library().counts().await.expect_err("not sendable");
+        let shown = format!("{error} {error:?}");
+        assert_eq!(error.status(), None, "{key:?}: {shown}");
+        assert!(!shown.contains("secret"), "{key:?}: {shown}");
+
+        // A route that takes no scheme is called as it is.
+        api.library().info().await?;
+    }
+
+    let forge = quoll::client::builder()
+        .with(quoll::client::key::<third_party::Gitea>("secret key"))
+        .build::<third_party::Forge>(&url)?;
+    let error = forge.repos().mine().await.expect_err("not a token68");
+    assert!(
+        !format!("{error} {error:?}").contains("secret"),
+        "{error:?}"
+    );
+
+    assert_eq!(
+        taken(&wires),
+        [
+            wire("/System/Info/Public", None),
+            wire("/System/Info/Public", None),
+            wire("/System/Info/Public", None),
+        ]
     );
     Ok(())
 }

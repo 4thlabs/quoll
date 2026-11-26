@@ -1,5 +1,5 @@
 error[E0080]: evaluation panicked: the scheme `Signed` has a `NAME` that cannot name it in the OpenAPI document: write it with ASCII letters, digits, `.`, `-` and `_`
-  --> tests/compile_fail/group_scheme_name_not_a_component.rs:22:12
+  --> tests/compile_fail/group_scheme_name_not_a_component.rs:34:12
    |
-22 |     #[auth(Signed)]
+34 |     #[auth(Signed)]
    |            ^^^^^^ evaluation of `_` failed here

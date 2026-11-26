@@ -1,0 +1,21 @@
+error[E0437]: type `Credential` is not a member of trait `Scheme`
+ --> tests/compile_fail/scheme_old_impl.rs:8:5
+  |
+8 |     type Credential = String;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^ not a member of trait `Scheme`
+
+error[E0407]: method `read` is not a member of trait `Scheme`
+  --> tests/compile_fail/scheme_old_impl.rs:12:5
+   |
+12 | /     fn read(_request: &Parts) -> Result<Option<String>> {
+13 | |         Ok(None)
+14 | |     }
+   | |_____^ not a member of trait `Scheme`
+
+error[E0407]: method `openapi` is not a member of trait `Scheme`
+  --> tests/compile_fail/scheme_old_impl.rs:16:5
+   |
+16 | /     fn openapi() -> SecurityScheme {
+17 | |         SecurityScheme::header("X-Signature")
+18 | |     }
+   | |_____^ not a member of trait `Scheme`

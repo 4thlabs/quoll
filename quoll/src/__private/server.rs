@@ -27,7 +27,7 @@ use crate::__private::read::{Deserialized, Read};
 use crate::__private::text;
 use crate::error::Repr;
 use crate::server::{body_limit, trace};
-use crate::{Authenticate, Error, Result, Route, Scheme, Scoped};
+use crate::{Authenticate, Error, Result, Route, Scoped, ServerScheme};
 
 mod stream;
 
@@ -389,7 +389,7 @@ impl Challenges for () {
     fn challenge(_headers: &mut HeaderMap) {}
 }
 
-impl<S: Scheme> Challenges for S {
+impl<S: ServerScheme> Challenges for S {
     fn challenge(headers: &mut HeaderMap) {
         headers.append(header::WWW_AUTHENTICATE, S::CHALLENGE);
     }
@@ -417,7 +417,7 @@ pub trait Authenticates<C>: Send + Sync + 'static {
     -> impl Future<Output = Result<Self::Caller>> + Send;
 }
 
-impl<A: Authenticate<S>, S: Scheme> Authenticates<S> for A {
+impl<A: Authenticate<S>, S: ServerScheme> Authenticates<S> for A {
     type Caller = A::Caller;
     type Found = S::Credential;
 
@@ -442,13 +442,13 @@ pub enum Either<L, R> {
 /// Implements `Challenges` and `Authenticates` for a tuple of schemes: its first one, then the tuple of the others.
 macro_rules! alternatives {
     ($first:ident, $rest:ty; $($scheme:ident),+) => {
-        impl<$($scheme: Scheme),+> Challenges for ($($scheme,)+) {
+        impl<$($scheme: ServerScheme),+> Challenges for ($($scheme,)+) {
             fn challenge(headers: &mut HeaderMap) {
                 $(<$scheme as Challenges>::challenge(headers);)+
             }
         }
 
-        impl<A, $($scheme: Scheme),+> Authenticates<($($scheme,)+)> for A
+        impl<A, $($scheme: ServerScheme),+> Authenticates<($($scheme,)+)> for A
         where
             A: Authenticates<$first> + Authenticates<$rest, Caller = <A as Authenticates<$first>>::Caller>,
         {

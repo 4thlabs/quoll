@@ -202,7 +202,7 @@ pub struct Auth {
 pub struct SchemeRef {
     /// `Scheme::NAME`.
     pub name: &'static str,
-    /// `Scheme::openapi`.
+    /// `ServerScheme::openapi`.
     pub openapi: fn() -> SecurityScheme,
     /// Whether the scheme answers 403 to a request from another origin that changes things: a cookie scheme the
     /// contract declares, which checks it as it reads its cookie, and says so by its type.

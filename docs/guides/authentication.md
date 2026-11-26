@@ -167,10 +167,181 @@ quoll::api! {
 - `openid`: a bearer token from an OpenID Connect provider, and the document describes it that way. Quoll checks no
   token: `authenticate` does.
 
-**The application's own**: a type implementing `quoll::Scheme`, such as an HMAC signature. `#[auth(...)]` names it by
-its path: `#[auth(crate::auth::Hmac)]`. Its `read` gives the credential from the request's head. It gives `None` when
-the request carries none, and an error when the request carries one that is not well formed. The doc of
-`quoll::Scheme` shows one.
+**The application's own**, such as an HMAC signature or the format of another API's key. `#[auth(...)]` names it by
+its path: `#[auth(crate::auth::Hmac)]`. [A scheme of the application's own](#a-scheme-of-the-applications-own) says
+how to write one.
+
+## A scheme of the application's own
+
+A scheme is a type that implements `quoll::Scheme`, which gives its name, and the sides its api uses:
+
+- `quoll::ServerScheme`: how a server reads the credential, the challenge of a 401, and how the OpenAPI document
+  describes it;
+- `quoll::ClientScheme`: how a client writes the credential on a request.
+
+The api checks that each scheme of `#[auth(...)]` has its sides:
+
+| The api                           | The scheme implements            |
+| --------------------------------- | -------------------------------- |
+| serves and calls, the default     | `ServerScheme` and `ClientScheme` |
+| `#[server(none)]`, it only calls  | `ClientScheme`                   |
+| `#[client(none)]`, it only serves | `ServerScheme`                   |
+| a `quoll::group!`                 | the sides of the group           |
+
+A scheme without a side its api needs does not compile, whatever the features. The message names the trait to
+implement.
+
+### The client side
+
+Jellyfin takes its key as `Authorization: MediaBrowser Token="<key>"`. A client of it writes the header in `write`,
+and sends the key with `client::key`:
+
+```rust,no_run
+use quoll::auth::{Outgoing, Unsendable};
+use quoll::{ClientScheme, Scheme, client};
+
+/// A Jellyfin API key.
+pub struct MediaBrowser;
+
+impl Scheme for MediaBrowser {
+    const NAME: &'static str = "MediaBrowser";
+}
+
+impl ClientScheme for MediaBrowser {
+    type Secret = String;
+
+    fn write(key: &String, request: &mut Outgoing<'_>) -> Result<(), Unsendable> {
+        request.authorization_params("MediaBrowser", &[("Token", key)])
+    }
+}
+
+quoll::api! {
+    #[server(none)]
+    pub api Jellyfin = "";
+
+    #[auth(MediaBrowser)]
+    pub group Library {
+        GET "/Items/Counts" => counts() -> serde_json::Value;
+    }
+}
+
+# async fn run() -> Result<(), Box<dyn std::error::Error>> {
+let jellyfin = client::builder()
+    .with(client::key::<MediaBrowser>("0123abcd"))
+    .build::<Jellyfin>("http://jellyfin.local:8096")?;
+
+let counts = jellyfin.library().counts().await?;
+# Ok(())
+# }
+```
+
+`client::key` calls `write` on each request whose route takes the scheme, and on no other. It sends nothing to
+another origin, even on a redirect, and marks each header written sensitive.
+
+`Outgoing` reads the request's `method()`, `path()`, `query()` and `body()`, as a signature needs them. It writes the
+credential with one of these, each of which checks the value as a server would read it:
+
+| Method                                   | Writes                                 |
+| ---------------------------------------- | -------------------------------------- |
+| `authorization_token68(scheme, token)`   | `Authorization: token 65eaa9c8`        |
+| `authorization_params(scheme, &[(name, value)])` | `Authorization: MediaBrowser Token="0123abcd"` |
+| `header(name, value)`                    | any header, `Authorization` with a raw token included |
+| `cookie(name, value)`                    | a cookie, after the request's others   |
+| `query_pair(key, value)`                 | a key of the query                     |
+
+`authorization_params` writes each value as a quoted-string, with `"` and `\` escaped. A value the server would not
+read, an empty one or one with a line break, is an `Unsendable`. The call then fails before it is sent, and its error
+never shows the credential.
+
+`Secret` is what `key` is given. It may differ from what the server reads: a client that signs each request is given
+its key, and writes the signature of the request.
+
+A test checks what `write` writes with `Outgoing::new`, without a server:
+
+```rust
+# use quoll::auth::{Outgoing, Unsendable};
+# use quoll::{ClientScheme, Scheme};
+# pub struct MediaBrowser;
+# impl Scheme for MediaBrowser {
+#     const NAME: &'static str = "MediaBrowser";
+# }
+# impl ClientScheme for MediaBrowser {
+#     type Secret = String;
+#     fn write(key: &String, request: &mut Outgoing<'_>) -> Result<(), Unsendable> {
+#         request.authorization_params("MediaBrowser", &[("Token", key)])
+#     }
+# }
+use http::Method;
+use http::header::AUTHORIZATION;
+
+let mut request = Outgoing::new(&Method::GET, "/Items/Counts", None, None);
+MediaBrowser::write(&"0123abcd".to_owned(), &mut request)?;
+
+assert_eq!(
+    request.added_headers()[AUTHORIZATION],
+    r#"MediaBrowser Token="0123abcd""#
+);
+# Ok::<(), Unsendable>(())
+```
+
+### The server side
+
+`read` gives the credential from the request's head. It gives `None` when the request carries none, and a 401 when it
+carries one that is not well formed. `quoll::auth` reads the grammar of `Authorization`, so that a scheme does not
+parse it by hand:
+
+- `auth::authorization(&request, "MediaBrowser")` gives the credentials of that auth-scheme, compared without case. It
+  gives `None` for a request with none of them, and a 401 when another `Authorization` is beside them.
+- `Credentials::token68()` gives a token, as in `token 65eaa9c8`.
+- `Credentials::param("Token")` gives the value of a param, as in `MediaBrowser Token="0123abcd"`. Its name is
+  compared without case, and the other params are ignored. A list that is not well formed, or with the param twice,
+  is a 401.
+- `Credentials::as_bytes()` gives the rest, as it is.
+
+```rust
+use http::request::Parts;
+use quoll::openapi::SecurityScheme;
+use quoll::{Result, Scheme, ServerScheme, auth};
+
+/// A Jellyfin API key.
+pub struct MediaBrowser;
+
+impl Scheme for MediaBrowser {
+    const NAME: &'static str = "MediaBrowser";
+}
+
+impl ServerScheme for MediaBrowser {
+    type Credential = String;
+
+    fn read(request: &Parts) -> Result<Option<String>> {
+        let Some(credentials) = auth::authorization(request, "MediaBrowser")? else {
+            return Ok(None);
+        };
+
+        credentials.param("Token")
+    }
+
+    fn openapi() -> SecurityScheme {
+        SecurityScheme::http("MediaBrowser")
+    }
+}
+
+quoll::api! {
+    #[client(none)]
+    pub api Media = "";
+
+    #[auth(MediaBrowser)]
+    pub group Library {
+        GET "/Items/Counts" => counts() -> u64;
+    }
+}
+```
+
+A param that is absent is `None`, so the route answers 401. The doc of `quoll::ServerScheme` shows a signature read
+from a header of its own.
+
+quoll does not check where a scheme of the application's travels. Two schemes of an alternative that read one header,
+or an argument that reads the credential's header, are the application's to avoid.
 
 ## Alternatives
 
@@ -305,6 +476,6 @@ Each scheme has its middleware, which sends the credential on the routes that ta
 | `Bearer`                         | `client::bearer(token)`, or `client::bearer_from(source)` |
 | `Basic`                          | `client::basic(user, password)` |
 | a declared scheme `Key`          | `client::key::<Key>(value)`   |
-| an application's own scheme      | `client::on_request(f)`, or a middleware of its own |
+| an application's own scheme `S`  | `client::key::<S>(secret)`    |
 
 [The client](client.md#credentials) says how each behaves.

@@ -135,7 +135,7 @@ fn scheme_ref(ty: &TokenStream, span: Span) -> TokenStream {
 
             ::quoll::__private::openapi::SchemeRef {
                 name: <#ty as ::quoll::Scheme>::NAME,
-                openapi: <#ty as ::quoll::Scheme>::openapi,
+                openapi: <#ty as ::quoll::ServerScheme>::openapi,
                 checks_origin: <::quoll::__private::group::Probe<#ty>>::CHECKS_ORIGIN,
                 type_id: ::core::any::TypeId::of::<#ty>,
                 type_name: ::core::any::type_name::<#ty>,

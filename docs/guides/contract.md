@@ -298,8 +298,8 @@ quoll::api! {
 ```
 
 - A value is a string or the name of a `&str` constant, checked at compile time. A value that changes from call to
-  call is an argument: `header("Stripe-Account") account: Option<String>`. A value that comes from a deployment, a
-  signature or a tenant goes through `client::on_request`.
+  call is an argument: `header("Stripe-Account") account: Option<String>`. A value that comes from a deployment or a
+  tenant goes through `client::on_request`, and a signature is a scheme's `write`.
 - A group or a route takes its parent's headers, and the one nearest to the call wins. The order is: an argument for
   the same header, given by the caller, then the route, the group and the api. quoll's own `Accept` comes last. So
   under an api that fixes an `Accept`, a route whose result is `Text`, `Events` or `JsonLines` takes
