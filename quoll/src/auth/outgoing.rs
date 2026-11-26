@@ -31,7 +31,8 @@ use super::credentials::{is_token, is_token68};
 /// assert!(written.is_sensitive());
 /// # Ok::<(), quoll::auth::Unsendable>(())
 /// ```
-#[derive(Debug)]
+///
+/// Its `Debug` shows the method, the path and the names of what was written, never a value, the query or the body.
 pub struct Outgoing<'a> {
     method: &'a Method,
     path: &'a str,
@@ -41,7 +42,7 @@ pub struct Outgoing<'a> {
 }
 
 /// What a scheme adds to a request, which the client puts on it once the scheme has written.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct Added {
     /// Headers, each in the place of any of its name.
     pub(crate) headers: HeaderMap,
@@ -49,6 +50,35 @@ pub(crate) struct Added {
     pub(crate) cookies: Vec<String>,
     /// Keys of the query, each in the place of any value of it.
     pub(crate) query: Vec<(String, String)>,
+}
+
+/// The message of a credential whose auth-scheme cannot be sent.
+const NOT_AN_AUTH_SCHEME: &str =
+    "the credential cannot be sent in `Authorization`: its auth-scheme is not a `token`";
+
+impl fmt::Debug for Outgoing<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cookies: Vec<&str> = self
+            .added
+            .cookies
+            .iter()
+            .map(|pair| pair.split_once('=').map_or(pair.as_str(), |(name, _)| name))
+            .collect();
+        let keys: Vec<&str> = self
+            .added
+            .query
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect();
+
+        f.debug_struct("Outgoing")
+            .field("method", self.method)
+            .field("path", &self.path)
+            .field("headers", &self.added.headers.keys().collect::<Vec<_>>())
+            .field("cookies", &cookies)
+            .field("query", &keys)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> Outgoing<'a> {
@@ -115,9 +145,13 @@ impl<'a> Outgoing<'a> {
     ///
     /// # Errors
     ///
-    /// When `token` is not a `token68`, letters, digits, `-._~+/` and `=` at its end, or `scheme` not a `token`.
+    /// When `scheme` is not a `token`, or `token` not a `token68`, letters, digits, `-._~+/` and `=` at its end.
     pub fn authorization_token68(&mut self, scheme: &str, token: &str) -> Result<(), Unsendable> {
-        if !is_token(scheme) || !is_token68(token) {
+        if !is_token(scheme) {
+            return Err(Unsendable::new(NOT_AN_AUTH_SCHEME));
+        }
+
+        if !is_token68(token) {
             return Err(Unsendable::new(
                 "the credential cannot be sent in `Authorization`: it is not a `token68`, letters, digits, `-._~+/` and `=` at its end",
             ));
@@ -135,22 +169,35 @@ impl<'a> Outgoing<'a> {
     ///
     /// # Errors
     ///
-    /// When a value is empty or holds a character that is not visible ASCII or a space, or `scheme` or a name is not
-    /// a `token`.
+    /// When `scheme` or a name is not a `token`, `params` is empty, or a value is empty or holds a character that is
+    /// not visible ASCII or a space.
     pub fn authorization_params(
         &mut self,
         scheme: &str,
         params: &[(&str, &str)],
     ) -> Result<(), Unsendable> {
-        let sendable = is_token(scheme)
-            && !params.is_empty()
-            && params.iter().all(|(name, value)| {
-                is_token(name)
-                    && !value.is_empty()
-                    && value
-                        .bytes()
-                        .all(|byte| byte == b' ' || byte.is_ascii_graphic())
-            });
+        if !is_token(scheme) {
+            return Err(Unsendable::new(NOT_AN_AUTH_SCHEME));
+        }
+
+        if params.is_empty() {
+            return Err(Unsendable::new(
+                "the credential cannot be sent in `Authorization`: it has no param",
+            ));
+        }
+
+        if !params.iter().all(|(name, _)| is_token(name)) {
+            return Err(Unsendable::new(
+                "the credential cannot be sent in `Authorization`: the name of a param is not a `token`",
+            ));
+        }
+
+        let sendable = params.iter().all(|(_, value)| {
+            !value.is_empty()
+                && value
+                    .bytes()
+                    .all(|byte| byte == b' ' || byte.is_ascii_graphic())
+        });
 
         if !sendable {
             return Err(Unsendable::new(
@@ -184,10 +231,16 @@ impl<'a> Outgoing<'a> {
     ///
     /// # Errors
     ///
-    /// When `value` is empty, or holds a character other than an ASCII letter, digit or sign, or `"`, `,`, `;` or `\`.
+    /// When `name` is not a `token`, or `value` is empty, or holds a character other than an ASCII letter, digit or
+    /// sign, or `"`, `,`, `;` or `\`.
     pub fn cookie(&mut self, name: &str, value: &str) -> Result<(), Unsendable> {
-        let sendable = is_token(name)
-            && !value.is_empty()
+        if !is_token(name) {
+            return Err(Unsendable::new(
+                "the credential cannot be sent as a cookie: its name is not a `token`",
+            ));
+        }
+
+        let sendable = !value.is_empty()
             && value
                 .bytes()
                 .all(|byte| byte.is_ascii_graphic() && !b"\",;\\".contains(&byte));
@@ -208,9 +261,15 @@ impl<'a> Outgoing<'a> {
     ///
     /// When `key` or `value` is empty.
     pub fn query_pair(&mut self, key: &str, value: &str) -> Result<(), Unsendable> {
-        if key.is_empty() || value.is_empty() {
+        if key.is_empty() {
             return Err(Unsendable::new(
-                "the credential cannot be sent in the query: its key or its value is empty",
+                "the credential cannot be sent in the query: its key is empty",
+            ));
+        }
+
+        if value.is_empty() {
+            return Err(Unsendable::new(
+                "the credential cannot be sent in the query: it is empty",
             ));
         }
 
@@ -350,6 +409,67 @@ mod tests {
             request.added_query().collect::<Vec<_>>(),
             [("token", "t-2")]
         );
+    }
+
+    #[test]
+    fn an_unsendable_says_which_part_cannot_be_sent() {
+        let message = |result: Result<(), Unsendable>| result.expect_err("unsendable").to_string();
+        let params = |scheme, params: &[(&str, &str)]| {
+            message(outgoing().authorization_params(scheme, params))
+        };
+
+        assert!(
+            params("Media Browser", &[("Token", "k")])
+                .ends_with("its auth-scheme is not a `token`")
+        );
+        assert!(
+            message(outgoing().authorization_token68("to ken", "k"))
+                .ends_with("its auth-scheme is not a `token`")
+        );
+        assert!(params("MediaBrowser", &[]).ends_with("it has no param"));
+        assert!(
+            params("MediaBrowser", &[("To ken", "k")])
+                .ends_with("the name of a param is not a `token`")
+        );
+        assert!(
+            params("MediaBrowser", &[("Token", "")])
+                .ends_with("a value is empty or holds a character that is not visible ASCII")
+        );
+        assert!(
+            message(outgoing().authorization_token68("token", "a b"))
+                .contains("it is not a `token68`")
+        );
+        assert!(
+            message(outgoing().cookie("a session", "s-1")).ends_with("its name is not a `token`")
+        );
+        assert!(message(outgoing().query_pair("", "t-1")).ends_with("its key is empty"));
+        assert!(message(outgoing().query_pair("token", "")).ends_with("it is empty"));
+    }
+
+    #[test]
+    fn its_debug_shows_the_names_written_and_no_value() {
+        let mut request = Outgoing::new(
+            &Method::POST,
+            "/Items",
+            Some("page=2&secret-q=1"),
+            Some(b"secret-body"),
+        );
+
+        request
+            .header(AUTHORIZATION, "secret-header")
+            .expect("sendable");
+        request
+            .cookie("session", "secret-cookie")
+            .expect("sendable");
+        request
+            .query_pair("token", "secret-token")
+            .expect("sendable");
+
+        let shown = format!("{request:?}");
+        assert!(!shown.contains("secret"), "{shown}");
+        for name in ["POST", "/Items", "authorization", "session", "token"] {
+            assert!(shown.contains(name), "{name}: {shown}");
+        }
     }
 
     #[test]

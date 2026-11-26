@@ -24,6 +24,7 @@ use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Middleware, Next};
 use serde_json::Value;
 
 use other::Other as _;
+use third_party::shelves::Shelf as _;
 use third_party::{Library as _, Repos as _, Systems as _};
 
 quoll::api! {
@@ -1130,6 +1131,128 @@ mod third_party {
             GET "/collections/systems/records" => systems() -> serde_json::Value;
         }
     }
+
+    /// A group of another block that only calls, which takes a scheme with no server side.
+    pub mod shelves {
+        quoll::group! {
+            #[server(none)]
+            #[auth(crate::third_party::MediaBrowser)]
+            pub group Shelf {
+                GET "/Shelf/Items" => items() -> serde_json::Value;
+            }
+        }
+    }
+
+    quoll::api! {
+        #[server(none)]
+        pub api Shelves = "" { shelves::Shelf };
+    }
+}
+
+/// A scheme a server reads, which no client writes: `X-Ticket: <ticket>`.
+struct Ticket;
+
+impl Scheme for Ticket {
+    const NAME: &'static str = "Ticket";
+}
+
+impl ServerScheme for Ticket {
+    type Credential = String;
+
+    fn read(request: &Parts) -> Result<Option<String>> {
+        request
+            .headers
+            .get("x-ticket")
+            .map(|value| {
+                value
+                    .to_str()
+                    .map(str::to_owned)
+                    .map_err(|_| Error::unauthorized("the ticket is not text"))
+            })
+            .transpose()
+    }
+
+    fn openapi() -> SecurityScheme {
+        SecurityScheme::header("X-Ticket")
+    }
+}
+
+/// An api that only serves, which takes a scheme with no client side.
+mod served_only {
+    quoll::api! {
+        #[client(none)]
+        pub api Tickets = "/tickets";
+
+        #[auth(crate::Ticket)]
+        pub group Desk {
+            GET "/desk" => desk() -> String;
+        }
+    }
+}
+
+/// The service of the api that only serves.
+struct DeskApp;
+
+impl Authenticate<Ticket> for DeskApp {
+    type Caller = String;
+
+    async fn authenticate(&self, ticket: String) -> Result<String> {
+        Ok(ticket)
+    }
+}
+
+impl served_only::DeskServer for DeskApp {
+    async fn desk(&self, ticket: &String) -> Result<Response<String>> {
+        Ok(Response::new(ticket.clone()))
+    }
+}
+
+#[tokio::test]
+async fn a_scheme_with_no_client_side_is_served_in_an_api_that_only_serves() {
+    let router = served_only::Tickets::router(served_only::TicketsServices { desk: DeskApp });
+    let url = quoll::test::spawn(router).await;
+    let http = reqwest::Client::new();
+
+    let answer = http
+        .get(format!("{url}/tickets/desk"))
+        .header("x-ticket", "t-1")
+        .send()
+        .await
+        .expect("the server answers");
+    assert_eq!(answer.text().await.expect("a body"), "\"t-1\"");
+
+    let without = http
+        .get(format!("{url}/tickets/desk"))
+        .send()
+        .await
+        .expect("the server answers");
+    assert_eq!(challenges(&without), ["Ticket"]);
+    refused(without, StatusCode::UNAUTHORIZED, "no ticket").await;
+
+    let document = serde_json::to_value(served_only::Tickets::openapi()).expect("a document");
+    assert_eq!(
+        document["components"]["securitySchemes"]["Ticket"]["name"],
+        "X-Ticket"
+    );
+}
+
+#[tokio::test]
+async fn a_group_that_only_calls_sends_a_scheme_with_no_server_side() -> Result<()> {
+    let (url, wires) = third_party_server(None).await;
+
+    let shelves = quoll::client::builder()
+        .with(quoll::client::key::<third_party::MediaBrowser>("0123abcd"))
+        .build::<third_party::Shelves>(&url)?;
+    shelves.shelf().items().await?;
+
+    assert_eq!(
+        taken(&wires),
+        [wire(
+            "/Shelf/Items",
+            Some(r#"MediaBrowser Token="0123abcd""#)
+        )]
+    );
+    Ok(())
 }
 
 /// What a plain server saw of a request: its path, and its `Authorization`.

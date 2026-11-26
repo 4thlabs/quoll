@@ -24,7 +24,8 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.11.0" }
 
 Migration: keep `NAME` in `impl Scheme` and move `Credential`, `CHALLENGE`, `read` and `openapi` to
 `impl ServerScheme`. An api with both sides also needs `impl ClientScheme`, which replaces the `on_request` that sent
-the credential, or `#[client(none)]`.
+the credential, or `#[client(none)]`. A `quoll::group!` with both sides that takes a scheme with no server side, a
+declared scheme of a `#[server(none)]` api included, writes `#[server(none)]`.
 
 ## [0.11.0] - 2026-11-26
 

@@ -235,8 +235,13 @@ let counts = jellyfin.library().counts().await?;
 # }
 ```
 
-`client::key` calls `write` on each request whose route takes the scheme, and on no other. It sends nothing to
-another origin, even on a redirect, and marks each header written sensitive.
+`client::key` calls `write` on each request whose route takes the scheme, and on no other. It marks each header
+written sensitive, and sends nothing to another origin.
+
+A redirect to another origin gets nothing when the client follows it with `client::redirects`, which
+`client::builder()` adds once it is given a credential. A reqwest client that follows redirects itself, as one given
+to `Api::client_with` does by default, strips only `Authorization`, `Cookie` and `Proxy-Authorization` on a hop to
+another host. Any other header that `write` adds, such as `X-Signature`, goes with it.
 
 `Outgoing` reads the request's `method()`, `path()`, `query()` and `body()`, as a signature needs them. It writes the
 credential with one of these, each of which checks the value as a server would read it:

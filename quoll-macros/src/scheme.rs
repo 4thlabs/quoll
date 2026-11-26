@@ -189,8 +189,9 @@ pub(crate) fn schemes_type(schemes: &[Scheme]) -> TokenStream {
 
 /// The challenge of each scheme of the application's that a route of the group takes, evaluated in a constant: a
 /// `CHALLENGE` that is not a header's value fails as the contract compiles, whatever the features, rather than as the
-/// server is built, when the code that sends it is instantiated. The crate's schemes and the declared ones have a
-/// challenge the macro checks.
+/// server is built, when the code that sends it is instantiated. It is also the check that the scheme is a
+/// `ServerScheme`, which a group that is served takes. The crate's schemes and the declared ones have a challenge the
+/// macro checks.
 pub(crate) fn challenge_checks(group: &Group) -> TokenStream {
     let mut seen: Vec<String> = Vec::new();
     let mut checks = Vec::new();
@@ -221,10 +222,11 @@ pub(crate) fn challenge_checks(group: &Group) -> TokenStream {
     }
 }
 
-/// The checks that each scheme of the application's that a route of the group takes has the sides of the group: a
-/// `ServerScheme` for a group that is served, a `ClientScheme` for one that is called, spanned on the scheme in its
-/// `#[auth(...)]`. The crate's schemes have both, and a declared one the sides of its api.
-pub(crate) fn side_checks(group: &Group, server: bool, client: bool) -> TokenStream {
+/// The checks that each scheme of the application's that a route of a group that is called takes is a `ClientScheme`,
+/// spanned on the scheme in its `#[auth(...)]`. A group that is served checks its `ServerScheme` already, in
+/// [`challenge_checks`], so that a missing side is one error. The crate's schemes have both sides, and a declared one
+/// the sides of its api.
+pub(crate) fn client_checks(group: &Group) -> TokenStream {
     let mut seen: Vec<String> = Vec::new();
     let mut checks = Vec::new();
 
@@ -237,16 +239,9 @@ pub(crate) fn side_checks(group: &Group, server: bool, client: bool) -> TokenStr
 
         let ty = scheme_type(scheme);
 
-        if server {
-            checks.push(quote_spanned! {scheme.span()=>
-                ::quoll::__private::auth::is_server_scheme::<#ty>();
-            });
-        }
-        if client {
-            checks.push(quote_spanned! {scheme.span()=>
-                ::quoll::__private::auth::is_client_scheme::<#ty>();
-            });
-        }
+        checks.push(quote_spanned! {scheme.span()=>
+            ::quoll::__private::auth::is_client_scheme::<#ty>();
+        });
     }
 
     if checks.is_empty() {

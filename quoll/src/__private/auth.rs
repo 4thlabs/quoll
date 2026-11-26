@@ -100,9 +100,6 @@ pub fn write_openid(
     })
 }
 
-/// Checks, at compile time, that `S` is a scheme a server reads: a type an api that serves names in `#[auth(...)]`.
-pub const fn is_server_scheme<S: ServerScheme>() {}
-
 /// Checks, at compile time, that `S` is a scheme a client writes: a type an api that calls names in `#[auth(...)]`.
 pub const fn is_client_scheme<S: ClientScheme>() {}
 

@@ -126,8 +126,13 @@ pub trait ServerScheme: Scheme {
 /// serves, `#[client(none)]`, does not implement it.
 ///
 /// The client calls [`write`](ClientScheme::write) on the requests whose route takes the scheme, to the api's own
-/// origin, and on no other: a route with `#[auth(none)]`, a request sent to another host, or a hop of a redirect to
-/// another origin never gets the credential. What it writes through [`Outgoing`] is marked sensitive.
+/// origin, and on no other: a route with `#[auth(none)]` or a request sent to another host never gets the credential.
+/// What it writes through [`Outgoing`] is marked sensitive.
+///
+/// A redirect to another origin gets nothing when the client follows it with `client::redirects`, which
+/// `client::builder()` adds once it is given a credential. A reqwest client that follows redirects itself, as one
+/// given to `Api::client_with` does by default, strips only `Authorization`, `Cookie` and `Proxy-Authorization` on a
+/// hop to another host: any other header that `write` adds, as `X-Signature`, goes with it.
 ///
 /// ```
 /// use quoll::auth::{Outgoing, Unsendable};
