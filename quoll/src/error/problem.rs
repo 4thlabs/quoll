@@ -106,8 +106,9 @@ impl Error {
     ///
     /// A fake of an api of problems returns it, so that the code it serves reads what the real client gives. An
     /// internal error is a 500 that says nothing more, and one received from another API a 502. A problem longer than
-    /// the 64 KiB the client keeps of a body is cut there, as the client reads it: it has no detail and no response,
-    /// and says its status alone.
+    /// the 64 KiB the client keeps of a body is cut there, and one whose JSON nests deeper than the client reads it,
+    /// 128 levels, is read as no problem, as the client reads them: it has no detail and no response, and says its
+    /// status alone.
     ///
     /// ```
     /// use http::StatusCode;
@@ -135,7 +136,12 @@ impl Error {
             }
         }
 
-        if body.len() > BODY_LIMIT {
+        // The client keeps 64 KiB of a body, and reads a problem as JSON, a JSON nested deeper than its limit
+        // reading as none: a problem it does not read has no detail.
+        let read =
+            body.len() <= BODY_LIMIT && serde_json::from_slice::<serde_json::Value>(&body).is_ok();
+
+        if !read {
             body.truncate(BODY_LIMIT);
 
             return Self::upstream(status, None, Some(body), None).received(headers);
@@ -350,10 +356,58 @@ fn is_uri_reference(text: &str) -> bool {
         start..start + rest.find(['/', '?', '#']).unwrap_or(rest.len())
     });
 
+    if authority
+        .as_ref()
+        .is_some_and(|authority| !is_authority(&text[authority.clone()]))
+    {
+        return false;
+    }
+
     text.bytes()
         .enumerate()
         .filter(|&(_, byte)| byte == b'[' || byte == b']')
         .all(|(at, _)| authority.as_ref().is_some_and(|host| host.contains(&at)))
+}
+
+/// Whether `authority`, whose bytes are those of a URI, is one: a userinfo and an `@`, which it may leave out, a host,
+/// an IP literal in brackets or a name with neither brackets nor a `:`, then a `:` and a port of digits, which it may
+/// leave out too.
+fn is_authority(authority: &str) -> bool {
+    let (userinfo, host_port) = match authority.rsplit_once('@') {
+        Some((userinfo, host_port)) => (userinfo, host_port),
+        None => ("", authority),
+    };
+
+    if userinfo.contains(['@', '[', ']']) {
+        return false;
+    }
+
+    let (host, port) = match host_port.strip_prefix('[') {
+        Some(literal) => {
+            let Some((inside, port)) = literal.split_once(']') else {
+                return false;
+            };
+
+            if inside.is_empty() || inside.contains('[') {
+                return false;
+            }
+
+            (inside, port)
+        }
+        None => match host_port.find(':') {
+            Some(colon) => (&host_port[..colon], &host_port[colon..]),
+            None => (host_port, ""),
+        },
+    };
+
+    if host.contains(['[', ']']) || !host_port.starts_with('[') && host.contains(':') {
+        return false;
+    }
+
+    match port.strip_prefix(':') {
+        Some(digits) => digits.bytes().all(|byte| byte.is_ascii_digit()),
+        None => port.is_empty(),
+    }
 }
 
 /// Whether `scheme` is the scheme of a URI: a letter, then letters, digits, `+`, `-` or `.`.
@@ -493,6 +547,9 @@ mod tests {
             "tag:example.com,2026:app",
             "http://[::1]:8080/problems/a",
             "//[::1]/problems/a",
+            "https://user:secret@example.com:8443/problems/a",
+            "https://example.com:/problems/a",
+            "file:///problems/a",
         ];
         let invalid = [
             "app running",
@@ -507,6 +564,12 @@ mod tests {
             "http://x/[a]",
             "[::1]/a",
             "a#b#c",
+            "https://[broken/problem",
+            "https://user[x]@example.com/problem",
+            "https://example.com:abc/problem",
+            "https://a@b@example.com/problem",
+            "https://[]/problem",
+            "https://[::1]x/problem",
         ];
 
         for uri in valid {
@@ -591,6 +654,22 @@ mod tests {
         assert!(debug.contains("/problems/app-running"), "{debug}");
         assert!(debug.contains(r#"members: ["app"]"#), "{debug}");
         assert!(!debug.contains("secret"), "{debug}");
+    }
+
+    #[test]
+    fn an_answered_problem_nested_past_the_clients_limit_has_no_detail() {
+        let mut nested = json!(1);
+
+        for _ in 0..200 {
+            nested = json!([nested]);
+        }
+
+        let error = conflict().with_member("nested", nested).into_answered();
+
+        assert_eq!(error.status(), Some(StatusCode::CONFLICT));
+        assert!(error.body().is_some_and(|body| body.len() < BODY_LIMIT));
+        assert!(error.detail().is_none() && error.response().is_none());
+        assert_eq!(error.to_string(), "another api answered 409");
     }
 
     #[test]
