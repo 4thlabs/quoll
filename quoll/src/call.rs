@@ -89,7 +89,8 @@ use crate::{Problem, Response, Result};
 ///
 /// Any future of a `quoll::Result<T, E>` is a `Call<T, E>` too, so that a fake of a group's trait returns an
 /// `async move` block: its `.timeout` does nothing, and its `.response()` gives a 200 with no headers, or the error
-/// with the status it has, as an answer of that status, and an error with none, a call that got no answer, as it is. A
+/// with the status it has, as an answer of that status with the error's [headers](crate::Error::headers), and an error
+/// with none, a call that got no answer, as it is. A
 /// 200 even for a route that the server answers 201 or 202: a fake has no contract's status to read. A fake of an api
 /// with `#[error(E)]` builds the error of an answer with [`quoll::Error::answered`](crate::Error::answered), and
 /// one of a status alone with [`into_shape`](crate::Error::into_shape). The `E` of such a future is the one its
@@ -163,10 +164,13 @@ where
             return Err(error);
         };
 
+        // The headers of the error, as the real client's answer has them.
+        let headers = error.headers().clone();
+
         Ok(Response::from_parts(
             status,
             http::Version::HTTP_11,
-            http::HeaderMap::new(),
+            headers,
             Err(error),
         ))
     }
@@ -208,6 +212,22 @@ mod tests {
             response.into_value().expect_err("its error").status(),
             Some(StatusCode::NOT_FOUND)
         );
+    }
+
+    #[tokio::test]
+    async fn a_future_answers_an_error_with_its_headers() {
+        let error = Error::unauthorized("expired")
+            .retry_after(Duration::from_secs(30))
+            .with_header(http::header::WWW_AUTHENTICATE, "Bearer");
+
+        let response = async { Err::<(), _>(error) }
+            .response()
+            .await
+            .expect("an answer");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers()[http::header::RETRY_AFTER], "30");
+        assert_eq!(response.headers()[http::header::WWW_AUTHENTICATE], "Bearer");
     }
 
     #[tokio::test]

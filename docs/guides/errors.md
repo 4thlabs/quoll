@@ -406,8 +406,8 @@ async fn main() -> quoll::Result<()> {
 ```
 
 A fake of such an api returns an `impl Call<T, E>`. It builds the error of an answer with
-`quoll::Error::answered(status, e)`. That error has its status, its detail, a `response()` with no headers, and no
-body. An error of a status alone, with no detail, is `quoll::Error::not_found(..).into_shape()`, and the same goes for
+`quoll::Error::answered(status, e)`. That error has its status, its detail, a `response()` with no headers until
+`with_header` gives some, and no body. An error of a status alone, with no detail, is `quoll::Error::not_found(..).into_shape()`, and the same goes for
 the other constructors.
 
 ```rust
