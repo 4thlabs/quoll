@@ -24,7 +24,9 @@
 //!   size, `&OsStr`.
 //! - `tests/compile_fail_client/`, built with the feature `client`: what only the client's checks, a fake of the wrong
 //!   signature, a result that is not `Deserialize`, `build` or `key` on the wrong type, a call not awaited, a borrowed
-//!   argument given by value, and a call that outlives what it borrows; and the client of a contract with
+//!   argument given by value, and a call that outlives what it borrows; `key` of a scheme that is not a
+//!   `ClientScheme`, which rustc reports twice, on the scheme and on the call, as `key` returns an `impl Middleware`
+//!   of the scheme: only a boxed return would make it one error; and the client of a contract with
 //!   `#[client(none)]` built, in `client_none_has_no_client`, or its trait faked, in `client_none_has_no_fake`, each
 //!   rustc's own error, as the contract writes none.
 //! - `tests/compile_fail_neither/`, built with neither feature: what each side would repeat a message of its own for.

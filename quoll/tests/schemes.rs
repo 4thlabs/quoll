@@ -1190,6 +1190,31 @@ mod served_only {
     }
 }
 
+/// A group of another block that only serves, which takes a scheme with no client side, listed by an api that only
+/// serves.
+mod served_listed {
+    pub mod counter {
+        quoll::group! {
+            #[client(none)]
+            #[auth(crate::Ticket)]
+            pub group Counter {
+                GET "/count" => count() -> String;
+            }
+        }
+    }
+
+    quoll::api! {
+        #[client(none)]
+        pub api Counters = "/counters" { counter::Counter };
+    }
+}
+
+impl served_listed::counter::CounterServer for DeskApp {
+    async fn count(&self, ticket: &String) -> Result<Response<String>> {
+        Ok(Response::new(format!("counted by {ticket}")))
+    }
+}
+
 /// The service of the api that only serves.
 struct DeskApp;
 
@@ -1228,6 +1253,17 @@ async fn a_scheme_with_no_client_side_is_served_in_an_api_that_only_serves() {
         .expect("the server answers");
     assert_eq!(challenges(&without), ["Ticket"]);
     refused(without, StatusCode::UNAUTHORIZED, "no ticket").await;
+
+    let router =
+        served_listed::Counters::router(served_listed::CountersServices { counter: DeskApp });
+    let listed = quoll::test::spawn(router).await;
+    let counted = http
+        .get(format!("{listed}/counters/count"))
+        .header("x-ticket", "t-2")
+        .send()
+        .await
+        .expect("the server answers");
+    assert_eq!(counted.text().await.expect("a body"), "\"counted by t-2\"");
 
     let document = serde_json::to_value(served_only::Tickets::openapi()).expect("a document");
     assert_eq!(
