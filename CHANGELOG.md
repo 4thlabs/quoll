@@ -17,6 +17,15 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.10.0" }
 
 ## [Unreleased]
 
+### Added
+
+- `cargo quoll dev` gives a server `env`, a table of variables set for it alone on top of its own environment, and
+  `args`, the arguments it is started with, from its entry of `[[workspace.metadata.quoll.server]]`, such as
+  `env = { HOST = "127.0.0.1", PORT = "3011" }` ([#138](https://github.com/4thlabs/quoll/issues/138)). A server
+  restarted after a change gets them again. `[workspace.metadata.quoll.web]` takes an `env` too, set for `dev` alone.
+  Both are checked when the config is read: a value that is not a string, a port written as a number included, and a
+  variable or an argument that the OS cannot set are refused with the key at fault.
+
 ## [0.10.0] - 2026-11-25
 
 ### Added

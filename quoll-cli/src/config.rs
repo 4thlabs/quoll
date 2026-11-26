@@ -4,7 +4,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use serde::Deserialize;
-use serde::de::{Deserializer, SeqAccess, Visitor};
+use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 
 use crate::cargo::Package;
@@ -42,6 +42,10 @@ pub(crate) struct Server {
     pub(crate) url: String,
     /// The `host:port` of `url`, which `cargo quoll dev` connects to, to know the server is ready.
     pub(crate) address: String,
+    /// The variables set for the server alone, on top of the environment of `cargo quoll dev`.
+    pub(crate) env: Vec<(String, String)>,
+    /// The arguments it is started with.
+    pub(crate) args: Vec<String>,
 }
 
 /// The web side: its directory and its commands.
@@ -208,13 +212,56 @@ fn read_server(key: String, raw: RawServer, packages: &[Package]) -> Result<Serv
     let url = required(&key, "url", raw.url)?;
     let address =
         address(&url).map_err(|message| ConfigError::new(format!("{key}.url"), message))?;
+    let env = env(&key, raw.env)?;
+    let args = raw.args.map(|args| args.0).unwrap_or_default();
+
+    for (index, arg) in args.iter().enumerate() {
+        if arg.contains('\0') {
+            return Err(ConfigError::new(
+                format!("{key}.args[{index}]"),
+                "holds a NUL character, which no argument can",
+            ));
+        }
+    }
 
     Ok(Server {
         package,
         bin: bin.to_owned(),
         url,
         address,
+        env,
+        args,
     })
+}
+
+/// The variables of `key`'s `env`, whose names and values the OS can set.
+fn env(key: &str, raw: Option<Env>) -> Result<Vec<(String, String)>, ConfigError> {
+    let env = raw.map(|env| env.0).unwrap_or_default();
+
+    for (name, value) in &env {
+        if name.is_empty() {
+            return Err(ConfigError::new(
+                format!("{key}.env"),
+                "a variable has an empty name",
+            ));
+        }
+
+        if name.contains(['=', '\0']) {
+            return Err(ConfigError::new(
+                format!("{key}.env.{name}"),
+                format!("`{name}` is no variable's name: a name holds no `=` and no NUL character"),
+            ));
+        }
+
+        if value.contains('\0') {
+            return Err(ConfigError::new(
+                format!("{key}.env.{name}"),
+                "holds a NUL character, which no variable can",
+            ));
+        }
+    }
+
+    Ok(env)
 }
 
 /// The `host:port` an `http` or `https` url connects to, its port the scheme's when it names none.
@@ -260,9 +307,18 @@ fn read_web(key: String, raw: RawWeb) -> Result<Web, ConfigError> {
         ));
     }
 
+    let env = env(&key, raw.env)?;
+
+    if !env.is_empty() && raw.dev.is_none() {
+        return Err(ConfigError::new(
+            format!("{key}.env"),
+            "set for `dev`, which the web side does not have",
+        ));
+    }
+
     let dev = raw
         .dev
-        .map(|words| command(format!("{key}.dev"), words))
+        .map(|words| command(format!("{key}.dev"), words).map(|dev| dev.with_env(env)))
         .transpose()?;
     let build = raw
         .build
@@ -325,6 +381,8 @@ struct RawApi {
 struct RawServer {
     package: Option<String>,
     url: Option<String>,
+    env: Option<Env>,
+    args: Option<Args>,
 }
 
 #[derive(Deserialize)]
@@ -332,6 +390,7 @@ struct RawServer {
 struct RawWeb {
     dir: Option<String>,
     dev: Option<Words>,
+    env: Option<Env>,
     build: Option<Words>,
 }
 
@@ -361,6 +420,91 @@ impl<'de> Deserialize<'de> for Words {
         }
 
         deserializer.deserialize_seq(WordsVisitor)
+    }
+}
+
+/// The arguments of a server, as they are written: a list of strings, whose error says so.
+struct Args(Vec<String>);
+
+impl<'de> Deserialize<'de> for Args {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ArgsVisitor;
+
+        impl<'de> Visitor<'de> for ArgsVisitor {
+            type Value = Args;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(r#"a list of arguments such as ["--port", "3011"]"#)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Args, A::Error> {
+                let mut args = Vec::new();
+
+                while let Some(arg) = seq.next_element::<Text>()? {
+                    args.push(arg.0);
+                }
+
+                Ok(Args(args))
+            }
+        }
+
+        deserializer.deserialize_seq(ArgsVisitor)
+    }
+}
+
+/// The variables of an `env`, as they are written: a table of strings, whose error says so, in the order they come.
+struct Env(Vec<(String, String)>);
+
+impl<'de> Deserialize<'de> for Env {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct EnvVisitor;
+
+        impl<'de> Visitor<'de> for EnvVisitor {
+            type Value = Env;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(r#"a table of variables such as { PORT = "3011" }"#)
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Env, A::Error> {
+                let mut env = Vec::new();
+
+                while let Some((name, value)) = map.next_entry::<String, Text>()? {
+                    env.push((name, value.0));
+                }
+
+                Ok(Env(env))
+            }
+        }
+
+        deserializer.deserialize_map(EnvVisitor)
+    }
+}
+
+/// A string of an `env` or of `args`, whose error says to quote a number, as TOML would read `PORT = 3011`.
+struct Text(String);
+
+impl<'de> Deserialize<'de> for Text {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct TextVisitor;
+
+        impl Visitor<'_> for TextVisitor {
+            type Value = Text;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(r#"a string, a number written in quotes such as "3011""#)
+            }
+
+            fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<Text, E> {
+                Ok(Text(text.to_owned()))
+            }
+
+            fn visit_string<E: serde::de::Error>(self, text: String) -> Result<Text, E> {
+                Ok(Text(text))
+            }
+        }
+
+        deserializer.deserialize_string(TextVisitor)
     }
 }
 
@@ -519,6 +663,11 @@ mod tests {
         assert_eq!(
             error(json!({ "apis": [] })),
             "workspace.metadata.quoll.apis: unknown field `apis`, expected one of `api`, `server`, `web`"
+        );
+        assert_eq!(
+            error(with_server(json!({ "environment": {} }))),
+            "workspace.metadata.quoll.server[0].environment: unknown field `environment`, expected one of `package`, \
+             `url`, `env`, `args`"
         );
 
         let mut misspelt = api();
@@ -706,6 +855,131 @@ mod tests {
         assert_eq!(
             error,
             "workspace.metadata.quoll.server[0].package: `notes-models` has no binary"
+        );
+    }
+
+    /// The config of one server, with the keys of `extra`.
+    fn with_server(extra: Value) -> Value {
+        let mut server = json!({ "package": "notes-server", "url": "http://127.0.0.1:3011" });
+
+        server
+            .as_object_mut()
+            .expect("a server is a table")
+            .extend(extra.as_object().expect("the keys are a table").clone());
+
+        json!({ "server": [server] })
+    }
+
+    #[test]
+    fn a_server_has_its_env_and_args() {
+        let config = read(with_server(json!({
+            "env": { "HOST": "127.0.0.1", "PORT": "3011" },
+            "args": ["--log", "debug"],
+        })))
+        .expect("the config is read");
+
+        let [server] = config.servers.as_slice() else {
+            panic!("one server: {:?}", config.servers);
+        };
+        assert_eq!(
+            server.env,
+            [
+                ("HOST".to_owned(), "127.0.0.1".to_owned()),
+                ("PORT".to_owned(), "3011".to_owned())
+            ]
+        );
+        assert_eq!(server.args, ["--log", "debug"]);
+
+        let config = read(with_server(json!({}))).expect("the config is read");
+
+        assert!(config.servers[0].env.is_empty());
+        assert!(config.servers[0].args.is_empty());
+    }
+
+    #[test]
+    fn a_server_s_env_of_the_wrong_type_is_named() {
+        assert_eq!(
+            error(with_server(json!({ "env": ["PORT=3011"] }))),
+            r#"workspace.metadata.quoll.server[0].env: invalid type: sequence, expected a table of variables such as { PORT = "3011" }"#
+        );
+        assert_eq!(
+            error(with_server(json!({ "env": { "PORT": 3011 } }))),
+            r#"workspace.metadata.quoll.server[0].env.PORT: invalid type: integer `3011`, expected a string, a number written in quotes such as "3011""#
+        );
+    }
+
+    #[test]
+    fn a_server_s_args_of_the_wrong_type_are_named() {
+        assert_eq!(
+            error(with_server(json!({ "args": "--log debug" }))),
+            r#"workspace.metadata.quoll.server[0].args: invalid type: string "--log debug", expected a list of arguments such as ["--port", "3011"]"#
+        );
+        assert_eq!(
+            error(with_server(json!({ "args": ["--port", 3011] }))),
+            r#"workspace.metadata.quoll.server[0].args[1]: invalid type: integer `3011`, expected a string, a number written in quotes such as "3011""#
+        );
+    }
+
+    #[test]
+    fn a_variable_or_an_argument_the_os_cannot_set_is_refused() {
+        assert_eq!(
+            error(with_server(json!({ "env": { "": "1" } }))),
+            "workspace.metadata.quoll.server[0].env: a variable has an empty name"
+        );
+        assert_eq!(
+            error(with_server(json!({ "env": { "A=B": "1" } }))),
+            "workspace.metadata.quoll.server[0].env.A=B: `A=B` is no variable's name: a name holds no `=` and no NUL \
+             character"
+        );
+        assert_eq!(
+            error(with_server(json!({ "env": { "PORT": "30\u{0}11" } }))),
+            "workspace.metadata.quoll.server[0].env.PORT: holds a NUL character, which no variable can"
+        );
+        assert_eq!(
+            error(with_server(json!({ "args": ["--port", "30\u{0}11"] }))),
+            "workspace.metadata.quoll.server[0].args[1]: holds a NUL character, which no argument can"
+        );
+    }
+
+    #[test]
+    fn the_web_side_s_env_is_set_for_dev() {
+        let config = read(json!({
+            "web": {
+                "dir": "web",
+                "dev": ["npm", "run", "dev"],
+                "env": { "VITE_PORT": "5174" },
+                "build": ["npm", "run", "build"],
+            },
+        }))
+        .expect("the config is read");
+        let web = config.web.expect("the web side is read");
+
+        assert_eq!(
+            web.dev,
+            Some(
+                Command::new(
+                    vec!["npm".into(), "run".into(), "dev".into()],
+                    "workspace.metadata.quoll.web.dev".into()
+                )
+                .with_env(vec![("VITE_PORT".into(), "5174".into())])
+            )
+        );
+        assert_eq!(
+            web.build,
+            Some(Command::new(
+                vec!["npm".into(), "run".into(), "build".into()],
+                "workspace.metadata.quoll.web.build".into()
+            )),
+            "build runs in the environment of cargo quoll"
+        );
+
+        assert_eq!(
+            error(json!({ "web": { "dir": "web", "dev": ["npm"], "env": { "PORT": 5174 } } })),
+            r#"workspace.metadata.quoll.web.env.PORT: invalid type: integer `5174`, expected a string, a number written in quotes such as "3011""#
+        );
+        assert_eq!(
+            error(json!({ "web": { "dir": "web", "build": ["npm"], "env": { "PORT": "5174" } } })),
+            "workspace.metadata.quoll.web.env: set for `dev`, which the web side does not have"
         );
     }
 

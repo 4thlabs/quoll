@@ -2,7 +2,7 @@
 # The REST contract
 
 > [!NOTE]
-> **Validated** by the maintainer on 2026-11-25.
+> **Validated** by the maintainer on 2026-11-26.
 
 A modern, type-safe REST toolkit for Rust: from a client for any API to the server behind your frontend. A REST contract written once in Rust, from which a macro generates a server on axum, a client on reqwest and an OpenAPI 3.1 document; the document feeds whatever generator of OpenAPI the frontend chooses, orval, openapi-typescript, hey-api, Kiota..., which `cargo quoll` runs. No UI. It takes the REST spec of the C++ Quoll, now [quoll-http](https://github.com/4thlabs/quoll-http), as its model.
 
@@ -120,6 +120,9 @@ Decided by the maintainer:
   - taken with them as implementation: the stream gives `None` again once it has ended and is a `FusedStream`, so that a `select!` loop reads it; a wait is counted from when its `Reconnecting` is given, not from the next read; an item, or one skipped, read once `steady` has passed holds the connection, as a reader always behind finds the stream ready each time, while an end read late does not; a zero `first` calls again at once, then the bound doubles from 1 ms, a `longest` below 1 ms is raised to it, and a `steady` past what the clock counts, `Duration::MAX`, never holds a connection;
   - `Last-Event-ID` and `retry:` come later, in an issue of their own that starts with the server;
   - the tests of `follow` with a real server, under paused time, give the client no deadline and check the waits only where no connection is open, the rules of time being checked on a fake.
+- **2026-11-26**:
+  - a server of `cargo quoll dev` takes `env`, a table of variables set for it alone on top of the environment of `cargo quoll dev`, and `args`, the arguments it is started with, in its entry of `[[workspace.metadata.quoll.server]]` ([#138](https://github.com/4thlabs/quoll/issues/138)): a server that reads its address from its environment, `HOST` and `PORT` as an image sets them, got none from the config, which already named its `url`, and its docs had to write `HOST=127.0.0.1 PORT=3011 cargo quoll dev` each time; `web.dev`, whose words already hold its arguments, takes the `env` of the web side, set for `dev` alone, not for `build`; both are kept across a restart of the server after a rebuild;
+  - taken with it as implementation: a value of `env` or `args` is a string, a port written as a number refused with a message saying to quote it; a variable with an empty name or a name holding `=`, and a value or an argument holding a NUL, which no OS can set, are refused when the config is read, each error naming its key; a web side with an `env` and no `dev` is refused; the dynamic libraries of a server are found first where `cargo run` gives them, then where its `env` says, or `cargo quoll dev`'s own without it; a `PATH` in the `env` of `dev` is the one its program is searched on, as the OS would.
 
 ## Stack and crates
 
@@ -682,7 +685,7 @@ dev = ["npm", "run", "dev"]           # run by `cargo quoll dev`, beside the ser
 build = ["npm", "run", "build"]       # run by `cargo quoll build`, after `gen`
 ```
 
-- **The config**: one `api` per contract, with the package, its binary, the file it writes and its `after`, a list of commands; one `server` per server, with the package and the url it answers on; one `web`, with its directory and its two commands. Paths are relative to the workspace's root. A config that cannot be read is an error that names the key at fault.
+- **The config**: one `api` per contract, with the package, its binary, the file it writes and its `after`, a list of commands; one `server` per server, with the package, the url it answers on, and optionally its `env`, a table of variables set for it alone on top of the environment of `cargo quoll dev`, and its `args`, a list of strings it is started with, both kept when it restarts; one `web`, with its directory, its two commands, and optionally an `env` set for `dev` alone. Paths are relative to the workspace's root. A config that cannot be read is an error that names the key at fault.
 - **A command** is a list of words, run with no shell, its program found on the `PATH` as the OS does: `npm` is `npm.cmd` on Windows, resolved, not written per OS. `after` runs in the directory of `output`, `dev` and `build` in `web.dir`.
 - **`cargo quoll gen`** builds and runs each api's binary, writes its `output` when its content changed, a file that did not change being left as it is, then runs its `after` commands in order, whether the document changed or not, so that a checkout whose document is committed gets its TypeScript too. It fails when cargo or a command fails, with its output.
 - **`cargo quoll gen --check`** writes nothing, and fails when a document on disk is not the one the contract prints: the check of a project that commits its document.

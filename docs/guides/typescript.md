@@ -52,13 +52,14 @@ output = "web/openapi.json"
 after = [["npx", "--no", "orval"]]
 
 # Run by `cargo quoll dev`, ready once its url accepts a connection. The page's vite.config.ts proxies `/api` to this
-# url: the two change together.
+# url: the two change together. A server that reads its address from its environment or its arguments is given them
+# here, for it alone, as `env = { PORT = "8080" }` and `args = ["--port", "8080"]`. This one always listens on 8080.
 [[workspace.metadata.quoll.server]]
 package = "notes-server"
 url = "http://127.0.0.1:8080"
 
 # The page: `dev` runs beside the server in `cargo quoll dev`, `build` after the document in `cargo quoll build`, both
-# in `dir`.
+# in `dir`. An `env` table here is set for `dev` alone.
 [workspace.metadata.quoll.web]
 dir = "web"
 dev = ["npm", "run", "dev"]
@@ -71,23 +72,33 @@ build = ["npm", "run", "build"]
   - the `output` it is written to, from the workspace's root;
   - `after`, the commands run after it, in order, in the directory of `output`. A command that fails stops those
     after it.
-- `server`, one per server: its `package`, and the `url` it answers on. Its binary is the one that `cargo run` would
-  run: the package's only binary, or its `default-run`.
+- `server`, one per server:
+  - its `package`;
+  - the `url` it answers on;
+  - `env`, a table of variables set for this server alone, on top of the environment of `cargo quoll dev`;
+  - `args`, the list of arguments it is started with.
+
+  Its binary is the one that `cargo run` would run: the package's only binary, or its `default-run`. `env` and `args`
+  are optional, and a server restarted after a change gets them again. A server that reads its address from its
+  environment gets it with `env = { HOST = "127.0.0.1", PORT = "3011" }`, beside `url = "http://127.0.0.1:3011"`.
 - `web`, once:
   - its `dir`, from the workspace's root;
   - `dev`, which `cargo quoll dev` runs beside the servers;
+  - `env`, a table of variables set for `dev` alone;
   - `build`, which `cargo quoll build` runs after the documents.
 
   Both commands run in `dir`.
 
 A command is a list of words, run with no shell. Its program is found on the `PATH` the way the OS finds it, so that
-`npm` is `npm.cmd` on Windows. A command that needs a shell, such as a pipe or a `&&`, is a script of the page's
-`package.json`, run as `["npm", "run", "<script>"]`. `npx --no` runs the generator that `npm ci` installs, at the
-version that `package-lock.json` pins. It fails rather than download one when the generator is missing.
+`npm` is `npm.cmd` on Windows. A `PATH` in the `env` of `dev` is the one searched. A command that needs a shell, such
+as a pipe or a `&&`, is a script of the page's `package.json`, run as `["npm", "run", "<script>"]`. `npx --no` runs
+the generator that `npm ci` installs, at the version that `package-lock.json` pins. It fails rather than download one
+when the generator is missing.
 
 A config that cannot be read is an error that names the key at fault:
-`workspace.metadata.quoll.api[0].output: missing`. Each command that fails shows its output, the same way a cargo
-build does.
+`workspace.metadata.quoll.api[0].output: missing`. A value of `env` or `args` is a string, a port too:
+``workspace.metadata.quoll.server[0].env.PORT: invalid type: integer `3011`, expected a string, a number written in
+quotes such as "3011"``. Each command that fails shows its output, the same way a cargo build does.
 
 ## `cargo quoll gen`
 

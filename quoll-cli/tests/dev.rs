@@ -474,6 +474,54 @@ fn a_change_of_the_contract_writes_the_document_then_restarts_the_server() {
 }
 
 #[test]
+fn a_server_runs_with_its_env_and_args_after_a_restart_too() {
+    let fixture = Fixture::new("");
+    let server = free_address();
+
+    // Each argument is passed as it is written, with no shell: one with a space, and an empty one.
+    configure(&fixture, server, |config| {
+        config.replace(
+            "url = ",
+            &format!(
+                "env = {{ FIXTURE_SERVER_ADDRESS = \"{server}\", FIXTURE_SERVER_SAY = \"said\" }}\n\
+                 args = [\"--two words\", \"\"]\n\
+                 url = "
+            ),
+        )
+    });
+    // The server's `env` is set on top of the environment of `cargo quoll dev`, whose own address is elsewhere.
+    let mut dev = Dev::spawn(
+        &fixture,
+        server,
+        &[("FIXTURE_SERVER_ADDRESS", &free_address().to_string())],
+    );
+
+    dev.ready();
+    assert_eq!(dev.get(), format!("server 1 {DOCUMENT} --two words  said"));
+
+    let main = fixture.path("server/src/main.rs");
+    let source = fs::read_to_string(&main).expect("the server is read");
+
+    fs::write(&main, with_version(&source, "server 2")).expect("the server is written");
+    dev.ready();
+
+    assert_eq!(dev.get(), format!("server 2 {DOCUMENT} --two words  said"));
+}
+
+#[test]
+fn web_dev_runs_with_the_web_side_s_env() {
+    let fixture = Fixture::new("");
+    let mut dev = Dev::start_with(&fixture, free_address(), |config| {
+        config.replace(
+            "dev = [\"web-dev\"]",
+            "dev = [\"web-dev\"]\nenv = { WEB_DEV_SAY = \"said\" }",
+        )
+    });
+
+    assert_eq!(dev.stderr_line("web-dev: "), "says said");
+}
+
+#[test]
 fn a_server_that_does_not_compile_leaves_the_last_one_running() {
     let fixture = Fixture::new("");
     let mut dev = Dev::start(&fixture);
