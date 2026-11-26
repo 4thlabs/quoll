@@ -26,6 +26,14 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.10.0" }
   Both are checked when the config is read: a value that is not a string, a port written as a number included, and a
   variable or an argument that the OS cannot set are refused with the key at fault.
 
+### Fixed
+
+- `.page(dir)` redirected every directory of the page asked without its final `/`, Vite's `assets/` among them, to a
+  path with no file either. Only a directory that holds an `index.html`, `/docs`, is redirected now; any other is no
+  file, with or without its final `/`: the page's `index.html` for a browser, a problem 404 otherwise. An
+  application's layer that removes a final `/` in front of the page no longer loops on such a directory
+  ([#137](https://github.com/4thlabs/quoll/issues/137)).
+
 ## [0.10.0] - 2026-11-25
 
 ### Added

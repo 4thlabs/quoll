@@ -431,8 +431,11 @@ The files are served by tower-http's `ServeDir`, as in axum's own example. quoll
 What the server answers, for a path outside the api's prefix:
 
 - A file of that path in the directory is sent, with the content type of its extension. `/` sends `index.html`.
-- A directory sends its own `index.html`, as a page of a multi-page build does. `/docs` without its final `/` is a
-  307 to `/docs/`, with the same query.
+- A directory that holds an `index.html` sends it, as a page of a multi-page build does. `/docs` without its final `/`
+  is a 307 to `/docs/`, with the same query.
+- A directory that holds no `index.html`, as Vite's `assets/`, is no file, with or without its final `/`, and is never
+  redirected: it is answered as the next two points say. An application's layer that removes a final `/` only has to
+  leave alone the directories that hold an `index.html`.
 - Otherwise, a `GET` or a `HEAD` whose `Accept` holds `text/html` gets `index.html`, with `Vary: Accept`. A browser
   sends that `Accept` when it loads a page, so the page's router shows the path: `/notes/3`, or `/users/jane.doe`
   after F5. A script, a style, an image or a `fetch` does not send it: `*/*` alone does not count.

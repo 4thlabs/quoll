@@ -185,34 +185,39 @@ impl Page {
             Err(refused) => return Error::not_found(refused.detail()).into_response(),
         };
         let relative = segments.join("/");
-        let slashed = path.ends_with('/');
 
         let dir = Arc::clone(&self.dir);
         let manifest = Arc::clone(&self.manifest);
         let checked = {
             let relative = relative.clone();
 
-            tokio::task::spawn_blocking(move || -> Result<Hashed, Refusal> {
-                filter(&dir, &relative, slashed)?;
-
-                Ok(dir
+            tokio::task::spawn_blocking(move || -> Result<(Found, Hashed), Refusal> {
+                let found = filter(&dir, &relative)?;
+                let hashed = dir
                     .canonicalize()
-                    .map_or(Hashed::Named, |root| manifest.hashed(&root)))
+                    .map_or(Hashed::Named, |root| manifest.hashed(&root));
+
+                Ok((found, hashed))
             })
             .await
         };
-        let hashed = match checked {
-            Ok(Ok(hashed)) => hashed,
+        let (found, hashed) = match checked {
+            Ok(Ok(checked)) => checked,
             Ok(Err(refusal)) => return refusal.into_response(),
             Err(error) => return Error::internal(error).into_response(),
         };
 
-        // `ServeDir` is ready when its fallback is, which always is.
-        let _ = poll_fn(|cx| self.files.poll_ready(cx)).await;
+        let served = match found {
+            Found::NoFile => fall_back(Arc::clone(&self.dir), request).await,
+            Found::Served => {
+                // `ServeDir` is ready when its fallback is, which always is.
+                let _ = poll_fn(|cx| self.files.poll_ready(cx)).await;
 
-        let served = match self.files.call(request).await {
-            Ok(served) => served.map(Body::new),
-            Err(never) => match never {},
+                match self.files.call(request).await {
+                    Ok(served) => served.map(Body::new),
+                    Err(never) => match never {},
+                }
+            }
         };
 
         dressed(served, &relative, &hashed)
@@ -312,10 +317,10 @@ async fn fall_back(dir: Arc<Path>, request: Request) -> Response {
     let checked = {
         let dir = Arc::clone(&dir);
 
-        tokio::task::spawn_blocking(move || filter(&dir, "", true)).await
+        tokio::task::spawn_blocking(move || filter(&dir, "")).await
     };
     match checked {
-        Ok(Ok(())) => {}
+        Ok(Ok(_)) => {}
         Ok(Err(refusal)) => return refusal.into_response(),
         Err(error) => return Error::internal(error).into_response(),
     }
@@ -417,26 +422,37 @@ impl IntoResponse for Refusal {
     }
 }
 
-/// The filter of a request of the path of `relative`, the decoded segments joined by `/`, under `dir`, `slashed` when
-/// the request's path ends with a `/`. It finds the file `ServeDir` will open, as `ServeDir` does, then checks it and
-/// each compressed copy of it that `ServeDir` may send by their real paths, which must be under `dir`'s and not
-/// hidden, and checks that the time of each that is a file is one an HTTP date holds. Nothing is opened. A file that
-/// is not there, or that the server cannot read, is left to `ServeDir`, which falls back.
+/// What the filter leaves to `ServeDir`.
+#[derive(Debug, PartialEq, Eq)]
+enum Found {
+    /// A file, a directory that holds an `index.html`, or no file there: `ServeDir` opens it, redirects it or falls
+    /// back.
+    Served,
+    /// A directory that holds no `index.html`, which is no file whatever its final `/`.
+    NoFile,
+}
+
+/// The filter of a request of the path of `relative`, the decoded segments joined by `/`, under `dir`. It finds the
+/// file `ServeDir` will open, as `ServeDir` does, then checks it and each compressed copy of it that `ServeDir` may
+/// send by their real paths, which must be under `dir`'s and not hidden, and checks that the time of each that is a
+/// file is one an HTTP date holds. Nothing is opened. A file that is not there, or that the server cannot read, is
+/// left to `ServeDir`, which falls back.
 ///
-/// As `ServeDir` does, a directory opens its `index.html` when the path ends with a `/`, and is redirected otherwise;
-/// any other path opens the file of its segments, whatever its final `/`.
-fn filter(dir: &Path, relative: &str, slashed: bool) -> Result<(), Refusal> {
+/// A directory stands for its `index.html`, which `ServeDir` opens when the path ends with a `/` and redirects to
+/// otherwise; a directory that holds none, Vite's `assets/`, is no file, as `ServeDir` would redirect it to a path that
+/// has no file either. Any other path opens the file of its segments, whatever its final `/`.
+fn filter(dir: &Path, relative: &str) -> Result<Found, Refusal> {
     let Ok(root) = dir.canonicalize() else {
-        return Ok(());
+        return Ok(Found::Served);
     };
     let mut target = root.join(relative);
 
     if std::fs::metadata(&target).is_ok_and(|metadata| metadata.is_dir()) {
-        if !slashed {
-            return Ok(());
-        }
-
         target.push(INDEX);
+
+        if !std::fs::metadata(&target).is_ok_and(|metadata| metadata.is_file()) {
+            return Ok(Found::NoFile);
+        }
     }
 
     let copies = COPIES.map(|extension| {
@@ -465,7 +481,7 @@ fn filter(dir: &Path, relative: &str, slashed: bool) -> Result<(), Refusal> {
         }
     }
 
-    Ok(())
+    Ok(Found::Served)
 }
 
 /// Whether `real`, a real path, is a file the page serves under `root`, its real path: under it, and with no hidden
@@ -905,15 +921,26 @@ mod tests {
             .expect("the link is made");
 
         assert_eq!(
-            filter(&dist, "app.js", false),
+            filter(&dist, "app.js"),
             Err(Refusal::Refused(Refused::Outside))
         );
-        // `ServeDir` opens a file whatever its final `/`.
-        assert_eq!(
-            filter(&dist, "app.js", true),
-            Err(Refusal::Refused(Refused::Outside))
-        );
-        assert_eq!(filter(&dist, "", true), Ok(()));
-        assert_eq!(filter(&dist, "gone.js", false), Ok(()));
+        assert_eq!(filter(&dist, ""), Ok(Found::Served));
+        assert_eq!(filter(&dist, "gone.js"), Ok(Found::Served));
+    }
+
+    #[test]
+    fn a_directory_is_no_file_unless_it_holds_an_index_html() {
+        let dist = tempfile::tempdir().expect("a temporary directory is made");
+        let dist = dist.path();
+
+        std::fs::create_dir_all(dist.join("assets")).expect("the directory is made");
+        std::fs::create_dir_all(dist.join("docs")).expect("the directory is made");
+        std::fs::create_dir_all(dist.join("odd/index.html")).expect("the directory is made");
+        std::fs::write(dist.join("docs/index.html"), "docs").expect("the file is written");
+
+        assert_eq!(filter(dist, "docs"), Ok(Found::Served));
+        assert_eq!(filter(dist, "assets"), Ok(Found::NoFile));
+        // An `index.html` that is a directory is no page either.
+        assert_eq!(filter(dist, "odd"), Ok(Found::NoFile));
     }
 }
