@@ -145,7 +145,7 @@ with both features to its `Cargo.toml`:
 
 ```toml
 [dependencies]
-quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.10.0", features = ["server", "client"] }
+quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.11.0", features = ["server", "client"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

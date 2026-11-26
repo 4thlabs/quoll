@@ -12,10 +12,12 @@ quoll is used from git, at a version's tag:
 
 ```toml
 [dependencies]
-quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.10.0" }
+quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.11.0" }
 ```
 
 ## [Unreleased]
+
+## [0.11.0] - 2026-11-26
 
 ### Added
 
@@ -35,7 +37,6 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.10.0" }
   `Content-Type`, `Content-Length`, `Content-Encoding` and `Content-Range`, are refused: the error is answered
   without them, and the log says which at `WARN`. The OpenAPI document does not change.
 - `server::cors` exposes `Retry-After` and `Allow` too, so that a page of another origin reads them.
-
 - A handler gives its problem the RFC 9457 `type` and extension members of its own, so that a client tells two errors
   of one status apart without reading the `detail` ([#140](https://github.com/4thlabs/quoll/issues/140)):
   `Error::new(StatusCode::CONFLICT, "alpha is running").with_type("/problems/app-running").with_member("app", "alpha")`.
@@ -220,7 +221,8 @@ keeps a frontend in sync with it. It needs Rust 1.91 or later.
 - **Serving the page**: `server::builder().page(dir)` serves a built page beside the api, on one origin. A page's
   router gets `index.html` for its paths, and the files Vite names by their hash are cached for a year.
 
-[Unreleased]: https://github.com/4thlabs/quoll/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/4thlabs/quoll/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/4thlabs/quoll/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/4thlabs/quoll/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/4thlabs/quoll/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/4thlabs/quoll/compare/v0.9.0...v0.9.1
