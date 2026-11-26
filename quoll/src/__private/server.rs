@@ -1107,54 +1107,24 @@ fn answer_body(content_type: HeaderValue, body: Vec<u8>) -> Response {
     (StatusCode::OK, content_type, body).into_response()
 }
 
-/// What the server answers for this error: the status and, when it is to be sent, the detail; nothing is logged.
-fn answered(error: &Error) -> (StatusCode, Option<&str>) {
-    match &error.0.repr {
-        Repr::Problem { status, detail }
-            if status.is_client_error() || status.is_server_error() =>
-        {
-            (*status, Some(detail))
-        }
-        Repr::Problem { .. } | Repr::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, None),
-        Repr::Upstream { .. } => (StatusCode::BAD_GATEWAY, None),
-        Repr::Failed { kind, .. } => (failed_status(*kind), None),
-    }
-}
-
-/// What a handler answers for a call of its client that got no answer to read: 500 for the handler's own mistake, a
-/// URL that is not one, and 502 for the other API's.
-fn failed_status(kind: crate::ErrorKind) -> StatusCode {
-    match kind {
-        crate::ErrorKind::Invalid => StatusCode::INTERNAL_SERVER_ERROR,
-        _ => StatusCode::BAD_GATEWAY,
-    }
-}
-
-/// The JSON of the RFC 9457 problem the server answers for this error, with its status; nothing is logged.
+/// The JSON of the RFC 9457 problem the server answers for this error, with its status, its `type` and its
+/// extension members when it sends its detail; nothing is logged.
 fn problem_json(error: &Error) -> (StatusCode, Vec<u8>) {
-    let (status, detail) = answered(error);
-    let problem = Problem {
-        kind: "about:blank",
-        title: status.canonical_reason(),
-        status: status.as_u16(),
-        detail,
-    };
-    let body = serde_json::to_vec(&problem)
-        .expect("a problem holds strings and a number, which JSON always writes");
+    let problem = error.answer();
 
-    (status, body)
+    (problem.status, problem.to_json())
 }
 
 /// What the server answers for this error: the status and, when it is to be sent, the detail. Logs what is not
 /// sent.
 fn answer(error: &Error) -> (StatusCode, Option<&str>) {
     match &error.0.repr {
-        Repr::Problem { status, detail }
+        Repr::Problem { status, detail, .. }
             if status.is_client_error() || status.is_server_error() =>
         {
             (*status, Some(detail))
         }
-        Repr::Problem { status, detail } => {
+        Repr::Problem { status, detail, .. } => {
             tracing::error!(%status, detail, "a handler's error has a status that is not an error, answered 500");
 
             (StatusCode::INTERNAL_SERVER_ERROR, None)
@@ -1177,7 +1147,7 @@ fn answer(error: &Error) -> (StatusCode, Option<&str>) {
             message,
             source,
         } => {
-            let answered = failed_status(*kind);
+            let answered = crate::error::problem::failed_status(*kind);
             let kind = kind.as_str();
 
             match source {
@@ -1193,18 +1163,6 @@ fn answer(error: &Error) -> (StatusCode, Option<&str>) {
             (answered, None)
         }
     }
-}
-
-/// The RFC 9457 problem the server answers for an error.
-#[derive(Serialize)]
-struct Problem<'a> {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    title: Option<&'static str>,
-    status: u16,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    detail: Option<&'a str>,
 }
 
 /// An error answered as an RFC 9457 problem, `application/problem+json`, with the headers it was given. An internal
@@ -1387,6 +1345,39 @@ mod tests {
         });
 
         (log, status, detail)
+    }
+
+    #[test]
+    fn a_refused_type_or_member_is_logged_once_at_warn_without_its_value() {
+        let (log, error) = logged_by(|| {
+            Error::new(StatusCode::CONFLICT, "alpha is running")
+                .with_type("a secret type")
+                .with_member("status", "a secret value")
+                .with_member("app", "alpha")
+        });
+        let (status, body) = problem_json(&error);
+        let problem: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
+
+        assert_eq!(log.matches(" WARN ").count(), 2, "{log}");
+        assert!(
+            log.contains("a problem's type is not a URI: write an absolute one"),
+            "{log}"
+        );
+        assert!(
+            log.contains(
+                "`status` is a member of every problem, which an extension member is not named as"
+            ),
+            "{log}"
+        );
+        assert!(
+            log.contains("a handler's error is answered without it"),
+            "{log}"
+        );
+        assert!(!log.contains("secret"), "{log}");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(problem["type"], "about:blank");
+        assert_eq!(problem["status"], 409);
+        assert_eq!(problem["app"], "alpha");
     }
 
     #[test]

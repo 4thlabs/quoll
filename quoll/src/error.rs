@@ -12,8 +12,14 @@ use crate::{Problem, Response};
 mod client;
 mod headers;
 mod kind;
+pub(crate) mod problem;
 
 pub use kind::ErrorKind;
+
+/// How much of a body the client reads when the body is not the route's result: an error's, which the error keeps,
+/// and a success's on a route with no result, read so that the connection serves again. Past it, the client reads no
+/// further.
+pub(crate) const BODY_LIMIT: usize = 64 * 1024;
 
 /// A result whose error is an [`Error`] of the shape `E`: what every route returns, `quoll::Result<Note>` of the
 /// default shape, an RFC 9457 [`Problem`], and `quoll::Result<Repository, GitHubError>` on the client of an api that
@@ -22,7 +28,9 @@ pub type Result<T, E = Problem> = std::result::Result<T, Error<E>>;
 
 /// The error of a route: what a handler answers, and what a client receives.
 ///
-/// A handler builds one with a status and a detail, which the server answers as an RFC 9457 problem in JSON:
+/// A handler builds one with a status and a detail, which the server answers as an RFC 9457 problem in JSON, with the
+/// problem's `type` and extension members when it gives them, [`with_type`](Error::with_type) and
+/// [`with_member`](Error::with_member):
 ///
 /// ```
 /// use quoll::{Error, Result};
@@ -83,8 +91,14 @@ pub(crate) struct Inner<E> {
 
 /// What an error holds, which the server reads to answer it.
 pub(crate) enum Repr<E> {
-    /// A status and a detail, both sent.
-    Problem { status: StatusCode, detail: String },
+    /// A status and a detail, both sent, with the problem's `type`, `about:blank` when it has none, and its
+    /// extension members.
+    Problem {
+        status: StatusCode,
+        detail: String,
+        kind: Option<String>,
+        members: serde_json::Map<String, serde_json::Value>,
+    },
     /// A failure of the server's own: a 500, whose source is logged, never sent.
     Internal(Box<dyn StdError + Send + Sync>),
     /// What another API answered: its status, the answer with its detail when the body is an `E`, its body as it
@@ -114,6 +128,8 @@ impl Error {
         Self::of(Repr::Problem {
             status,
             detail: detail.into(),
+            kind: None,
+            members: serde_json::Map::new(),
         })
     }
 
@@ -155,9 +171,9 @@ impl Error {
         Self::of(Repr::Internal(error))
     }
 
-    /// The error, as an error of the shape `F`: an error of a status, an internal one and a call that got no answer
-    /// as they are, and the answer of another API, whose problem is left, with its status, its body and its message.
-    /// Every error keeps its [headers](Error::headers).
+    /// The error, as an error of the shape `F`: an error of a status, with its `type` and its members, an internal one
+    /// and a call that got no answer as they are, and the answer of another API, whose problem is left, with its
+    /// status, its body and its message. Every error keeps its [headers](Error::headers).
     ///
     /// A fake of an api with `#[error(F)]` so returns an error of a status alone, which has no detail, as an answer
     /// whose body is not an `F`:
@@ -321,10 +337,6 @@ impl<E> Error<E> {
 
     /// The error with the headers of the answer the client received, `headers`: for an answer whose body is not an
     /// `E`, which has no `answer` to hold them.
-    #[cfg_attr(
-        not(feature = "client"),
-        expect(dead_code, reason = "only the client receives an answer")
-    )]
     pub(crate) fn received(mut self, headers: HeaderMap) -> Self {
         self.0.headers = headers;
         self
@@ -352,8 +364,9 @@ impl<E> Error<E> {
         }
     }
 
-    /// The error, as an error of the shape `F`: an error of a status, an internal one and a call that got no answer
-    /// as they are, and an answer, whose detail is left, with its status, its body and its message; and its headers.
+    /// The error, as an error of the shape `F`: an error of a status, with its `type` and its members, an internal one
+    /// and a call that got no answer as they are, and an answer, whose detail is left, with its status, its body and
+    /// its message; and its headers.
     pub(crate) fn cast<F>(self) -> Error<F> {
         let Inner {
             repr,
@@ -361,7 +374,17 @@ impl<E> Error<E> {
             refused,
         } = *self.0;
         let repr = match repr {
-            Repr::Problem { status, detail } => Repr::Problem { status, detail },
+            Repr::Problem {
+                status,
+                detail,
+                kind,
+                members,
+            } => Repr::Problem {
+                status,
+                detail,
+                kind,
+                members,
+            },
             Repr::Internal(source) => Repr::Internal(source),
             Repr::Upstream {
                 status,
@@ -462,7 +485,7 @@ impl<E> Error<E> {
 
     /// The body another API answered with an error status, as it came: its first 64 KiB, as the client reads no
     /// further. `None` for an error that is not such an answer, or one a fake built with
-    /// [`answered`](Error::answered).
+    /// [`answered`](Error::answered); the JSON of its problem for one of [`into_answered`](Error::into_answered).
     pub fn body(&self) -> Option<&[u8]> {
         match &self.0.repr {
             Repr::Upstream { body, .. } => body.as_deref(),
@@ -604,10 +627,18 @@ where
 impl<E: fmt::Debug> fmt::Debug for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut out = match &self.0.repr {
-            Repr::Problem { status, detail } => {
+            Repr::Problem {
+                status,
+                detail,
+                kind,
+                members,
+            } => {
                 let mut out = f.debug_struct("Error");
 
-                out.field("status", status).field("detail", detail);
+                out.field("status", status)
+                    .field("detail", detail)
+                    .field("type", kind)
+                    .field("members", &members.keys().collect::<Vec<_>>());
                 out
             }
             Repr::Internal(source) => {
@@ -660,7 +691,7 @@ impl<E: fmt::Debug> fmt::Debug for Error<E> {
 impl<E> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0.repr {
-            Repr::Problem { status, detail } => write!(f, "{detail} ({})", status.as_u16()),
+            Repr::Problem { status, detail, .. } => write!(f, "{detail} ({})", status.as_u16()),
             Repr::Internal(_) => f.write_str("internal error"),
             Repr::Upstream {
                 status, message, ..

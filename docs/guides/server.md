@@ -579,3 +579,6 @@ A handler returns a `quoll::Error`. The server answers it with its status and an
 An error carries headers, which the server sends with its status. `.retry_after(Duration::from_secs(30))` on a 429
 answers `Retry-After: 30`, and `.with_header(name, value)` adds any other, like a `WWW-Authenticate` on a 401.
 [Headers](errors.md#headers) says which headers are refused.
+
+A problem can carry its own `type` and extension members, so that a client tells two errors of one status apart:
+[A problem's type and members](errors.md#a-problems-type-and-members).
