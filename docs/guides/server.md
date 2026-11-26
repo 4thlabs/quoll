@@ -279,7 +279,9 @@ fn served(router: axum::Router) -> Result<axum::Router, server::InvalidOrigin> {
 ```
 
 `cors` returns a `server::InvalidOrigin` for what is not an origin, such as `*` or `https://example.com/app`. It
-allows no credentials: a page of another origin sends a token or a key in a header.
+allows no credentials: a page of another origin sends a token or a key in a header. Such a page reads `Location`,
+`WWW-Authenticate`, `Retry-After`, `Allow` and `X-Request-Id` in an answer, beside the headers that every page
+reads.
 
 The docs of each helper, under `quoll::server`, say in full what it does: which ids `request_id` keeps, what `trace`
 logs and at which level, and what `compression` leaves out.

@@ -15,7 +15,7 @@ use http::{HeaderName, HeaderValue, header};
 use serde::Serialize;
 use tokio::sync::watch;
 
-use super::{parts, problem_json, with_headers};
+use super::{parts, problem_json, refusal_logged, with_headers};
 use crate::__private::content_type::{JSON_LINES, media_type_value};
 use crate::__private::known::{IsByteStream, IsEvents, IsJsonLines, Items, Streamed};
 use crate::{Error, Events, JsonLines, Result};
@@ -371,12 +371,24 @@ where
     })
 }
 
-/// Logs `error`, an item of a stream that failed once its 200 was sent, with its source, and how the stream `ended`.
+/// Logs `error`, an item of a stream that failed once its 200 was sent, with its source, and how the stream `ended`;
+/// and at `WARN` the names of its headers, which go out with the head alone, and a header it was refused.
 fn logged(error: &Error, ended: &str) {
     tracing::error!(
         error = error as &dyn StdError,
         "a stream {ended} after its 200: one of its items failed"
     );
+
+    refusal_logged(error);
+
+    let names: Vec<&str> = error.headers().keys().map(HeaderName::as_str).collect();
+
+    if !names.is_empty() {
+        tracing::warn!(
+            headers = ?names,
+            "the headers of an item's error are not sent: the head of the answer went with its 200"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -392,5 +404,23 @@ mod tests {
         assert!(log.contains("cut short after its 200"), "{log}");
         assert!(log.contains("the store went away"), "{log}");
         assert!(!log.contains("answered"), "{log}");
+    }
+
+    #[test]
+    fn the_headers_of_an_items_error_are_logged_by_their_names_and_not_sent() {
+        let error = Error::new(http::StatusCode::TOO_MANY_REQUESTS, "slow down")
+            .retry_after(Duration::from_secs(3))
+            .with_header(header::CONNECTION, "close");
+
+        let (log, ()) = logged_by(|| logged(&error, "ended with an `event: problem`"));
+
+        assert_eq!(log.lines().count(), 3, "{log}");
+        assert!(log.contains("WARN"), "{log}");
+        assert!(log.contains(r#"headers=["retry-after"]"#), "{log}");
+        assert!(
+            log.contains("the header `connection` is hop-by-hop"),
+            "{log}"
+        );
+        assert!(!log.contains("close"), "{log}");
     }
 }
