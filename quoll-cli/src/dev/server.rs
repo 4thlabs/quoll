@@ -11,6 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use tokio::net::TcpStream;
 
 use crate::cargo::Workspace;
+use crate::commands;
 use crate::config;
 use crate::dev::build::{self, Built};
 use crate::dev::events::{Event, Reporter, ServerState};
@@ -334,11 +335,20 @@ impl<'a> Server<'a> {
 
         let mut command = process::Command::new(&copy);
 
-        command.current_dir(&workspace.root);
+        command
+            .args(&self.config.args)
+            .envs(self.config.env.iter().map(|(name, value)| (name, value)))
+            .current_dir(&workspace.root);
 
         // The copy is out of the target directory: its dynamic libraries are found where `cargo run` would find
-        // them.
-        let inherited = std::env::var_os(build::LIBRARY_PATH);
+        // them, before those of the server's `env` or, without it, of `cargo quoll dev`.
+        let inherited = self
+            .config
+            .env
+            .iter()
+            .find(|(name, _)| commands::is_variable(name, build::LIBRARY_PATH))
+            .map(|(_, value)| value.into())
+            .or_else(|| std::env::var_os(build::LIBRARY_PATH));
         let paths = built
             .library_paths
             .iter()

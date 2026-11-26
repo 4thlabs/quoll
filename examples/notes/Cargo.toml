@@ -27,13 +27,14 @@ output = "web/openapi.json"
 after = [["npx", "--no", "orval"]]
 
 # Run by `cargo quoll dev`, ready once its url accepts a connection. The page's vite.config.ts proxies `/api` to this
-# url: the two change together.
+# url: the two change together. A server that reads its address from its environment or its arguments is given them
+# here, for it alone, as `env = { PORT = "8080" }` and `args = ["--port", "8080"]`. This one always listens on 8080.
 [[workspace.metadata.quoll.server]]
 package = "notes-server"
 url = "http://127.0.0.1:8080"
 
 # The page: `dev` runs beside the server in `cargo quoll dev`, `build` after the document in `cargo quoll build`, both
-# in `dir`.
+# in `dir`. An `env` table here is set for `dev` alone.
 [workspace.metadata.quoll.web]
 dir = "web"
 dev = ["npm", "run", "dev"]
