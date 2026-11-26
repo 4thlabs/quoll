@@ -8,7 +8,7 @@ use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 
 use crate::cargo::Package;
-use crate::commands::Command;
+use crate::commands::{self, Command};
 
 /// The key of the config in the workspace's `Cargo.toml`, which every error names first.
 const ROOT: &str = "workspace.metadata.quoll";
@@ -234,11 +234,12 @@ fn read_server(key: String, raw: RawServer, packages: &[Package]) -> Result<Serv
     })
 }
 
-/// The variables of `key`'s `env`, whose names and values the OS can set.
+/// The variables of `key`'s `env`, whose names and values the OS can set, each name its own variable: Windows reads
+/// names in any case, `PATH` and `Path` as one.
 fn env(key: &str, raw: Option<Env>) -> Result<Vec<(String, String)>, ConfigError> {
     let env = raw.map(|env| env.0).unwrap_or_default();
 
-    for (name, value) in &env {
+    for (index, (name, value)) in env.iter().enumerate() {
         if name.is_empty() {
             return Err(ConfigError::new(
                 format!("{key}.env"),
@@ -257,6 +258,18 @@ fn env(key: &str, raw: Option<Env>) -> Result<Vec<(String, String)>, ConfigError
             return Err(ConfigError::new(
                 format!("{key}.env.{name}"),
                 "holds a NUL character, which no variable can",
+            ));
+        }
+
+        if let Some((other, _)) = env[..index]
+            .iter()
+            .find(|(other, _)| commands::is_variable(other, name))
+        {
+            return Err(ConfigError::new(
+                format!("{key}.env.{name}"),
+                format!(
+                    "`{other}` and `{name}` are one variable on Windows, which reads names in any case: keep one"
+                ),
             ));
         }
     }
@@ -452,7 +465,8 @@ impl<'de> Deserialize<'de> for Args {
     }
 }
 
-/// The variables of an `env`, as they are written: a table of strings, whose error says so, in the order they come.
+/// The variables of an `env`, as they are written: a table of strings, whose error says so. Their order is no part of
+/// the config: `cargo metadata` gives them through a map, and their names are distinct.
 struct Env(Vec<(String, String)>);
 
 impl<'de> Deserialize<'de> for Env {
@@ -939,6 +953,27 @@ mod tests {
             error(with_server(json!({ "args": ["--port", "30\u{0}11"] }))),
             "workspace.metadata.quoll.server[0].args[1]: holds a NUL character, which no argument can"
         );
+    }
+
+    #[test]
+    fn two_names_of_one_variable_are_refused_on_windows() {
+        let config = read(with_server(
+            json!({ "env": { "PATH": "/bin", "Path": "/usr/bin" } }),
+        ));
+
+        if cfg!(windows) {
+            assert_eq!(
+                chain(&config.expect_err("the config is refused")),
+                "workspace.metadata.quoll.server[0].env.Path: `PATH` and `Path` are one variable on Windows, which \
+                 reads names in any case: keep one"
+            );
+        } else {
+            assert_eq!(
+                config.expect("the config is read").servers[0].env.len(),
+                2,
+                "two variables elsewhere"
+            );
+        }
     }
 
     #[test]

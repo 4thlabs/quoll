@@ -49,7 +49,9 @@ impl Command {
     /// The process of the command, to run in `dir`, which says it runs.
     ///
     /// Its program is found on the `PATH` as the OS does, with `PATHEXT` on Windows, where `npm` is `npm.cmd`, or
-    /// from `dir` when it is written as a path. A `PATH` of its `env` is the one searched, as the OS would.
+    /// from `dir` when it is written as a path. A `PATH` of its `env` is the one searched, as the OS would; a
+    /// `PATHEXT` of its `env` is not read by the search, which takes the one of `cargo quoll`, though the child gets
+    /// it.
     pub(crate) fn process(&self, dir: &Path) -> Result<process::Command> {
         let key = &self.key;
 

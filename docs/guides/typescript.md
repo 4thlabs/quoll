@@ -90,10 +90,10 @@ build = ["npm", "run", "build"]
   Both commands run in `dir`.
 
 A command is a list of words, run with no shell. Its program is found on the `PATH` the way the OS finds it, so that
-`npm` is `npm.cmd` on Windows. A `PATH` in the `env` of `dev` is the one searched. A command that needs a shell, such
-as a pipe or a `&&`, is a script of the page's `package.json`, run as `["npm", "run", "<script>"]`. `npx --no` runs
-the generator that `npm ci` installs, at the version that `package-lock.json` pins. It fails rather than download one
-when the generator is missing.
+`npm` is `npm.cmd` on Windows. A `PATH` in the `env` of `dev` is the one searched, while the search takes `PATHEXT` from
+the environment of `cargo quoll` alone. A command that needs a shell, such as a pipe or a `&&`, is a script of the
+page's `package.json`, run as `["npm", "run", "<script>"]`. `npx --no` runs the generator that `npm ci` installs, at the
+version that `package-lock.json` pins. It fails rather than download one when the generator is missing.
 
 A config that cannot be read is an error that names the key at fault:
 `workspace.metadata.quoll.api[0].output: missing`. A value of `env` or `args` is a string, a port too:
