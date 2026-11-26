@@ -398,8 +398,9 @@ async fn trim_final_slash(
         return next.run(request).await;
     };
 
+    let decoded = percent_encoding::percent_decode_str(trimmed).decode_utf8_lossy();
     let paged = page
-        .join(trimmed.trim_start_matches('/'))
+        .join(decoded.trim_start_matches('/'))
         .join("index.html")
         .is_file();
 
@@ -421,6 +422,9 @@ async fn trim_final_slash(
 #[tokio::test]
 async fn a_layer_that_removes_the_final_slash_meets_no_loop() {
     let dir = page();
+
+    write(dir.path(), "my docs/index.html", b"<title>my docs</title>");
+
     let page: std::sync::Arc<Path> = dir.path().into();
     let router = server::builder()
         .page(dir.path())
@@ -459,7 +463,22 @@ async fn a_layer_that_removes_the_final_slash_meets_no_loop() {
         let docs = fetch(path, BROWSER).await;
 
         assert_eq!(docs.url().path(), "/docs/", "{path}");
-        assert_eq!(docs.text().await.expect("a text"), "<title>docs</title>");
+        assert_eq!(
+            docs.text().await.expect("a text"),
+            "<title>docs</title>",
+            "{path}"
+        );
+    }
+
+    for path in ["/my%20docs", "/my%20docs/"] {
+        let docs = fetch(path, BROWSER).await;
+
+        assert_eq!(docs.url().path(), "/my%20docs/", "{path}");
+        assert_eq!(
+            docs.text().await.expect("a text"),
+            "<title>my docs</title>",
+            "{path}"
+        );
     }
 }
 
@@ -732,6 +751,84 @@ async fn a_symbolic_link_out_of_the_directory_is_refused() {
 
     assert_eq!(within.status(), StatusCode::OK);
     assert_eq!(within.text().await.expect("a text"), "inside");
+}
+
+#[tokio::test]
+async fn a_directory_whose_index_html_is_a_compressed_copy_alone_is_served() {
+    let dir = page();
+
+    // A plugin of the bundler that deletes the originals once compressed.
+    write(dir.path(), "guide/index.html.br", b"brotli guide");
+
+    let url = serve(dir.path()).await;
+    let bare = get(&format!("{url}/guide")).await;
+    let slashed = client()
+        .get(format!("{url}/guide/"))
+        .header(ACCEPT_ENCODING, "br")
+        .send()
+        .await
+        .expect("the server answers");
+
+    assert_eq!(bare.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(header(&bare, LOCATION), "/guide/");
+    assert_eq!(slashed.status(), StatusCode::OK);
+    assert_eq!(header(&slashed, CONTENT_ENCODING), "br");
+    assert_eq!(slashed.text().await.expect("a body"), "brotli guide");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn with_no_index_html_a_copy_of_it_that_leads_out_is_refused() {
+    let outer = tempfile::tempdir().expect("a temporary directory is made");
+    let dir = outer.path().join("dist");
+
+    write(&dir, "assets/app.js", b"app");
+    write(outer.path(), "secret.txt", b"the secret");
+    std::os::unix::fs::symlink(outer.path().join("secret.txt"), dir.join("index.html.gz"))
+        .expect("the link is made");
+
+    let url = serve(&dir).await;
+
+    for path in ["/", "/notes/3", "/assets"] {
+        let response = client()
+            .get(format!("{url}{path}"))
+            .header(ACCEPT, BROWSER)
+            .header(ACCEPT_ENCODING, "gzip")
+            .send()
+            .await
+            .expect("the server answers");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert!(
+            !response
+                .text()
+                .await
+                .expect("a body")
+                .contains("the secret"),
+            "{path}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_directory_that_leads_out_is_refused_whatever_it_holds() {
+    let outer = tempfile::tempdir().expect("a temporary directory is made");
+    let dir = outer.path().join("dist");
+
+    write(&dir, "index.html", INDEX.as_bytes());
+    write(outer.path(), "data/photo.jpg", b"a photo");
+    std::os::unix::fs::symlink(outer.path().join("data"), dir.join("img"))
+        .expect("the link is made");
+
+    let url = serve(&dir).await;
+
+    for path in ["/img", "/img/"] {
+        let page = browse(&format!("{url}{path}")).await;
+
+        assert_eq!(page.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_ne!(page.text().await.expect("a body"), INDEX, "{path}");
+    }
 }
 
 #[cfg(unix)]

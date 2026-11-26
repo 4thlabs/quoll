@@ -454,9 +454,10 @@ What the server never sends:
 - A file outside the directory. A path with `..` answers a problem 404.
 - A symbolic link whose target is outside the directory, or hidden. Before `ServeDir` reads a file, the server finds
   the file `ServeDir` will open, as `ServeDir` does: a directory's `index.html`, or the file of the path whatever its
-  final `/`. It then checks the real path of that file and of each compressed copy of it, without opening them. A short name of Windows,
-  `GIT~1`, is refused the same way. A link swapped in between that check and the read is not seen. Only someone who
-  can write in the directory can do that.
+  final `/`. It then checks the real path of that file and of each compressed copy of it, without opening them. A
+  directory that is such a link is refused too, whatever it holds. A short name of Windows, `GIT~1`, is refused the
+  same way. A link swapped in between that check and the read is not seen. Only someone who can write in the
+  directory can do that.
 - A path with an empty segment, `//evil.example`. `ServeDir` would redirect it to `//evil.example/`, which a browser
   reads as another host.
 - A file whose time no HTTP date holds, before 1970 or from the year 10000. It answers a problem 500 that names it,

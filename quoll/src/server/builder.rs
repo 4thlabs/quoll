@@ -233,8 +233,9 @@ impl Builder {
     ///
     /// The files are served by tower-http's `ServeDir`, with thin layers around it:
     ///
-    /// - A path answers the file of that path in `dir`, `/` its `index.html`, and a directory its own `index.html`,
-    ///   or a 307 to the path with a final `/`. Otherwise a `GET` or a `HEAD` whose `Accept` holds `text/html`, a
+    /// - A path answers the file of that path in `dir`, `/` its `index.html`, and a directory that holds an
+    ///   `index.html` that file, or a 307 to the path with a final `/`. A directory that holds none, Vite's `assets/`,
+    ///   is no file, with or without its final `/`. Otherwise a `GET` or a `HEAD` whose `Accept` holds `text/html`, a
     ///   browser's request of a page, answers `index.html` with `Vary: Accept`, so that the page's router takes it,
     ///   but under `/.well-known/`. Any other request is a problem 404: a missing script is no HTML. The api's router
     ///   answers a problem 404 for a path under its prefix that is no route: such a path never reaches the page.

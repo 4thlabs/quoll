@@ -428,7 +428,7 @@ enum Found {
     /// A file, a directory that holds an `index.html`, or no file there: `ServeDir` opens it, redirects it or falls
     /// back.
     Served,
-    /// A directory that holds no `index.html`, which is no file whatever its final `/`.
+    /// A directory that holds no `index.html`, nor a compressed copy of it, which is no file whatever its final `/`.
     NoFile,
 }
 
@@ -439,20 +439,23 @@ enum Found {
 /// left to `ServeDir`, which falls back.
 ///
 /// A directory stands for its `index.html`, which `ServeDir` opens when the path ends with a `/` and redirects to
-/// otherwise; a directory that holds none, Vite's `assets/`, is no file, as `ServeDir` would redirect it to a path that
-/// has no file either. Any other path opens the file of its segments, whatever its final `/`.
+/// otherwise. A directory that holds none, neither the file nor a compressed copy of it, Vite's `assets/`, is no file,
+/// as `ServeDir` would redirect it to a path that has no file either; its real path and those of its `index.html`'s
+/// copies are checked all the same, so that a link out of the directory is refused whatever it holds. Any other path
+/// opens the file of its segments, whatever its final `/`.
 fn filter(dir: &Path, relative: &str) -> Result<Found, Refusal> {
     let Ok(root) = dir.canonicalize() else {
         return Ok(Found::Served);
     };
     let mut target = root.join(relative);
+    let directory = std::fs::metadata(&target).is_ok_and(|metadata| metadata.is_dir());
 
-    if std::fs::metadata(&target).is_ok_and(|metadata| metadata.is_dir()) {
-        target.push(INDEX);
-
-        if !std::fs::metadata(&target).is_ok_and(|metadata| metadata.is_file()) {
-            return Ok(Found::NoFile);
+    if directory {
+        if let Ok(real) = target.canonicalize() {
+            under(&root, &real).map_err(Refusal::Refused)?;
         }
+
+        target.push(INDEX);
     }
 
     let copies = COPIES.map(|extension| {
@@ -463,6 +466,8 @@ fn filter(dir: &Path, relative: &str) -> Result<Found, Refusal> {
         PathBuf::from(copy)
     });
 
+    let mut held = false;
+
     for candidate in std::iter::once(target).chain(copies) {
         let Ok(real) = candidate.canonicalize() else {
             continue;
@@ -470,15 +475,22 @@ fn filter(dir: &Path, relative: &str) -> Result<Found, Refusal> {
 
         under(&root, &real).map_err(Refusal::Refused)?;
 
-        let undated = std::fs::metadata(&real)
-            .ok()
-            .filter(Metadata::is_file)
-            .and_then(|metadata| metadata.modified().ok())
-            .is_some_and(|modified| !is_http_date(modified));
+        let Some(metadata) = std::fs::metadata(&real).ok().filter(Metadata::is_file) else {
+            continue;
+        };
+        let undated = metadata
+            .modified()
+            .is_ok_and(|modified| !is_http_date(modified));
 
         if undated {
             return Err(Refusal::Undated(candidate));
         }
+
+        held = true;
+    }
+
+    if directory && !held {
+        return Ok(Found::NoFile);
     }
 
     Ok(Found::Served)
@@ -942,5 +954,42 @@ mod tests {
         assert_eq!(filter(dist, "assets"), Ok(Found::NoFile));
         // An `index.html` that is a directory is no page either.
         assert_eq!(filter(dist, "odd"), Ok(Found::NoFile));
+
+        // A compressed copy alone, its original deleted by a plugin of the bundler, is an `index.html`.
+        std::fs::create_dir_all(dist.join("guide")).expect("the directory is made");
+        std::fs::write(dist.join("guide/index.html.br"), "brotli").expect("the file is written");
+        assert_eq!(filter(dist, "guide"), Ok(Found::Served));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_is_checked_by_its_real_path_and_its_copies_whatever_it_holds() {
+        let outer = tempfile::tempdir().expect("a temporary directory is made");
+        let dist = outer.path().join("dist");
+
+        std::fs::create_dir_all(dist.join("bare")).expect("the directory is made");
+        std::fs::create_dir_all(outer.path().join("data")).expect("the directory is made");
+        std::fs::write(outer.path().join("secret"), "secret").expect("the file is written");
+        std::os::unix::fs::symlink(outer.path().join("data"), dist.join("img"))
+            .expect("the link is made");
+        std::os::unix::fs::symlink(outer.path().join("secret"), dist.join("index.html.gz"))
+            .expect("the link is made");
+        std::os::unix::fs::symlink(
+            outer.path().join("secret"),
+            dist.join("bare/index.html.zst"),
+        )
+        .expect("the link is made");
+
+        // A directory that is a link out, though it holds no `index.html`.
+        assert_eq!(
+            filter(&dist, "img"),
+            Err(Refusal::Refused(Refused::Outside))
+        );
+        // No `index.html` but a copy that leads out: refused, not left to the fallback.
+        assert_eq!(filter(&dist, ""), Err(Refusal::Refused(Refused::Outside)));
+        assert_eq!(
+            filter(&dist, "bare"),
+            Err(Refusal::Refused(Refused::Outside))
+        );
     }
 }
