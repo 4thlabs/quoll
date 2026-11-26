@@ -112,6 +112,88 @@ impl SessionsServer for App {
   the log names them at `WARN`.
 - The headers of an error stay out of the OpenAPI document.
 
+### A problem's type and members
+
+Two errors of one status, such as two 409s of one route, are told apart by the problem's `type`, a URI that names the
+kind of problem. Extension members carry what the client needs, such as the app that is running. `with_type` and
+`with_member` add them:
+
+```rust
+use http::StatusCode;
+use quoll::{Error, Problem, Response, Result, test};
+use serde::Deserialize;
+
+quoll::api! {
+    pub api Api = "/api";
+
+    pub group Apps {
+        PUT "/apps/{name}/start" => start(name: String);
+    }
+}
+
+struct App;
+
+impl AppsServer for App {
+    async fn start(&self, name: String) -> Result<Response<()>> {
+        let running = Error::new(StatusCode::CONFLICT, format!("{name} is running"))
+            .with_type("/problems/app-running")
+            .with_member("app", &name);
+
+        Err(running)
+    }
+}
+
+/// The extension members of the problem `/problems/app-running`.
+#[derive(Deserialize)]
+struct Running {
+    app: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let url = test::spawn(Api::router(ApiServices { apps: App })).await;
+    let api = Api::client(&url)?;
+
+    let error = api.apps().start("alpha".into()).await.unwrap_err();
+    let running = error.body_as::<Running>().map(|running| running.app);
+
+    assert_eq!(error.detail().map(Problem::kind), Some("/problems/app-running"));
+    assert_eq!(running.as_deref(), Some("alpha"));
+    Ok(())
+}
+```
+
+The server answers:
+
+```json
+{
+  "type": "/problems/app-running",
+  "title": "Conflict",
+  "status": 409,
+  "detail": "alpha is running",
+  "app": "alpha"
+}
+```
+
+- The `type` is a URI: an absolute one, `https://example.com/problems/app-running`, or a relative one,
+  `/problems/app-running`. Without one, it is `about:blank`. quoll's client gives it as it is written: resolving a
+  relative one against the URL called is the caller's.
+- An extension member is any value that serializes as JSON. Its name is a letter, then letters, digits or `_`, three
+  characters at least, as RFC 9457 has it, and none of the RFC's own members: `type`, `title`, `status`, `detail` and
+  `instance`. A second member of the same name replaces the first.
+- A `type` or a member that does not follow these rules is left out, and logged at `WARN` when the error is built,
+  with its name and never its value. The server answers the error all the same, with its status and its other
+  members.
+- The `title` stays the phrase of the status.
+- An internal error, one received from another API, and one of a status that is not a `4xx` or a `5xx`, which is
+  answered 500, send their status alone, without the `type` and the members. That is logged at `DEBUG`.
+- An `event: problem` that ends an `Events` stream has them too.
+- The OpenAPI document does not list the types of a route's problems.
+
+A fake returns `error.into_answered()`: the error that the client reads from quoll's server for this error, with its
+problem as its `detail()`, the problem's JSON as its `body()`, cut at the 64 KiB the client keeps, and the error's
+headers. [Testing](testing.md) shows fakes.
+
 ## What the server answers
 
 The body of an error is a problem, `application/problem+json`:

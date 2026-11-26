@@ -30,6 +30,7 @@ use crate::__private::known::{
 use crate::__private::read::{Deserialized, Read};
 use crate::__private::text;
 use crate::client::{CallTimeout, KeepsDeadline};
+use crate::error::BODY_LIMIT;
 use crate::{Error, ErrorKind, Problem, Result, Route};
 
 mod kind;
@@ -81,11 +82,6 @@ const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'.')
     .remove(b'_')
     .remove(b'~');
-
-/// How much of a body the client reads when the body is not the route's result: an error's, which the error keeps,
-/// and a success's on a route with no result, read so that the connection serves again. Past it, the client reads no
-/// further.
-const BODY_LIMIT: usize = 64 * 1024;
 
 /// The origin of the api a request of a contract calls, which the client puts in its extensions beside its [`Route`]:
 /// the middleware that send a credential send it to that origin only, and so not on a redirect to another.

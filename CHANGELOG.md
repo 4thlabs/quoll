@@ -36,6 +36,17 @@ quoll = { git = "https://github.com/4thlabs/quoll", tag = "v0.10.0" }
   without them, and the log says which at `WARN`. The OpenAPI document does not change.
 - `server::cors` exposes `Retry-After` and `Allow` too, so that a page of another origin reads them.
 
+- A handler gives its problem the RFC 9457 `type` and extension members of its own, so that a client tells two errors
+  of one status apart without reading the `detail` ([#140](https://github.com/4thlabs/quoll/issues/140)):
+  `Error::new(StatusCode::CONFLICT, "alpha is running").with_type("/problems/app-running").with_member("app", "alpha")`.
+  The problem of the answer and the `event: problem` that ends an `Events` stream write them after the RFC's own
+  members, `into_shape()` keeps them, and the client reads them with `Problem::kind()` and `body_as`. A `type` is a
+  URI reference, absolute or relative. A member is named as RFC 9457 has it, a letter, then letters, digits or `_`,
+  three characters at least, and none of `type`, `title`, `status`, `detail` and `instance`. A refused `type` or
+  member is left out and logged at `WARN`, never its value, and the error is answered as it is.
+  `error.into_answered()` gives a fake the error that the client reads for a handler's error: its problem as its
+  `detail()` and the problem's JSON as its `body()`. The OpenAPI document is unchanged.
+
 ### Changed
 
 - The debug form of an error names its headers, never their values, and a header it was refused. That of an internal
