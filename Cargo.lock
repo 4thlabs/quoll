@@ -1582,7 +1582,7 @@ dependencies = [
 
 [[package]]
 name = "quoll"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "axum",
  "backon",
@@ -1622,7 +1622,7 @@ dependencies = [
 
 [[package]]
 name = "quoll-cli"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1659,7 +1659,7 @@ dependencies = [
 
 [[package]]
 name = "quoll-macros"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "proc-macro2",
  "quote",
